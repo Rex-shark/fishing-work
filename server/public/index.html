@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>fishing-work</title>
+    <style>
+      /* token 值取自 DESIGN.md §3（§10 例外：純 HTML 不經 Tailwind，值須與 §3 相同） */
+      :root {
+        color-scheme: dark;
+        --bg-editor: #1e1e1e;
+        --fg-editor: #d4d4d4;
+        --fg-dim: #6e7681;
+        --sem-comment: #6a9955;
+        --sem-keyword: #569cd6;
+      }
+      body {
+        margin: 0;
+        min-height: 100svh;
+        background: var(--bg-editor);
+        color: var(--fg-editor);
+        font: 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      main { padding: 24px; }
+      h1 { font-size: 14px; font-weight: normal; color: var(--sem-comment); margin: 0 0 12px; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      a { color: var(--sem-keyword); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .dim { color: var(--fg-dim); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>// fishing-work — games</h1>
+      <ul>
+        <li>&gt; <a href="/draw-guess/">我畫你猜</a> <span class="dim">→ /draw-guess/</span></li>
+      </ul>
+    </main>
+  </body>
+</html>

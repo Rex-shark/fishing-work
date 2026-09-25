@@ -1,0 +1,93 @@
+// 畫面三分支（plan/home-page.md 決策 4；architecture §7；判定為純函式 pickScreen）：
+//   已加入 → 目前殼層（uiStore.shellId）的遊戲畫面，把功能元件放進插槽（themes＝切換偽裝入口的資料；counts＝在線／玩家數，殼層不讀 store）；
+//   未加入但有重連憑證（resuming）→ 殼層的自動重連畫面（空白畫面＋「正在重新加入…」），遊戲中重新整理不閃首頁；
+//   其餘 → 首頁（home/HomeScreen，不偽裝）。
+// 文件層級（<html data-theme>、document.title、favicon）依畫面同步：首頁為 HOME_DOCUMENT，殼層為該主題（shells/document.ts）。
+// 色彩一律用 theme.css 的 token class（DESIGN.md §3、§10），不得寫色碼
+import { useEffect, useLayoutEffect, useMemo } from 'react'
+import { Canvas } from './features/canvas/Canvas'
+import { ToolBar } from './features/canvas/ToolBar'
+import { ChatPanel } from './features/chat/ChatPanel'
+import { ConnectionStatus } from './features/lobby/ConnectionStatus'
+import { PlayerList } from './features/players/PlayerList'
+import { CancelConfirm } from './features/round/CancelConfirm'
+import { RoundStatus, VolunteerStatus } from './features/round/RoundStatus'
+import { countConnected } from './features/round/roundDisplay'
+import { TopicDialog } from './features/round/TopicDialog'
+import { HomeScreen } from './home/HomeScreen'
+import { TooltipLayer } from './layout/Tooltip'
+import { useUiStore } from './layout/uiStore'
+import { pickScreen } from './pickScreen'
+import { getShell, type ShellThemeSwitch } from './shells'
+import { THEME_CATALOG } from './shells/catalog'
+import { HOME_DOCUMENT, applyDocumentTheme } from './shells/document'
+import { connect } from './socket/client'
+import { selectCanDraw, selectIsDrawer, useGameStore } from './store/game'
+
+/** 自動重連畫面的提示（ShellProps screen 'resume' 的 notice） */
+const RESUME_NOTICE = '正在重新加入…'
+
+function App() {
+  const joined = useGameStore((s) => s.me !== null)
+  const resuming = useGameStore((s) => s.resuming)
+  const phase = useGameStore((s) => s.round.phase)
+  const isDrawer = useGameStore(selectIsDrawer)
+  const canDraw = useGameStore(selectCanDraw)
+  // 殼層的人數計數（ShellProps.counts）：selector 只回傳數字（回傳新陣列會無限重繪）
+  const online = useGameStore((s) => countConnected(s.players))
+  const total = useGameStore((s) => s.players.length)
+  const counts = useMemo(() => ({ online, total }), [online, total])
+  const shellId = useUiStore((s) => s.shellId)
+  const setShellId = useUiStore((s) => s.setShellId)
+  const shell = getShell(shellId)
+  // 遊戲中的「切換偽裝…」入口（決策 7）：與首頁風格卡片同一份 catalog；殼層只負責呈現
+  const themes = useMemo<ShellThemeSwitch>(() => ({ current: shellId, options: THEME_CATALOG, select: setShellId }), [shellId, setShellId])
+  const screen = pickScreen({ joined, resuming })
+  // 未加入時標題視為 idle（離開遊戲畫面時還原）
+  const titlePhase = joined ? phase : 'idle'
+
+  useEffect(() => {
+    connect()
+  }, [])
+
+  useLayoutEffect(() => {
+    applyDocumentTheme(document, screen === 'home' ? HOME_DOCUMENT : shell, { phase: titlePhase })
+  }, [screen, shell, titlePhase])
+
+  const { Shell } = shell
+  // key：自動重連與遊戲畫面各自掛載（切換時殼層的版面狀態重設）
+  return (
+    <>
+      {screen === 'game' ? (
+        <Shell
+          key="game"
+          screen="game"
+          round={{ phase, isDrawer, canDraw }}
+          counts={counts}
+          themes={themes}
+          players={<PlayerList />}
+          canvas={<Canvas />}
+          toolbar={<ToolBar />}
+          chat={<ChatPanel />}
+          roundStatus={<RoundStatus />}
+          volunteer={<VolunteerStatus />}
+          connection={<ConnectionStatus />}
+          dialogs={
+            <>
+              <TopicDialog />
+              <CancelConfirm />
+            </>
+          }
+        />
+      ) : screen === 'resume' ? (
+        <Shell key="resume" screen="resume" notice={RESUME_NOTICE} connection={<ConnectionStatus />} />
+      ) : (
+        <HomeScreen />
+      )}
+      {/* 工具提示浮層全域只掛一個（事件委派處理所有 data-tooltip 元素；DESIGN §6）；首頁沒有 data-tooltip 元素 */}
+      <TooltipLayer />
+    </>
+  )
+}
+
+export default App

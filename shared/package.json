@@ -1,0 +1,19 @@
+{
+  "name": "@fishing-work/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "前後端共用的事件型別、常數與純函式（無執行期相依）",
+  "exports": {
+    ".": "./src/index.ts",
+    "./draw-guess": "./src/draw-guess/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.11"
+  }
+}

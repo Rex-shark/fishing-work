@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# IDEA 專案檔（各人本機）
+.idea
+*.iml
