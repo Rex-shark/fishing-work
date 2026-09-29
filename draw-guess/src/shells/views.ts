@@ -1,15 +1,19 @@
 // 殼層提供給功能元件的呈現元件（決策 1：功能元件不變，殼層提供 renderer）。
 // 功能元件負責資料與行為，外觀由目前殼層的 ShellViews 決定；殼層在自己的根節點以 ShellViewsContext.Provider 提供。
-// Dialog、PlayerList 必填；chat、toolbar、status、volunteer 選填，省略時用 vscode 主題的外觀（DEFAULT_*，定義在 shells/vscode/viewDefaults）。
+// Dialog、PlayerList 必填；chat、toolbar、status、volunteer、help 選填，省略時用 vscode 主題的外觀（DEFAULT_*，定義在 shells/vscode/viewDefaults）。
 import { createContext, useContext, type ChangeEvent, type ClipboardEvent, type ComponentType, type FormEvent, type ReactNode } from 'react'
 import type { ChatKind, ImageMeta, PlayerPublic } from '@fishing-work/shared'
 import type { ImageStatus } from '../features/chat/imageUrls'
-import { VSCODE_CHAT_VIEW, VSCODE_STATUS_VIEW, VSCODE_TOOLBAR_VIEW, VSCODE_VOLUNTEER_VIEW } from './vscode/viewDefaults'
+import { VSCODE_CHAT_VIEW, VSCODE_HELP_VIEW, VSCODE_STATUS_VIEW, VSCODE_TOOLBAR_VIEW, VSCODE_VOLUNTEER_VIEW } from './vscode/viewDefaults'
 
-// ─── 對話框（出題、放棄確認；暱稱輸入自 Epic 4 起在首頁，不在殼層） ──────────────
+// ─── 對話框（出題、放棄確認、遊戲說明；暱稱輸入自 Epic 4 起在首頁，不在殼層） ──────────────
 
-/** 對話框用途：殼層依用途決定位置、標題與外觀（vscode：快速輸入框；ppt：Office 對話框） */
-export type DialogPurpose = 'topic' | 'cancelRound'
+/**
+ * 對話框用途：殼層依用途決定位置、標題與外觀（vscode：快速輸入框；ppt：Office 對話框；meet：白卡片）。
+ * 'help'（Epic 6，features/help/HelpDialog）：title 為對話框標題（「說明」或主題名稱）；沒有 body 時 items 為主題清單，
+ * 有 body 時 items 為「返回」「關閉」，按鈕顯示選項原文（DESIGN §16）
+ */
+export type DialogPurpose = 'topic' | 'cancelRound' | 'help'
 
 export interface DialogItem {
   id: string
@@ -40,6 +44,11 @@ export interface DialogProps {
   input?: DialogField
   /** 選單上方的提問文字 */
   title?: string
+  /**
+   * 內文（Epic 6：說明的段落，每段一個 <p>）。選填；省略時殼層輸出與 Epic 6 前完全相同。
+   * 段落的字級、行高、段距由殼層的容器決定（DESIGN §16：vscode 13px／段距 6px；ppt、meet 14px／段距 8px）
+   */
+  body?: ReactNode
   /** 第一個選項為預設（Enter） */
   items: DialogItem[]
   onEscape?: () => void
@@ -104,6 +113,11 @@ export interface ChatLineData {
 
 export interface ChatLineProps {
   line: ChatLineData
+  /**
+   * 與前一則是同一人的連續訊息（Epic 5 決策 13(5)；ChatPanel 以 chatFormat.groupsWithPrevious 計算：同 fromId 且兩則皆為 chat／image）。
+   * 選填：殼層可據此合併顯示（meet 不再重複「暱稱 HH:mm」）；vscode／ppt 忽略
+   */
+  groupWithPrevious?: boolean
 }
 
 /** 輸入框的受控屬性與事件：殼層原樣展開到自己的 <input>（{...input}），只加外觀 class */
@@ -143,6 +157,11 @@ export interface ChatView {
   Line: ComponentType<ChatLineProps>
   /** 輸入列（見 ChatComposerProps） */
   Composer: ComponentType<ChatComposerProps>
+  /**
+   * 拖圖覆蓋層的外觀 class（底色、虛線框、文字色；Epic 5 決策 13(2)）。選填；省略＝DEFAULT_CHAT_OVERLAY_CLASS（DESIGN §5：--bg-selection 0.35、
+   * 2px 虛線 --border-focus、--fg）。定位與排版（absolute inset-0、置中）由 ChatPanel 固定
+   */
+  overlayClassName?: string
 }
 
 // ─── 畫師工具列 ─────────────────────────────────────────────────
@@ -168,6 +187,13 @@ export interface VolunteerView {
   icon?: ComponentType<{ size?: number; className?: string }>
 }
 
+// ─── 遊戲說明（features/help，Epic 6） ─────────────────────────────────
+
+export interface HelpView {
+  /** 說明內文的 {switch}：本殼層切換偽裝的操作路徑（例如「左下角齒輪 → 切換偽裝」；不帶「…」，代入內文後才不會連續標點） */
+  switchHint: string
+}
+
 // ─── Context ────────────────────────────────────────────────────
 
 export interface ShellViews {
@@ -175,19 +201,25 @@ export interface ShellViews {
   PlayerList: ComponentType<PlayerListViewProps>
   /** 聊天室外觀；省略 = DEFAULT_CHAT_VIEW（vscode 終端機樣式） */
   chat?: ChatView
-  /** 畫師工具列；省略 = DEFAULT_TOOLBAR_VIEW（< 1100px 收合） */
+  /** 畫師工具列；省略 = DEFAULT_TOOLBAR_VIEW（< 1120px 收合） */
   toolbar?: ToolbarView
   /** 狀態列式項目；省略 = DEFAULT_STATUS_VIEW（彩色狀態列上的白字） */
   status?: StatusView
   /** 「我來畫」的文字與圖示；省略 = DEFAULT_VOLUNTEER_VIEW（▷ 我來畫） */
   volunteer?: VolunteerView
+  /** 遊戲說明代入的殼層名稱；省略 = DEFAULT_HELP_VIEW（vscode 的切換路徑） */
+  help?: HelpView
 }
+
+/** 拖圖覆蓋層的預設外觀（DESIGN §5；Epic 5 前 ChatPanel 寫死的值，vscode／ppt 沿用） */
+export const DEFAULT_CHAT_OVERLAY_CLASS = 'border-2 border-dashed border-border-focus bg-selection/35 text-fg'
 
 /** 殼層未提供時的預設：vscode 主題的外觀（Epic 3 Phase 1 前的樣子） */
 export const DEFAULT_CHAT_VIEW: ChatView = VSCODE_CHAT_VIEW
 export const DEFAULT_TOOLBAR_VIEW: ToolbarView = VSCODE_TOOLBAR_VIEW
 export const DEFAULT_STATUS_VIEW: StatusView = VSCODE_STATUS_VIEW
 export const DEFAULT_VOLUNTEER_VIEW: VolunteerView = VSCODE_VOLUNTEER_VIEW
+export const DEFAULT_HELP_VIEW: HelpView = VSCODE_HELP_VIEW
 
 export const ShellViewsContext = createContext<ShellViews | null>(null)
 
@@ -202,6 +234,10 @@ export function useShellViews(): ShellViews {
 export function resolveChatView(views: ShellViews | null): ChatView {
   return views?.chat ?? DEFAULT_CHAT_VIEW
 }
+/** 拖圖覆蓋層外觀（ChatView.overlayClassName；未提供時為預設） */
+export function resolveChatOverlayClass(view: Pick<ChatView, 'overlayClassName'>): string {
+  return view.overlayClassName ?? DEFAULT_CHAT_OVERLAY_CLASS
+}
 export function resolveToolbarView(views: ShellViews | null): ToolbarView {
   return views?.toolbar ?? DEFAULT_TOOLBAR_VIEW
 }
@@ -210,6 +246,9 @@ export function resolveStatusView(views: ShellViews | null): StatusView {
 }
 export function resolveVolunteerView(views: ShellViews | null): VolunteerView {
   return views?.volunteer ?? DEFAULT_VOLUNTEER_VIEW
+}
+export function resolveHelpView(views: ShellViews | null): HelpView {
+  return views?.help ?? DEFAULT_HELP_VIEW
 }
 
 /** 聊天室外觀（殼層未提供時為預設） */
@@ -227,4 +266,8 @@ export function useStatusView(): StatusView {
 /** 「我來畫」的文字與圖示（殼層未提供時為預設） */
 export function useVolunteerView(): VolunteerView {
   return resolveVolunteerView(useContext(ShellViewsContext))
+}
+/** 遊戲說明代入的殼層名稱（殼層未提供時為預設） */
+export function useHelpView(): HelpView {
+  return resolveHelpView(useContext(ShellViewsContext))
 }

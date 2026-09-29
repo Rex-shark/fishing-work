@@ -8,6 +8,8 @@ import {
   PREVIEW_MAX_PX,
   PREVIEW_MIN_PX,
   SIZE_KEYS,
+  backgroundLabel,
+  backgroundOp,
   hueToHex,
   normalizeBrushSize,
   normalizeColor,
@@ -161,9 +163,28 @@ describe('previewDiameter：預覽圓點直徑有上限', () => {
 })
 
 describe('swatchLabel：色塊提示', () => {
-  it('色碼＋色名，8 色皆有名稱', () => {
+  it('色碼＋色名，10 色皆有名稱', () => {
     expect(PALETTE_NAMES).toHaveLength(PALETTE.length)
-    expect(swatchLabel(PALETTE[3], 3)).toBe('顏色 #FF8C00（橘）')
+    expect(swatchLabel(PALETTE[5], 5)).toBe('顏色 #FF8C00（橘）')
     expect(swatchLabel('#123456', 99)).toBe('顏色 #123456')
+  })
+
+  it('Epic 7：黑與膚色緊接白', () => {
+    expect(swatchLabel(PALETTE[1], 1)).toBe('顏色 #000000（黑）')
+    expect(swatchLabel(PALETTE[2], 2)).toBe('顏色 #FFECEA（膚色）')
+    expect(PALETTE_NAMES).toEqual(['白', '黑', '膚色', '灰', '紅', '橘', '黃', '綠', '藍', '紫'])
+  })
+})
+
+describe('背景色按鈕（Epic 7）', () => {
+  it('工具提示：「把背景設為目前顏色 #XXXXXX」，色碼大寫', () => {
+    expect(backgroundLabel('#ffecea')).toBe('把背景設為目前顏色 #FFECEA')
+    expect(backgroundLabel(PALETTE[1])).toBe('把背景設為目前顏色 #000000')
+  })
+
+  it('送出的 op：background＋目前筆色（大寫；不合法退回預設色）', () => {
+    expect(backgroundOp('#ff8c00')).toEqual({ type: 'background', color: '#FF8C00' })
+    expect(backgroundOp('red')).toEqual({ type: 'background', color: PALETTE[0] })
+    expect(COLOR_PATTERN.test(backgroundOp('#abcdef').color)).toBe(true)
   })
 })

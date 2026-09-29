@@ -1,6 +1,6 @@
 // 畫具純函式（spec/architecture.md §6「粗細」「顏色」、DESIGN.md §6「滑桿」「色相條」）：
 // 色相 → #RRGGBB、滑桿指標位置／鍵盤 → 數值、送出前的粗細與色碼正規化。不依賴 React，方便 Vitest 測試。
-import { BRUSH_DEFAULT, BRUSH_MAX, BRUSH_MIN, COLOR_PATTERN, PALETTE } from '@fishing-work/shared'
+import { BRUSH_DEFAULT, BRUSH_MAX, BRUSH_MIN, COLOR_PATTERN, PALETTE, type DrawOp } from '@fishing-work/shared'
 
 /** 色相條範圍（度）。360° 與 0° 同色，因此上限取 359 */
 export const HUE_MIN = 0
@@ -11,7 +11,7 @@ export const SIZE_KEYS: SliderKeyConfig = { min: BRUSH_MIN, max: BRUSH_MAX, step
 export const HUE_KEYS: SliderKeyConfig = { min: HUE_MIN, max: HUE_MAX, step: 5, bigStep: 30 }
 
 /** 預設色塊的中文色名（與 PALETTE 索引對應），用於 aria-label 與工具提示 */
-export const PALETTE_NAMES = ['白', '灰', '紅', '橘', '黃', '綠', '藍', '紫'] as const
+export const PALETTE_NAMES = ['白', '黑', '膚色', '灰', '紅', '橘', '黃', '綠', '藍', '紫'] as const
 
 /**
  * 色相條背景：0..360° 每 60° 一個色標的彩虹漸層。
@@ -123,6 +123,16 @@ export const PREVIEW_MAX_PX = 16
 export function previewDiameter(size: number): number {
   const ratio = valueRatio(normalizeBrushSize(size), BRUSH_MIN, BRUSH_MAX)
   return Math.round(PREVIEW_MIN_PX + ratio * (PREVIEW_MAX_PX - PREVIEW_MIN_PX))
+}
+
+/** 「背景色」按鈕的工具提示與 aria-label：「把背景設為目前顏色 #XXXXXX」（DESIGN §6，Epic 7；色碼大寫） */
+export function backgroundLabel(color: string): string {
+  return `把背景設為目前顏色 ${normalizeColor(color)}`
+}
+
+/** 「背景色」按鈕送出的 op：顏色＝目前筆色（大寫 #RRGGBB；橡皮擦模式也用目前筆色），Epic 7 決策 5 */
+export function backgroundOp(color: string): Extract<DrawOp, { type: 'background' }> {
+  return { type: 'background', color: normalizeColor(color) }
 }
 
 /** 預設色塊的工具提示與 aria-label：「顏色 <色碼>（<色名>）」（DESIGN §6 的例子只有色碼，再附中文色名） */

@@ -4,14 +4,19 @@
 // 按鍵：Enter＝確定（第一個選項）：走 form 原生 submit（單一文字欄位的隱式送出），注音等輸入法選字的 Enter 不會觸發；
 //   沒有輸入框時焦點放在「確定」，Enter 由按鈕原生啟動。Esc＝取消（onEscape；沒有時為第二個選項）。
 // 不可按的選項只設 aria-disabled（原生 disabled 收不到指標事件，Tooltip 出不來；踩雷紀錄 Epic 3 Phase 2）。
-import { useId, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+// 遊戲說明（purpose 'help'，Epic 6；DESIGN §16）：標題列顯示 title（「說明」或主題名稱）、內文 body 為 14px 段落（段距 8px）；
+//   沒有 body 時 items 為主題清單（一列一個按鈕，↑↓／Home／End 移動）＋右下「關閉」；有 body 時按鈕顯示選項原文（「返回」「關閉」）。
+//   body 未提供時輸出與 Epic 6 前完全相同。
+import { useId, useRef, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { CloseIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
 import type { DialogItem, DialogProps } from '../views'
-import { PPT_DIALOG_TITLE, PPT_RESUME_TITLE, dialogButtonLabel, dialogButtonText, dialogKeyAction } from './pptLayout'
+import { DIALOG_CLOSE, PPT_DIALOG_TITLE, PPT_RESUME_TITLE, dialogButtonLabel, dialogButtonText, dialogKeyAction } from './pptLayout'
 
-export function PptDialog({ purpose, label, input, title, items, onEscape, note, error }: DialogProps) {
+export function PptDialog({ purpose, label, input, title, body, items, onEscape, note, error }: DialogProps) {
   const fieldId = useId()
+  // 說明：title 當標題列文字、按鈕顯示選項原文
+  const help = purpose === 'help'
   const primary = items[0] as DialogItem | undefined
   const secondary = items[1] as DialogItem | undefined
 
@@ -38,12 +43,13 @@ export function PptDialog({ purpose, label, input, title, items, onEscape, note,
     <PptDialogFrame
       as="form"
       label={label}
-      heading={PPT_DIALOG_TITLE[purpose]}
+      heading={help && title !== undefined ? title : PPT_DIALOG_TITLE[purpose]}
       onSubmit={handleSubmit}
       onKeyDown={handleKeyDown}
       onClose={cancel}
     >
-      {title !== undefined && <p className="mb-3 leading-[20px] text-fg">{title}</p>}
+      {title !== undefined && !help && <p className="mb-3 leading-[20px] text-fg">{title}</p>}
+      {body !== undefined && <div className="flex flex-col gap-[8px] text-[14px] leading-[20px] text-fg">{body}</div>}
 
       {input !== undefined && (
         <div className="mb-1">
@@ -77,19 +83,34 @@ export function PptDialog({ purpose, label, input, title, items, onEscape, note,
         </p>
       )}
 
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
-        {items.map((item, i) => (
-          <DialogButton key={item.id} item={item} index={i} autoFocus={input === undefined && i === 0} onRun={() => run(item)} />
-        ))}
-      </div>
+      {help && body === undefined ? (
+        <HelpTopicList items={items} onRun={run} onClose={cancel} />
+      ) : (
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {items.map((item, i) => (
+            <DialogButton
+              key={item.id}
+              item={item}
+              index={i}
+              ownLabel={help}
+              autoFocus={input === undefined && i === 0}
+              onRun={() => run(item)}
+            />
+          ))}
+        </div>
+      )}
     </PptDialogFrame>
   )
 }
 
-/** 右下按鈕：第一個為主要（確定，type=submit 以承接 Enter 的隱式送出）、其餘為次要 */
-function DialogButton({ item, index, autoFocus, onRun }: { item: DialogItem; index: number; autoFocus: boolean; onRun: () => void }) {
+/**
+ * 右下按鈕：第一個為主要（確定，type=submit 以承接 Enter 的隱式送出）、其餘為次要。
+ * ownLabel（說明對話框）：顯示選項原文，不換成「確定」「取消」
+ */
+function DialogButton(props: { item: DialogItem; index: number; ownLabel: boolean; autoFocus: boolean; onRun: () => void }) {
+  const { item, index, ownLabel, autoFocus, onRun } = props
   const primary = index === 0
-  const ariaLabel = dialogButtonLabel(index, item.label)
+  const ariaLabel = ownLabel ? item.label : dialogButtonLabel(index, item.label)
   return (
     <button
       type={primary ? 'submit' : 'button'}
@@ -104,8 +125,61 @@ function DialogButton({ item, index, autoFocus, onRun }: { item: DialogItem; ind
           : 'border border-border bg-button-secondary text-fg hover:bg-button-secondary-hover aria-disabled:hover:bg-button-secondary'
       } ${item.disabled ? 'cursor-default opacity-60' : 'cursor-pointer'}`}
     >
-      {dialogButtonText(index, item.label)}
+      {ownLabel ? item.label : dialogButtonText(index, item.label)}
     </button>
+  )
+}
+
+/** 說明的主題清單（第一步）：白底清單框、一列一個按鈕（點選即進入該主題），開啟時焦點在第一列；右下「關閉」 */
+function HelpTopicList({ items, onRun, onClose }: { items: DialogItem[]; onRun: (item: DialogItem) => void; onClose?: () => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([])
+
+  function handleKeyDown(e: KeyboardEvent<HTMLUListElement>) {
+    const current = refs.current.findIndex((el) => el === document.activeElement)
+    const last = items.length - 1
+    const next =
+      e.key === 'ArrowDown' ? (current + 1) % items.length
+      : e.key === 'ArrowUp' ? (current - 1 + items.length) % items.length
+      : e.key === 'Home' ? 0
+      : e.key === 'End' ? last
+      : null
+    if (next === null || items.length === 0) return
+    e.preventDefault()
+    refs.current[next]?.focus()
+  }
+
+  return (
+    <>
+      <ul onKeyDown={handleKeyDown} className="rounded-[2px] border border-border bg-input py-1">
+        {items.map((item, i) => (
+          <li key={item.id}>
+            <button
+              ref={(el) => {
+                refs.current[i] = el
+              }}
+              type="button"
+              autoFocus={i === 0}
+              aria-disabled={item.disabled || undefined}
+              onClick={() => onRun(item)}
+              className="flex h-[32px] w-full cursor-pointer items-center px-3 text-left text-fg transition-colors duration-100 outline-none hover:bg-hover focus:bg-active focus:text-fg-on-active"
+            >
+              {item.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {onClose !== undefined && (
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-[26px] min-w-[80px] cursor-pointer rounded-[2px] border border-border bg-button-secondary px-3 text-fg transition-colors duration-100 hover:bg-button-secondary-hover focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-border-focus"
+          >
+            {DIALOG_CLOSE}
+          </button>
+        </div>
+      )}
+    </>
   )
 }
 

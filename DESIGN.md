@@ -4,6 +4,7 @@
 > 基底：**VS Code Dark+**。2026-09-24 Rex 授權舵手（Helm）決定，Rex 看成品後微調（微調記錄在第 12 節）。
 > 2026-09-25 起為**多偽裝主題**：§1、§2、§6–§11 為共通原則；§3–§5 是 `vscode` 主題；§13 是 `ppt` 主題。新主題各加一節。
 > 2026-09-25 Rex 需求修正：進遊戲前的**首頁不偽裝、採柔和 UI**（§14），在首頁以卡片選風格後才進偽裝殼層。
+> 2026-09-25 第三套主題 `meet`（Google Meet 視訊會議）見 §15。
 > 遊戲常數（畫筆色 PALETTE、粗細、邏輯畫布尺寸）以 [spec/architecture.md](spec/architecture.md) §4 為準，本檔不重複定義。
 
 ---
@@ -69,6 +70,12 @@
 | `--focus-on-color` | `#ffffff` | 藍／橘等有色底上的 focus 外框（`--border-focus` 在其上看不見） |
 | `--quickinput-shadow` | `0 2px 8px rgba(0, 0, 0, 0.36)` | 快速輸入框陰影（§4 的唯一陰影） |
 | `--bg-slide` | `#1e1e1e` | 投影片框底（Epic 3；vscode 與畫布同色，ppt 覆寫為白） |
+| `--bg-panel` | `#252526` | 「面板」token 六件組（Epic 5）：殼層自畫的白底面板（meet 的訊息面板）用；vscode／ppt 給等於側欄的值，不使用 |
+| `--bg-panel-hover` | `#2a2d2e` | 面板內 hover |
+| `--fg-on-panel` | `#cccccc` | 面板文字 |
+| `--fg-on-panel-muted` | `#858585` | 面板次要文字 |
+| `--border-panel` | `#3c3c3c` | 面板邊框與分隔線 |
+| `--accent-panel` | `#3794ff` | 面板上的強調色（文字按鈕、連結） |
 | `--slide-shadow` | `none` | 投影片陰影（ppt 覆寫） |
 | `--fg-on-active` | `#ffffff` | 選取／按下底（`--bg-active`）上的文字與勾選記號（ppt 覆寫為深字） |
 
@@ -120,7 +127,7 @@
 |------|------|-----------|
 | 活動列 | 寬 48px | 4 個圖示（檔案、搜尋、原始碼控制、擴充）；只有第一個作用中；點第一個切換側欄顯示。其餘為裝飾，點了無反應 |
 | 側欄 | 寬 240px（min 180，可摺疊） | 標題 `EXPLORER`；樹：`FISHING-WORK` › `players` › 每位玩家一列 `<暱稱>.ts` 帶檔案圖示。列右側：分數（`--sem-number`）；畫師 = 橘點 `●`（`--sem-function`，仿 git 修改標記）；已猜對 = `✓`（`--sem-type`）。自己那列粗體 |
-| 分頁列 | 高 35px | 作用中 `canvas.ts`（作畫中時檔名後加 `●` 取代 `×`，仿未儲存；視窗標題則為前綴 `● `）；非作用 `README.md` 裝飾。右側：**畫師工具列**（僅畫師可見）：目前色圓點、8 個 16px 預設色塊（`PALETTE`）、**色相條**（寬 96px、高 10px 的彩虹漸層，圓形把手，拖曳或點擊選色）、**粗細滑桿**（寬 80px 的細軌道，拖曳左右，把手旁顯示數值，`1–64`）、橡皮擦（再按一次切回畫筆）／復原／清空／放棄圖示按鈕；沒有獨立的「畫筆」鈕。選色即回畫筆。工具列寬度不足時（< 1100px）色相條與滑桿收進「⋯」彈出面板 |
+| 分頁列 | 高 35px | 作用中 `canvas.ts`（作畫中時檔名後加 `●` 取代 `×`，仿未儲存；視窗標題則為前綴 `● `）；非作用 `README.md` 裝飾。右側：**畫師工具列**（僅畫師可見）：目前色圓點、8 個 16px 預設色塊（`PALETTE`）、**色相條**（寬 96px、高 10px 的彩虹漸層，圓形把手，拖曳或點擊選色）、**粗細滑桿**（寬 80px 的細軌道，拖曳左右，把手旁顯示數值，`1–64`）、橡皮擦（再按一次切回畫筆）／復原／清空／放棄圖示按鈕；沒有獨立的「畫筆」鈕。選色即回畫筆。工具列寬度不足時（< 1120px）色相條與滑桿收進「⋯」彈出面板 |
 | 假行號 gutter | 寬 40px | `1..N` 依編輯區高度 / 18px 產生，`--fg-muted`，右對齊，純裝飾 |
 | 畫布區 | 剩餘 | 底 `--bg-editor`；畫布 16:9 置中等比縮放，底 `--bg-canvas`；畫師游標 `crosshair`，其他人 `default` |
 | 底部面板 | 高 220px（min 120） | 標題列分頁 `PROBLEMS / OUTPUT / TERMINAL`，TERMINAL 作用中，其餘裝飾；本體 = 聊天室；最後一列為輸入列 |
@@ -136,7 +143,7 @@
 | 揭曉（system） | `// 題目是 狗（全員猜對）`（文字由 server 給；題目可在客戶端以 `--sem-string` 高亮） | 前綴 `--sem-comment`，題目 `--sem-string` |
 | 本地錯誤提示 | 4 秒後直接消失，不做動畫（§7）；被擋的洩題訊息放回輸入框供修改 | `--sem-error` |
 | `image`（Epic 2） | `Bob: [圖片]` 一行，下方縮圖最大 240×160、`object-fit: contain`、1px `--border`、圓角 2px；點一下切換為面板寬度。沒有圖可顯示時與暱稱同行的灰字佔位分四種：`[圖片]（載入中…）`（bytes 尚未到）、`[圖片]（連線較慢，已略過）`（server 送來 `data: null`）、`[圖片]（已清除）`（超過 20 張被釋放）、`[圖片]（中途加入看不到）`（只來自快照） | 暱稱 `--sem-variable`，佔位 `--fg-muted` |
-| 投放覆蓋層（拖曳中） | 整個 TERMINAL 面板蓋一層 `--bg-selection` 半透明（0.35）、2px 虛線 `--border-focus`、置中文字「放開以傳送圖片」；放開或離開即消失，無動畫 | `--fg` |
+| 投放覆蓋層（拖曳中） | 整個 TERMINAL 面板蓋一層 `--bg-selection` 半透明（0.35）、2px 虛線 `--border-focus`、置中文字「放開以傳送圖片」；放開或離開即消失，無動畫。殼層可用 `ChatView.overlayClassName` 覆寫（Epic 5；meet 見 §15.3） | `--fg` |
 | 本地錯誤（不廣播） | `✗ 不可洩題` | `--sem-error` |
 | 時間戳（可選） | `[14:32]` 靠左 | `--fg-dim` |
 
@@ -150,6 +157,7 @@
 - **放棄回合**：同樣的快速選單確認，兩個選項「放棄本回合」（預設反白，Enter 即放棄）與「繼續作畫」（Esc）。不用 `window.confirm`。
 - **出題**：同樣的快速輸入框，placeholder「輸入題目（1–20 字）後按 Enter」，Esc = 放棄。
 - **回合結束**：不用 modal。終端機多一行揭曉訊息，狀態列顯示「揭曉」5 秒。
+- **說明**（Epic 6）：活動列齒輪選單加「說明…」→ 同樣的快速輸入框：第一步列出主題，第二步標題＝主題、下方 13px 段落（段距 6px）、選項「返回」「關閉」；Esc 關閉。共通規範見 §16。
 - **視窗標題**（`document.title`）：`canvas.ts - fishing-work`；作畫中前綴 `● `。favicon 用一般文件圖示。
 
 ## 6. 元件規範
@@ -158,7 +166,7 @@
 |------|------|
 | 主要按鈕 | 底 `--accent`、hover `--accent-hover`、字白、高 26px、內距 0 12px、圓角 2px |
 | 次要按鈕 | 底 `--bg-button-secondary`、hover `--bg-button-secondary-hover`、字 `--fg` |
-| 圖示按鈕 | 22×22、hover 底 `--bg-hover`、圓角 3px；**一律有工具提示** |
+| 圖示按鈕 | 22×22、hover 底 `--bg-hover`、圓角 3px；**一律有工具提示**。Epic 7 新增「背景色」（自繪填滿圖示；提示「把背景設為目前顏色 #XXXXXX」；按下即送 `background` op；位置在粗細滑桿（窄版「⋯」）之後的分隔線與橡皮擦之間；「清空畫布」只有背景時停用） |
 | 工具提示（Tooltip） | 仿 VS Code hover：底 `--bg-quickinput`、1px `--border`、字 `--fg` 12px、內距 2px 8px、圓角 3px、陰影 `--quickinput-shadow`；hover 300ms 後或 focus 立即顯示，指標離開或**點擊**即消失（滑桿拖曳中除外，否則會蓋住「⋯」面板）、無動畫；內容為功能名稱：遊戲功能用中文（「橡皮擦」「復原」「清空畫布」「放棄本回合」「粗細 12」「顏色 #FF8C00（橘）」「目前顏色 #00FF51」「色相 139° #00FF51」），偽裝用的裝飾圖示用英文（Search、Source Control、Extensions、Accounts、Manage、New Terminal、More Actions...、Split Editor Right、Notifications）；元素同時帶 `aria-label`（EXPLORER 用中文） |
 | 滑桿 | 軌道高 2px 底 `--border`、已選段 `--accent`、把手 10px 圓 `--fg`；focus 外框 `--border-focus`；鍵盤 ←/→ 每次 1、Shift 每次 8 |
 | 色相條 | 96×10px 彩虹漸層（`linear-gradient(to right, hsl(0..360))`）、圓角 5px、把手 12px 圓白框；範圍 0–359°；鍵盤 ←/→ 每次 5°、Shift＋方向鍵或 PageUp/PageDown 每次 30°、Home/End 到兩端 |
@@ -230,6 +238,12 @@
 | 2026-09-25 | Epic 4 Phase 1 同步：§5 暱稱畫面改為自動重連畫面（快速輸入框只剩一行提示）；§13.2 對話框列改為出題／放棄／自動重連（「加入簡報」）；§13.3 圖示句 | 舵手（龍骨 Phase 1 回報） |
 | 2026-09-25 | Epic 4 Phase 2 定案：§14.1 根字級 16px；§14.2 新增 `--home-on-accent`、圖示圓底改 `currentColor` color-mix；§14.3 柔光尺寸 480×180／520×360、輸入框 focus、提示放小標右側、按鈕原生 disabled；§14.5 index.html 內嵌腳本與守門測試 | 舵手（龍骨 Phase 2 提問 1–8） |
 | 2026-09-25 | Rex 目視首頁「都正常」，無微調；Epic 4 完成 | Rex |
+| 2026-09-25 | Epic 5：新增 §15 視訊會議主題（Google Meet 風格；token 覆寫、版面、差異）；§3／§13.1 新增六個面板 token 與 `--brand-meet`；§14.3 卡片格 minmax 190px | 舵手（Rex 需求「來個 UI，Google Meet 版本」） |
+| 2026-09-26 | Epic 6 遊戲說明：新增 §16（共通兩步對話框、段落排版）；§5 齒輪選單「說明…」；§13.2「說明」分頁可作用；§15.2「資訊」按鈕＝說明 | 舵手（Rex 需求「說明分頁既然有就利用它」） |
+| 2026-09-28 | Epic 7 畫布背景色：§6 工具列色塊 10 個（加黑、膚色）、新增「背景色」圖示按鈕（自繪填滿圖示，提示「把背景設為目前顏色 #XXXXXX」，位置在粗細滑桿／「⋯」之後的分隔線與橡皮擦之間）；工具列因此加寬約 70px | 舵手（Rex 需求） |
+| 2026-09-28 | Epic 7 Phase 1 實測：vscode 工具列收合斷點 1100 → **1120px**（1100px 時溢出 1px）；ppt 640、meet 1280 不變；ppt 出題時的灰化假工具列也有背景色圖示；「清空畫布」只有背景時停用 | 舵手（龍骨 Phase 1 回報） |
+| 2026-09-26 | Epic 6 Phase 1 定案：§16 補「檔案」與「更多 ⋮」選單的「說明…」第二項、switchHint 不帶「…」、清單步驟「關閉」 | 舵手（龍骨 Phase 1 提問 1–2） |
+| 2026-09-25 | Epic 5 Phase 1 定案：§15.1 `--bg-quickinput` 改深灰（工具提示）、對話框改用 `--bg-panel`、`--sem-warning` 保留值；§15.2 畫師作畫中不顯示標籤、提示在輸入列上方；§15.3 收合 1280px、`overlayClassName`、`groupWithPrevious`；§5 覆蓋層可覆寫；§14.3 描述兩行平衡換行 | 舵手（龍骨 Phase 1 提問 1–6） |
 | 2026-09-24 | Phase 6 驗收：§4 浮出層共用陰影；§6 提示文字範例、點擊隱藏、裝飾圖示英文、色相條鍵盤步進；§8 窄版分頁列規則 | 舵手（龍骨 Phase 6 提問 2–8） |
 | 2026-09-24 | Phase 4 驗收：`--bg-statusbar-drawer` 改 `#b5561f`（對比）、畫布加外框、新增 `--statusbar-hover` / `--focus-on-color` / `--quickinput-shadow`；§1 活動列圖示 24px；§2 第 2 級裝飾清單；§5 分頁 `●`、狀態列內容與白字、放棄確認、加入選項；§8 窄版保留項；§9 裝飾性例外 | 舵手（龍骨 Phase 4 提問 1–12；舵手瀏覽器實測） |
 
@@ -281,6 +295,7 @@
 | `--bg-card` | `#FFFFFF` | 註解卡片底（文字對比 15.3:1）；vscode 值 `#252526` 未使用 |
 | `--avatar-1..6` | `#005A9E` `#006F73` `#6B4FA0` `#9A0089` `#8C4A00` `#486860` | 註解頭像底，依暱稱 FNV-1a 雜湊取一；跨主題共用、ppt 不覆寫 |
 | `--fg-on-avatar` | `#FFFFFF` | 頭像首字（六色上對比 5.9–7.7:1） |
+| `--bg-panel`／`--bg-panel-hover`／`--fg-on-panel`／`--fg-on-panel-muted`／`--border-panel`／`--accent-panel` | `#F3F2F1`／`#EDEBE9`／`#252525`／`#605E5C`／`#D2D0CE`／`#0078D4` | 面板 token（Epic 5 新增，ppt 不使用；值＝ppt 側欄同名色，外觀不變） |
 | `--focus-on-color` | `#FFFFFF` | 橘紅標題列上的 focus |
 | `--font-code` | 無襯線堆疊（見上） | 全站字型 |
 
@@ -307,7 +322,7 @@
 | 區塊 | 尺寸 | 內容 |
 |------|------|------|
 | 標題列 | 30px | 「簡報1 - PowerPoint」置中；右側連線狀態小字；作畫中標題與 `document.title` 前綴 `● ` |
-| 功能區分頁 | 28px | 11 個分頁文字；畫師時「繪圖」作用（底白、上緣 2px `--accent`），否則「常用」作用 |
+| 功能區分頁 | 28px | 11 個分頁文字；畫師時「繪圖」作用（底白、上緣 2px `--accent`），否則「常用」作用。**「說明」分頁自 Epic 6 起可作用**：點了成為作用分頁，功能區內容顯示一排主題按鈕（Office 風格圖示 16px＋標籤，一顆一主題），點按鈕開 PptDialog 說明（§16）；未點時外觀與先前完全相同 |
 | 功能區內容 | 64px | 「繪圖」：畫師工具列（預設白筆，跨主題一致；色塊、色相條、粗細滑桿、橡皮擦、復原、清空、放棄）；非畫師時整組灰化（`opacity .4`、不可點）。「常用」：裝飾性按鈕群（新增投影片、版面配置、字型…）純裝飾 |
 | 左縮圖窗格 | 寬 180px | 玩家清單：編號＋16:9 縮圖卡（白底 1px `--border`），卡內暱稱（粗體）與分數（右下小字）；畫師卡外框 2px `--accent`；已猜對右上綠勾；斷線中 `opacity .5`；自己的卡底 `--bg-active` |
 | 中央 | 剩餘 | 灰工作區置中投影片（畫布，底色固定黑 `CANVAS_BACKGROUND`，畫師預設白筆），`--border` 1px 外框＋ `0 1px 3px rgba(0,0,0,.15)` 陰影（PowerPoint 投影片本身有陰影，屬本主題例外） |
@@ -320,7 +335,7 @@
 
 - 狀態列不因畫師變色；畫師身分靠縮圖橘框與「繪圖」分頁作用。
 - 狀態列項目：`text-fg`、hover `--statusbar-hover`、focus `--border-focus`（不用 vscode 的白字白框）。
-- 工具列收合斷點 640px（PPT 功能區整列給工具列，完整寬約 533px）；vscode 為 1100px。
+- 工具列收合斷點 640px（PPT 功能區整列給工具列，完整寬約 533px）；vscode 為 1120px。
 - 沒有假行號、沒有終端機提示符；聊天是註解卡片。
 - 投影片有陰影（例外）；其餘 §6 的元件規範（高度、圓角 2px、無動畫）沿用。
 - 圖示：功能區用 Office 風格線條圖示（自繪，16px），不用 Microsoft 商標；首頁風格卡片圖示為橘紅投影片方塊（§13.4 token）。
@@ -337,6 +352,7 @@
 |-------|----|------|
 | `--brand-editor` | `#3B8EEA` | 「程式編輯器」圖示（角括號，藍） |
 | `--brand-slides` | `#B7472A` | 「簡報」圖示（投影片方塊，橘紅） |
+| `--brand-meet` | `#1E8E3E` | 「視訊會議」圖示（攝影機，綠；白底 4.2:1、首頁底 3.9:1） |
 
 圖示為自繪 SVG 線條／色塊，不使用 VS Code 或 Microsoft 商標。
 
@@ -379,7 +395,7 @@ Soft UI Evolution（ui-ux-pro-max 建議；不採純 neumorphism，對比不足�
 - **頁面**：全視窗、可捲動（`html, body` 的 `overflow: hidden` 在 home 下解除）；置中欄 max 640px，側邊 24px（< 480px 為 16px）；內容垂直置中，高於視窗時從頂端排。底色 `--home-bg` 加左上 `--home-tint-1`（ellipse 480×180）、右下 `--home-tint-2`（ellipse 520×360）兩處 `radial-gradient` 柔光；左上垂直半徑限 180px，讓錯誤文字所在列落在純 `--home-bg` 上（`--home-error` 疊在 tint-1 只有 4.1:1；測試守著）。
 - **標題**：「我畫你猜」28px／600 `--home-fg`；副標「輸入暱稱、挑一種介面風格，就能加入」15px `--home-fg-muted`。
 - **暱稱**：label「暱稱」14px／500；輸入框高 48px、圓角 12px、底 `--home-surface`、1px `--home-border`、字 16px、placeholder `--home-fg-dim`；focus 為邊框轉 `--home-accent` 加 2px `--home-accent` outline（offset 0）；右側字數 `n/12` 12px `--home-fg-dim`（超過改 `--home-error`）；錯誤在下方 13px `--home-error`、`role="alert"`。Enter＝進入遊戲。
-- **介面風格**：小標「介面風格」14px／500，提示「只影響你自己的畫面，之後可在遊戲內切換」12px `--home-fg-dim` 放小標右側、窄螢幕換到下一行。卡片格 `grid-template-columns: repeat(auto-fill, minmax(220px, 1fr))`、gap 16px。每張卡片：底 `--home-surface`、圓角 `--home-radius`、內距 20px、1px `--home-border`、`--home-shadow`；左上 64px 圓形淡色底（§14.2 的 `color-mix`）放 48px 圖示；名稱 16px／600 `--home-fg`；描述（註冊表 `description`）13px `--home-fg-muted`。**選取**：2px `--home-accent` 邊框（以 `box-shadow: inset 0 0 0 2px` 或 outline 實作，不改尺寸）＋底 `--home-accent-soft`＋右上 20px 圓形 `--home-accent` 底 `--home-on-accent` 打勾（SVG）。**hover**（可選者）：底 `--home-surface-hover`、`--home-shadow-hover`、`translateY(-2px)`。**不可選**（即將推出）：`opacity .55`、`cursor: default`、右上「即將推出」膠囊（12px、1px `--home-border`、`--home-fg-dim`）。
+- **介面風格**：小標「介面風格」14px／500，提示「只影響你自己的畫面，之後可在遊戲內切換」12px `--home-fg-dim` 放小標右側、窄螢幕換到下一行。卡片格 `grid-template-columns: repeat(auto-fill, minmax(190px, 1fr))`、gap 16px（Epic 5 起三張卡片在 640px 欄寬同列；原 220px）。每張卡片：底 `--home-surface`、圓角 `--home-radius`、內距 20px、1px `--home-border`、`--home-shadow`；左上 64px 圓形淡色底（§14.2 的 `color-mix`）放 48px 圖示；名稱 16px／600 `--home-fg`；描述（註冊表 `description`）13px／18px `--home-fg-muted`，允許兩行、`text-wrap: balance`（三卡同列時 150px 內寬放不下 14 字，平衡換行讓它在逗號附近斷）；卡片等高（grid stretch）。**選取**：2px `--home-accent` 邊框（以 `box-shadow: inset 0 0 0 2px` 或 outline 實作，不改尺寸）＋底 `--home-accent-soft`＋右上 20px 圓形 `--home-accent` 底 `--home-on-accent` 打勾（SVG）。**hover**（可選者）：底 `--home-surface-hover`、`--home-shadow-hover`、`translateY(-2px)`。**不可選**（即將推出）：`opacity .55`、`cursor: default`、右上「即將推出」膠囊（12px、1px `--home-border`、`--home-fg-dim`）。
 - **進入遊戲**：全寬、高 48px、圓角 12px、底 `--home-accent`、字 `--home-on-accent` 16px／600；hover `--home-accent-hover`；未連線與加入中用原生 `disabled`（`opacity .5`、`cursor: default`；首頁不偽裝、沒有 Tooltip，不必用 aria-disabled）；加入中顯示「加入中…」。
 - **連線狀態**：一行 13px `--home-fg-muted`：8px 圓點（已連線 `--home-ok`，其他 `--home-fg-dim`）＋文字「已連線」「正在連線到伺服器…」「連線中斷，重新連線中…」；`aria-live="polite"`。
 - **頁尾**：「fishing-work」12px `--home-fg-dim`。
@@ -396,3 +412,81 @@ Soft UI Evolution（ui-ux-pro-max 建議；不採純 neumorphism，對比不足�
 
 - 首頁：`<html data-theme="home">`、`document.title`「fishing-work」、favicon `favicon.svg`；進殼層即換成該主題的值（`shells/document.ts`）。`main.tsx` 第一次繪製前依「是否有重連憑證」決定 `data-theme`（有 → 所選殼層；無 → home）。在此之前 `index.html` 的 `<head>` 最前面（CSS 之前）有 6 行內嵌腳本先設 `data-theme`（只判斷 session 鍵是否存在、不驗 JSON：有 → localStorage 的主題原字串或 vscode；無或任何例外 → home），不做 title 邏輯；靜態 `<title>` 為中性「fishing-work」。守門測試比對兩個 storage 鍵名（`SESSION_KEY`、`SHELL_STORAGE_KEY`）並以假 storage 執行腳本對照 `initialDocumentTheme`。
 - 自動重連（有憑證）期間顯示所選殼層的空白畫面與「正在重新加入…」（`ShellProps` 的 `screen: 'resume'`），不顯示首頁；失敗才回首頁並顯示錯誤。
+
+## 15. 視訊會議主題（`data-theme="meet"`，Epic 5）
+
+> 偽裝成一場「有人正在分享畫面」的 Google Meet 通話。深色會議區＋白色側邊面板；圓角 8px 為本主題例外。規劃：[plan/meet-theme.md](plan/meet-theme.md)。
+
+### 15.1 token 覆寫（同名 token，只列與 §3 不同者；對比為實算值）
+
+| token | 值 | 用途 |
+|-------|----|------|
+| `--bg-activity`／`--bg-sidebar`／`--bg-editor`／`--bg-titlebar`／`--bg-statusbar`／`--bg-statusbar-drawer` | `#202124` | 會議區底（底部控制列、影片條、舞台）；畫師時控制列不變色（畫師靠主畫面標籤與 tile 外框） |
+| `--bg-tab-active`／`--bg-tab-inactive`／`--bg-slide` | `#3C4043` | 主畫面 tile 與參加者 tile 底；`--fg` 於其上 8.7:1 |
+| `--bg-input` | `#F1F3F4` | 面板輸入膠囊與對話框輸入框（白底區）；`--fg-on-panel` 於其上 14.5:1 |
+| `--bg-quickinput` | `#3C4043` | 工具提示（layout/Tooltip）與工具列「⋯」面板：Meet 的提示就是深灰白字（`--fg` 8.7:1）；**對話框不用此 token，改用 `--bg-panel`** |
+| `--bg-card` | `#FFFFFF` | 訊息卡 |
+| `--bg-hover` | `#3C4043` | 深色區 hover（控制列按鈕、選單） |
+| `--bg-active` | `#8AB4F8` | 按下／選取（工具列按下的按鈕、色塊外框）；`--fg-on-active` `#202124`（7.6:1） |
+| `--bg-selection` | `#394457` | 文字選取 |
+| `--border` | `#5F6368` | 深色區邊框 |
+| `--border-focus` | `#8AB4F8` | focus 外框、畫師 tile 外框 |
+| `--fg`／`--fg-editor`／`--fg-statusbar` | `#E8EAED` | 深色區文字（13.4:1；tile 上 8.7:1） |
+| `--fg-muted` | `#9AA0A6` | 深色區次要文字（`#202124` 上 6.1:1；**tile 上只有 4.0:1，tile 內承載資訊的文字一律用 `--fg`**） |
+| `--fg-dim` | `#80868B` | 裝飾（時間、會議代碼） |
+| `--fg-link`／`--accent` | `#8AB4F8` | 深色區強調（已猜對舉手圖示、作用中的「分享畫面」） |
+| `--accent-hover` | `#AECBFA` | |
+| `--bg-button-secondary`／`--bg-button-secondary-hover` | `#3C4043`／`#5F6368` | 控制列圓形按鈕 |
+| `--scrollbar-thumb` | `rgba(255, 255, 255, 0.3)` | |
+| `--statusbar-hover` | `rgba(255, 255, 255, 0.12)` | 控制列 hover |
+| `--focus-on-color` | `#FFFFFF` | |
+| `--quickinput-shadow` | `0 4px 12px rgba(0, 0, 0, 0.4)` | 對話框陰影 |
+| `--slide-shadow` | `none` | |
+| `--sem-comment` | `#9AA0A6` | 深色區系統字（未使用；面板內 system 用 `--fg-on-panel-muted`） |
+| `--sem-variable`／`--sem-function`／`--sem-number`／`--sem-string`／`--sem-keyword` | `#E8EAED` | 未使用（給深色區可讀值） |
+| `--sem-type` | `#188038` | 面板內「猜對」綠字（白底 5.0:1） |
+| `--sem-error` | `#D93025` | 面板與對話框的錯誤文字（白底 4.8:1）；深色區不顯示錯誤 |
+| `--sem-warning` | `#FDD663` | 保留值（`#202124` 上 11.5:1）；v1 字幕列倒數不另套色，沿用功能元件的白字＋警示圖示 |
+| `--bg-panel` | `#FFFFFF` | 右側「通話中的訊息」面板底 |
+| `--bg-panel-hover` | `#F1F3F4` | 面板內 hover |
+| `--fg-on-panel` | `#202124` | 面板文字（16.1:1） |
+| `--fg-on-panel-muted` | `#5F6368` | 面板次要文字：時間戳、system、功能提示（6.1:1） |
+| `--border-panel` | `#DADCE0` | 面板分隔線 |
+| `--accent-panel` | `#1967D2` | 面板與對話框的藍色文字按鈕、送出圖示（白底 5.4:1；不用 `#1A73E8`，只有 4.5:1） |
+| `--font-code` | `system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif` | 全介面無襯線 |
+
+不覆寫：`--bg-canvas`（畫布固定黑）、`--brand-*`、`--avatar-1..6`／`--fg-on-avatar`（參加者 tile 的頭像圓沿用）。
+
+### 15.2 版面
+
+| 區塊 | 尺寸 | 內容 |
+|------|------|------|
+| 舞台（左） | 佔剩餘寬高；內距 16px | 主畫面 tile：16:9 畫布置中，圓角 8px，底 `--bg-tab-active`；左上 12px 標籤「<畫師> 正在分享畫面」（idle「尚無人分享畫面」），白字半透明深底膠囊；**畫師本人作畫中不顯示標籤**（上緣整列給浮動工具列，1280px 時 tile 約 672px 放不下兩者；猜題者與其他階段照顯示）；畫師時 tile 外框 2px `--border-focus` |
+| 浮動工具列 | 主畫面上緣往下 12px，置中，高 44px | 畫師工具列（toolbar 插槽）：深色膠囊（底 `--bg-tab-active`、圓角 22px、`--quickinput-shadow`）；只有畫師時出現 |
+| 字幕列 | 主畫面下緣往上 12px，置中，最大寬 720px | 回合狀態（roundStatus 插槽）：底 `--bg-tab-active` 90%、白字 14px、圓角 8px、內距 8px 16px；倒數最後 10 秒沿用功能元件的白字＋警示圖示，不另套色（決策 13） |
+| 右側影片條 | 寬 200px（< 1280px 為 160px），gap 8px，可捲動 | 參加者 tile 16:9 圓角 8px 底 `--bg-tab-inactive`：置中 40px 頭像圓（暱稱首字、`--avatar-n`、`--fg-on-avatar`）；左下暱稱 12px `--fg`（自己加「（你）」）；右下分數膠囊 12px `--fg` 只顯示總分「N 分」（本回合的「+N」不上 tile，放工具提示與 sr-only；字幕列與「你猜對了」已顯示 +N；200px tile 放不下「+20 20 分」會擠掉暱稱）；畫師：左上 16px 分享圖示＋2px `--border-focus` 外框；已猜對：右上 16px 舉手圖示 `--accent`；斷線：整張 `opacity .5`＋左下改「連線中斷」 |
+| 右側面板 | 寬 360px，外距 16px（上、右、下），圓角 8px，底 `--bg-panel` | 標題列 48px「通話中的訊息」＋右側 × 關閉（＝切換面板）；輸入列上方 12px `--fg-on-panel-muted` 功能提示（同 ppt）（畫師「聊天（不可說出答案）」、猜題者「輸入答案或聊天」，`aria-describedby`）；訊息列表（`role="log"`）；底部輸入列：膠囊 `--bg-input` 圓角 24px 高 40px、placeholder「傳送訊息給所有人」、右側送出圖示 `--accent-panel`（`canSend` 為 false 時 `--fg-on-panel-muted`）；投放覆蓋層蓋整個面板（`data-chat-drop-zone`） |
+| 底部控制列 | 高 80px，底 `--bg-activity`，三欄 | 左：`HH:mm` ｜ `kqw-mzdv-ptj`（`--fg`／`--fg-dim`）＋ connection 插槽小字；中：40px 圓形按鈕 ×6（底 `--bg-button-secondary`、白色 20px 圖示、hover `--bg-button-secondary-hover`）麥克風（靜音斜線）、攝影機（關閉斜線）、字幕、**分享畫面**（volunteer 插槽：可按時圖示白、按下開局；人數不足時 `opacity .5` 並在按鈕上方 12px 小字「等待其他玩家加入（n/2）」）、舉手、更多 ⋮（選單：切換偽裝…）；最右 離開通話：紅色膠囊 56×40 底 `#D93025`＝`--sem-error`（白字 4.8:1）、裝飾；右：資訊（Epic 6 起＝遊戲說明清單，工具提示「說明」）、使用者(N)（N＝counts.online）、訊息（切換面板，開啟時圖示 `--accent`）、活動 |
+| 對話框 | 寬 420px | 白卡片 `--bg-panel` 圓角 8px、`--quickinput-shadow`、標題 20px `--fg-on-panel`、內文 14px、右下文字按鈕（`--accent-panel`，14px／500，hover `--bg-panel-hover`）：出題「輸入題目」（取消／分享）；放棄確認「停止分享畫面？」（繼續分享／停止分享，後者 `--sem-error`）；自動重連「正在重新加入通話…」單行 `role="status"` |
+
+### 15.3 與其他主題的差異
+
+- 圓角 8px（tile、面板、對話框）、控制列圓形按鈕、膠囊輸入列：本主題例外（§6 的 2px 圓角不適用）。
+- 畫師時控制列不變色；畫師身分靠主畫面標籤、tile 外框與浮動工具列。
+- 聊天訊息格式：`暱稱`（13px／500 `--fg-on-panel`；自己的訊息顯示「你」）＋ 右側 `HH:mm`（12px `--fg-on-panel-muted`）一行，內文 14px 換行；連續同人訊息只顯示一次名字（見下）；system 12px `--fg-on-panel-muted` 置中；correct `--sem-type` 加打勾；image 縮圖卡（同 §5 尺寸）。
+- 工具列收合斷點 **1280px**（< 1280 一律收進「⋯」：1024–1279px 時 tile 只有 456–672px，完整工具列 542px 放不下）；vscode 1120、ppt 640。
+- 拖圖覆蓋層：`ChatView.overlayClassName`（選填，Epic 5 新增；預設＝§5 的 `--bg-selection` 0.35）；meet 為白底 `--bg-panel` 90%、2px 虛線與「放開以傳送圖片」文字皆 `--accent-panel`。
+- 連續同人訊息只顯示一次名字：`ChatLineProps.groupWithPrevious`（選填，ChatPanel 計算：與前一則同 fromId 且兩則皆為 chat／image）；其他殼層忽略。
+- 圖示：自繪 Material 風格線條圖示（16px 面板內、20px 控制列），不用 Google 圖示字型與商標；首頁卡片圖示為綠色攝影機 `--brand-meet`。
+- 響應式：< 1024px 影片條改為主畫面下方橫向列（tile 寬 120px）；< 768px 右側面板改為覆蓋層，由「訊息」按鈕開關，預設開。
+- 視窗標題 `Meet – kqw-mzdv-ptj`，作畫中前綴 `● `；favicon `favicon-meet.svg`（自繪攝影機）。
+
+## 16. 遊戲說明（共通，Epic 6）
+
+> 偽裝介面裡本來就有的「說明」假入口改成真的：ppt 功能區「說明」分頁、vscode 齒輪選單「說明…」、meet 底部「資訊」按鈕。規劃與內文：[plan/help-topics.md](plan/help-topics.md)。
+
+- **內容一份**（`features/help/helpTopics.ts`），殼層只提供兩個名稱：「我來畫」按鈕文字（`volunteer.label`）與切換偽裝路徑（`ShellViews.help.switchHint`，不帶「…」）。
+- **入口在所有寬度都可達**：除主入口（ppt「說明」分頁、vscode 齒輪、meet「資訊」）外，ppt「檔案」選單與 meet「更多 ⋮」選單各有第二項「說明…」（窄螢幕主入口隱藏時仍可開）。清單步驟右下有「關閉」；vscode 內文選項帶 Enter／Esc 提示。
+- **兩步對話框**（既有 Dialog 加 `body`）：第一步標題「說明」、items＝六個主題；第二步標題＝主題、body＝段落、items「返回」「關閉」；Esc 關閉。ppt 的功能區按鈕直接跳第二步。
+- **段落排版**：vscode 13px／行高 18px、段距 6px、`--fg`；ppt 與 meet 14px／行高 20px、段距 8px、`--fg`（meet 對話框在白卡片上用 `--fg-on-panel`）。內文最多約 6 行，不捲動。
+- 對話框寬度、按鈕、鍵盤與各殼層既有對話框相同；不新增色碼。

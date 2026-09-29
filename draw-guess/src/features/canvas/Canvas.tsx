@@ -4,6 +4,7 @@ import { CANVAS_LOGICAL, type Point } from '@fishing-work/shared'
 import { sendDrawOp } from '../../socket/client'
 import { selectCanDraw, useGameStore } from '../../store/game'
 import { normalizeBrushSize, normalizeColor } from './brush'
+import { canvasBackground } from './canvasBackground'
 import { drawOp, redrawAll } from './render'
 import { chunkPoints, newStrokeId, normalizePoint } from './stroke'
 
@@ -20,6 +21,8 @@ export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const strokeRef = useRef<ActiveStroke | null>(null)
   const canDraw = useGameStore(selectCanDraw)
+  // 底色（Epic 7）：selector 回傳字串，只有底色變了才重新 render
+  const background = useGameStore((s) => canvasBackground(s.ops))
 
   // 渲染：直接訂閱 store（不經 React render）。
   // opsVersion 變了（快照、undo、clear、新回合）→ 全量重繪；否則只增量畫新追加的 op。
@@ -122,7 +125,8 @@ export function Canvas() {
   }
 
   // 16:9 等比縮放到容器（父層須為 size container）：寬取「容器寬」與「容器高 × 16/9」的較小者。
-  // canvas 本身透明，底色由 CSS 背景 --bg-canvas 提供；其值為 shared 的 CANVAS_BACKGROUND（啟動時注入，見 canvasBackground.ts；§6）
+  // canvas 本身透明（橡皮擦 destination-out 擦出底色），底色由 CSS 背景提供：canvasBackground(ops) 以 inline style 設定
+  // （預設 shared 的 CANVAS_BACKGROUND；畫師的 background op 換色，Epic 7）。bg-canvas class（--bg-canvas 常數注入）留作後備；§6
   return (
     <canvas
       ref={canvasRef}
@@ -133,6 +137,7 @@ export function Canvas() {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
+      style={{ backgroundColor: background }}
       className={`block aspect-video w-[min(100cqw,calc(100cqh*16/9))] touch-none bg-canvas outline-1 outline-border ${canDraw ? 'cursor-crosshair' : 'cursor-default'}`}
     />
   )

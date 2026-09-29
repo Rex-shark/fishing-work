@@ -131,6 +131,19 @@ export function chatPlaceholder(phase: RoundPhase, isDrawer: boolean, hasGuessed
   return '輸入訊息後按 Enter'
 }
 
+/**
+ * 連續同人訊息（ChatLineProps.groupWithPrevious；Epic 5 決策 13(5)）：與前一則同一個發話者（fromId 非 null 且相同），
+ * 且兩則都是一般聊天或圖片（system、correct 會打斷分組）。殼層可據此只顯示一次名字
+ */
+export function groupsWithPrevious(
+  prev: Pick<ChatMessage, 'kind' | 'fromId'> | undefined,
+  cur: Pick<ChatMessage, 'kind' | 'fromId'>,
+): boolean {
+  if (prev === undefined || cur.fromId === null || prev.fromId !== cur.fromId) return false
+  const groupable = (k: ChatMessage['kind']) => k === 'chat' || k === 'image'
+  return groupable(prev.kind) && groupable(cur.kind)
+}
+
 /** 捲動位置是否在底部附近（新訊息進來時才自動跟隨；使用者往上捲時不強制拉回） */
 export function isNearBottom(
   scrollTop: number,

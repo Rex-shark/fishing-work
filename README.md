@@ -20,7 +20,7 @@
 
 ## 需求
 
-- Node.js ≥ 22.12
+- Node.js ≥ 22.12（改用 Docker 部署則只需要 Docker，見下方「Docker 部署（換電腦）」）
 - （外網分享才需要）`cloudflared`
 
 ## 正式部署（區網）
@@ -40,7 +40,7 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 5. **分享** `http://<IP>/draw-guess/` 給同事即可（`http://<IP>/` 是遊戲清單頁）。客戶端不需要設定任何伺服器位址。
 6. **IP 會隨 DHCP 變動**：請在路由器為這台電腦保留 IP，或改用 `http://<電腦名稱>.local/draw-guess/`（mDNS，macOS 與多數 Windows 10+ 可解析）。電腦名稱見「系統設定 → 一般 → 共享」底部的「本機主機名稱」，或在終端機執行 `scutil --get LocalHostName`。
 
-環境變數：`PORT`（預設 80）、`HOST`（預設 `0.0.0.0`）。例如 `PORT=8080 npm start`（非 80 埠時網址會帶埠號 `http://<IP>:8080/draw-guess/`）；`HOST=127.0.0.1` 只允許本機連線，區網同事會連不上。
+環境變數：`PORT`（預設 80）、`HOST`（預設 `0.0.0.0`）。例如 `PORT=8080 npm start`（非 80 埠時網址會帶埠號 `http://<IP>:8080/draw-guess/`）；`HOST=127.0.0.1` 只允許本機連線，區網同事會連不上。選用 `PUBLIC_URL`（例如 `http://192.168.1.50/draw-guess/`）：有設時 `server.lan` 只印這個網址（`source: "PUBLIC_URL"`），主要給 Docker 部署用。
 
 - 為什麼是 80：公司區網只放行標準埠，5173／3000 之類的埠會被擋。macOS 10.14 起一般使用者即可綁 80，不需 sudo；Linux 需 `sudo` 或 `setcap`。
 - 伺服器重啟後分數歸零（只存在記憶體）。
@@ -72,6 +72,44 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 - 快速通道的網址是臨時的，**每次重啟 tunnel 都會變**；要固定網址需用具名通道（見 [spec/architecture.md](spec/architecture.md) §3「外網可達」）。
 - **網址公開即任何人都能進來**，本專案沒有登入機制，只靠網址不外流（房間上限 50 人）。只分享給同事，**玩完就關掉 tunnel**（在該終端機按 Ctrl+C）。
 - tunnel 固定指向 80 埠；server 若改用其他 `PORT`，tunnel 會連不到。
+
+## Docker 部署（換電腦）
+
+新電腦**只要裝 Docker**，不必裝 Node、不必 `npm install`／`npm run build`：映像在建置時就把前後端建好，只含執行需要的檔案（不含原始碼與開發工具），以非 root 使用者執行，並內建 `/healthz` 健康檢查。
+
+1. **安裝 Docker Desktop**（macOS／Windows），啟動一次讓它跑起來。
+2. **取得程式並啟動**：
+
+   ```bash
+   git clone <repo 網址> fishing-work
+   cd fishing-work
+   docker compose up -d --build     # 第一次會建置映像，約一兩分鐘
+   ```
+
+3. **查這台電腦的區網 IP**：macOS `ipconfig getifaddr en0`（有線網路可能是 `en1`）；Windows 在命令提示字元執行 `ipconfig`，看「IPv4 位址」。
+4. **分享** `http://<IP>/draw-guess/` 給同事（`http://<IP>/healthz` 回 `{"ok":true}` 代表連得到）。
+   - 容器內看不到主機的區網 IP，啟動 log 不會列出分享網址，而是印 `server.lan.container` 提示。想讓 log 直接印出正確網址，可設 `PUBLIC_URL`：
+
+     ```bash
+     PUBLIC_URL=http://192.168.1.50/draw-guess/ docker compose up -d
+     ```
+
+     或在專案根目錄建立 `.env` 檔寫入 `PUBLIC_URL=http://192.168.1.50/draw-guess/`（`HOST_PORT` 也可以寫在這裡），之後 `docker compose up -d` 都會套用。
+
+常用指令（都在專案根目錄執行）：
+
+| 動作 | 指令 |
+|------|------|
+| 看 log | `docker compose logs`（持續追蹤加 `-f`） |
+| 停止並移除容器 | `docker compose down` |
+| 更新到最新版 | `git pull` 後 `docker compose up -d --build` |
+| 看狀態（含健康檢查） | `docker compose ps` |
+
+- **重開機自動恢復**：compose 設了 `restart: unless-stopped`，只要 Docker Desktop 有開機自動啟動（設定 → General →「Start Docker Desktop when you sign in」）就會自己起來；用 `docker compose down` 停掉的則不會。
+- **Windows 的 80 埠被占用**（常見是 IIS 或 `http.sys`，啟動時報埠已被使用）：改用其他主機埠，例如 PowerShell `$env:HOST_PORT=8080; docker compose up -d --build`（或寫進 `.env`：`HOST_PORT=8080`），分享網址要帶埠號 `http://<IP>:8080/draw-guess/`；也可以停掉占用 80 的服務。注意公司區網可能只放行標準埠。
+- **防火牆**：第一次啟動時系統若詢問是否允許 Docker 接受連入連線 → 允許，否則同事連不上。
+- **外網分享**：Cloudflare Tunnel 仍在主機上跑（不放進容器）：`cloudflared tunnel --url http://localhost:80`（主機埠改過就改成對應埠）。
+- 只想用 Dockerfile 不用 compose 也可以：`docker build -t fishing-work .` → `docker run -d --name fishing-work -p 80:80 --restart unless-stopped fishing-work`。要讓 log 印出正確的分享網址，`docker run` 再加 `-e PUBLIC_URL=http://<新電腦 IP>/draw-guess/`。
 
 ## 開發
 

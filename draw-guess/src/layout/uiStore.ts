@@ -6,7 +6,10 @@
 //   不監聽 storage 事件——每個分頁以自己的 state 為準，別的分頁切換互不影響（DESIGN §13.4「分頁之間不同步」）。
 // - nicknameDraft：首頁輸入到一半的暱稱（Epic 4 起登入在首頁 home/HomeScreen；加入成功即清除，之後改用上次的暱稱）。
 //   Epic 3 時是為了換主題重新掛載殼層而設；首頁選卡片不會重新掛載，沿用同一份狀態。
+// - helpTopic：遊戲說明對話框（Epic 6 決策 3）：null＝關閉、'list'＝主題清單（第一步）、主題 id＝該主題內文（第二步）。
+//   殼層的說明入口經 App 注入的 ShellProps.help.open 開啟（殼層不 import 本檔）；對話框為 dialogs 插槽裡的 features/help/HelpDialog。
 import { create } from 'zustand'
+import type { HelpTopicId } from '../features/help/helpTopics'
 import { DEFAULT_SHELL_ID, isRegisteredShellId, resolveShellId, type ShellId } from '../shells'
 
 /** localStorage 鍵（決策 3） */
@@ -54,6 +57,9 @@ interface UiState {
   /** 首頁的暱稱草稿；null＝尚未輸入（用上次的暱稱） */
   nicknameDraft: string | null
   setNicknameDraft(value: string | null): void
+  /** 遊戲說明：null＝關閉、'list'＝主題清單、主題 id＝該主題內文 */
+  helpTopic: 'list' | HelpTopicId | null
+  setHelpTopic(topic: 'list' | HelpTopicId | null): void
 }
 
 export const useUiStore = create<UiState>()((set, get) => ({
@@ -67,4 +73,6 @@ export const useUiStore = create<UiState>()((set, get) => ({
   },
   nicknameDraft: null,
   setNicknameDraft: (nicknameDraft) => set({ nicknameDraft }),
+  helpTopic: null,
+  setHelpTopic: (helpTopic) => set({ helpTopic }),
 }))

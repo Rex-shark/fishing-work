@@ -1,5 +1,6 @@
 // 畫面三分支（plan/home-page.md 決策 4；architecture §7；判定為純函式 pickScreen）：
-//   已加入 → 目前殼層（uiStore.shellId）的遊戲畫面，把功能元件放進插槽（themes＝切換偽裝入口的資料；counts＝在線／玩家數，殼層不讀 store）；
+//   已加入 → 目前殼層（uiStore.shellId）的遊戲畫面，把功能元件放進插槽（themes＝切換偽裝入口的資料；counts＝在線／玩家數；
+//   round.drawerName＝畫師暱稱（shellRound.drawerNameOf）；help＝遊戲說明入口（features/help，Epic 6）；殼層不讀 store）；
 //   未加入但有重連憑證（resuming）→ 殼層的自動重連畫面（空白畫面＋「正在重新加入…」），遊戲中重新整理不閃首頁；
 //   其餘 → 首頁（home/HomeScreen，不偽裝）。
 // 文件層級（<html data-theme>、document.title、favicon）依畫面同步：首頁為 HOME_DOCUMENT，殼層為該主題（shells/document.ts）。
@@ -8,6 +9,8 @@ import { useEffect, useLayoutEffect, useMemo } from 'react'
 import { Canvas } from './features/canvas/Canvas'
 import { ToolBar } from './features/canvas/ToolBar'
 import { ChatPanel } from './features/chat/ChatPanel'
+import { HelpDialog } from './features/help/HelpDialog'
+import { openHelp } from './features/help/helpOpen'
 import { ConnectionStatus } from './features/lobby/ConnectionStatus'
 import { PlayerList } from './features/players/PlayerList'
 import { CancelConfirm } from './features/round/CancelConfirm'
@@ -18,7 +21,8 @@ import { HomeScreen } from './home/HomeScreen'
 import { TooltipLayer } from './layout/Tooltip'
 import { useUiStore } from './layout/uiStore'
 import { pickScreen } from './pickScreen'
-import { getShell, type ShellThemeSwitch } from './shells'
+import { drawerNameOf } from './shellRound'
+import { getShell, type ShellHelp, type ShellThemeSwitch } from './shells'
 import { THEME_CATALOG } from './shells/catalog'
 import { HOME_DOCUMENT, applyDocumentTheme } from './shells/document'
 import { connect } from './socket/client'
@@ -27,12 +31,17 @@ import { selectCanDraw, selectIsDrawer, useGameStore } from './store/game'
 /** 自動重連畫面的提示（ShellProps screen 'resume' 的 notice） */
 const RESUME_NOTICE = '正在重新加入…'
 
+/** 遊戲說明的入口（Epic 6 決策 3）：殼層呼叫 open，開關在 uiStore.helpTopic（殼層不 import uiStore） */
+const HELP: ShellHelp = { open: openHelp }
+
 function App() {
   const joined = useGameStore((s) => s.me !== null)
   const resuming = useGameStore((s) => s.resuming)
   const phase = useGameStore((s) => s.round.phase)
   const isDrawer = useGameStore(selectIsDrawer)
   const canDraw = useGameStore(selectCanDraw)
+  // 畫師暱稱（ShellProps.round.drawerName）：selector 回傳字串或 null（值相同不重繪）
+  const drawerName = useGameStore((s) => drawerNameOf(s.round, s.players))
   // 殼層的人數計數（ShellProps.counts）：selector 只回傳數字（回傳新陣列會無限重繪）
   const online = useGameStore((s) => countConnected(s.players))
   const total = useGameStore((s) => s.players.length)
@@ -62,9 +71,10 @@ function App() {
         <Shell
           key="game"
           screen="game"
-          round={{ phase, isDrawer, canDraw }}
+          round={{ phase, isDrawer, canDraw, drawerName }}
           counts={counts}
           themes={themes}
+          help={HELP}
           players={<PlayerList />}
           canvas={<Canvas />}
           toolbar={<ToolBar />}
@@ -74,6 +84,8 @@ function App() {
           connection={<ConnectionStatus />}
           dialogs={
             <>
+              {/* 說明放最前：出題、放棄確認與它同時出現時疊在上面（同 z 層後渲染者在上） */}
+              <HelpDialog />
               <TopicDialog />
               <CancelConfirm />
             </>

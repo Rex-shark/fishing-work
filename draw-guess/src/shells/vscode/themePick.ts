@@ -39,6 +39,33 @@ export function chooseTheme(themes: ShellThemeSwitch, id: ShellId): boolean {
   return true
 }
 
+export interface ManageMenuEntry {
+  id: 'switch-theme' | 'help'
+  label: string
+  /** 選取後關閉選單時是否把焦點還給齒輪 */
+  refocus: boolean
+}
+
+/**
+ * 齒輪選單的項目（DESIGN §5）：「切換偽裝…」；有遊戲說明（Epic 6）時第二項「說明…」。
+ * 切換偽裝不還焦點（快速選單接手）；說明先把焦點還給齒輪（說明關閉時焦點回到開啟它的元素＝齒輪）
+ */
+export function manageMenuEntries(hasHelp: boolean): ManageMenuEntry[] {
+  const items: ManageMenuEntry[] = [{ id: 'switch-theme', label: '切換偽裝…', refocus: false }]
+  if (hasHelp) items.push({ id: 'help', label: '說明…', refocus: true })
+  return items
+}
+
+/** 選取齒輪選單的項目：先關閉選單，再開快速選單或說明（help.open() 不帶主題＝清單） */
+export function selectManageEntry(
+  entry: ManageMenuEntry,
+  handlers: { close(refocus: boolean): void; onSwitchTheme(): void; onHelp?: () => void },
+): void {
+  handlers.close(entry.refocus)
+  if (entry.id === 'help') handlers.onHelp?.()
+  else handlers.onSwitchTheme()
+}
+
 /** 選單鍵盤：↑↓ 循環、Home／End 到兩端；其他鍵回 null */
 export function stepMenuIndex(count: number, index: number, key: string): number | null {
   if (count <= 0) return null

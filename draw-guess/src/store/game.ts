@@ -9,7 +9,7 @@ import {
   type RoundPublic,
   type Tool,
 } from '@fishing-work/shared'
-import { compactOps } from '../features/canvas/render'
+import { compactOps, replaceBackground } from '../features/canvas/render'
 import { appendChatMessage, trimChat } from '../features/chat/chatFormat'
 import {
   addImageUrl,
@@ -183,12 +183,16 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
     set((state) => {
       switch (op.type) {
         case 'clear':
-          return { ops: [], opsVersion: state.opsVersion + 1 }
+          // 只清筆跡，背景保留（architecture §5，Epic 7）
+          return { ops: state.ops.filter((o) => o.type === 'background'), opsVersion: state.opsVersion + 1 }
         case 'undo':
           return {
-            ops: state.ops.filter((o) => o.type === 'clear' || o.strokeId !== op.strokeId),
+            ops: state.ops.filter((o) => o.type === 'background' || o.type === 'clear' || o.strokeId !== op.strokeId),
             opsVersion: state.opsVersion + 1,
           }
+        case 'background':
+          // 只留最後一個（原地取代或附加）；背景不畫進畫布，筆跡不必重繪，opsVersion 不變
+          return { ops: replaceBackground(state.ops, op) }
         default:
           return { ops: [...state.ops, op] }
       }

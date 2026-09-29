@@ -13,7 +13,8 @@ export type DrawOp =
   | { type: 'move';  strokeId: string; points: Point[] }          // 每個動畫影格批次送一次
   | { type: 'end';   strokeId: string }
   | { type: 'undo';  strokeId: string }                           // 移除該筆畫，客戶端重繪
-  | { type: 'clear' };
+  | { type: 'clear' }                                             // 只清筆跡，不重設背景（Epic 7）
+  | { type: 'background'; color: string };                        // 畫布背景色（Epic 7）：#RRGGBB；歷史只保留最後一個；每回合從 CANVAS_BACKGROUND 開始
 
 export type RoundPhase = 'idle' | 'choosing' | 'drawing' | 'ended';
 export type EndReason = 'allGuessed' | 'timeout' | 'drawerLeft' | 'cancelled' | null;

@@ -6,13 +6,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { sendChat, sendImage } from '../../socket/client'
 import { selectHasGuessed, selectIsDrawer, useGameStore } from '../../store/game'
-import { useChatView, type ChatComposerProps, type ChatView } from '../../shells/views'
+import { resolveChatOverlayClass, useChatView, type ChatComposerProps, type ChatView } from '../../shells/views'
 import {
   CHAT_ERROR_MS,
   CHAT_INPUT_MAX_UNITS,
   chatErrorText,
   chatLineData,
   chatPlaceholder,
+  groupsWithPrevious,
   isNearBottom,
   shouldSend,
 } from './chatFormat'
@@ -113,9 +114,10 @@ export function ChatPanel() {
         aria-live="polite"
         className={`min-h-0 flex-1 overflow-y-auto ${view.listClassName}`}
       >
-        {chat.map((m) => (
+        {chat.map((m, i) => (
           <view.Line
             key={m.id}
+            groupWithPrevious={groupsWithPrevious(chat[i - 1], m)}
             line={chatLineData(
               m,
               m.kind === 'image'
@@ -139,7 +141,7 @@ export function ChatPanel() {
         createPortal(
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-border-focus bg-selection/35 text-fg"
+            className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${resolveChatOverlayClass(view)}`}
           >
             放開以傳送圖片
           </div>,

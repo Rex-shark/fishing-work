@@ -1,7 +1,7 @@
 // vscode 主題的殼層外框（DESIGN.md §5 版面、§8 響應式）：活動列｜側欄（EXPLORER）｜編輯區＋底部面板（TERMINAL）｜狀態列。
 // 只負責版面與尺寸；內容由 VscodeShell 傳入（已加入：遊戲；未加入：側欄與面板皆空、浮出暱稱輸入）。
 // 底部面板是聊天室的容器：帶 data-chat-drop-zone 且為 relative，聊天室以它為圖片投放區、覆蓋層蓋滿整個面板（含標題列）。
-// 遊戲中（有 themes）活動列底部的設定齒輪可操作：選單「切換偽裝…」→ 快速選單（ManageMenu.tsx）；自動重連畫面齒輪維持裝飾。
+// 遊戲中（有 themes）活動列底部的設定齒輪可操作：選單「切換偽裝…」→ 快速選單（ManageMenu.tsx）、「說明…」→ 遊戲說明（help，Epic 6）；自動重連畫面齒輪維持裝飾。
 import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import {
   AccountIcon,
@@ -17,7 +17,7 @@ import {
 } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
 import { useMediaQuery } from '../../layout/useElementSize'
-import type { ShellThemeSwitch } from '../types'
+import type { ShellHelp, ShellThemeSwitch } from '../types'
 import { clampPanelHeight, clampSidebarWidth } from './ideLayout'
 import { ManageButton, ThemeQuickPick } from './ManageMenu'
 
@@ -33,12 +33,14 @@ interface ShellFrameProps {
   overlay?: ReactNode
   /** 切換偽裝（遊戲中才有）；省略時設定齒輪為裝飾 */
   themes?: ShellThemeSwitch
+  /** 遊戲說明（遊戲中才有）；齒輪選單的「說明…」 */
+  help?: ShellHelp
 }
 
 /** ≥ 1024px 側欄內嵌；以下改為覆蓋層（DESIGN §8） */
 const WIDE_QUERY = '(min-width: 1024px)'
 
-export function ShellFrame({ sidebar, editor, panel, statusBar, overlay, themes }: ShellFrameProps) {
+export function ShellFrame({ sidebar, editor, panel, statusBar, overlay, themes, help }: ShellFrameProps) {
   const wide = useMediaQuery(WIDE_QUERY)
   /** 寬螢幕：側欄是否收起（活動列第一個圖示切換） */
   const [sidebarHidden, setSidebarHidden] = useState(false)
@@ -74,6 +76,7 @@ export function ShellFrame({ sidebar, editor, panel, statusBar, overlay, themes 
           onToggleExplorer={toggleSidebar}
           gearRef={gearRef}
           onSwitchTheme={themes !== undefined ? () => setThemePickOpen(true) : undefined}
+          onHelp={help !== undefined ? () => help.open() : undefined}
         />
 
         {sidebarVisible && (
@@ -154,8 +157,9 @@ function ActivityBar(props: {
   onToggleExplorer: () => void
   gearRef: RefObject<HTMLButtonElement | null>
   onSwitchTheme?: () => void
+  onHelp?: () => void
 }) {
-  const { explorerOpen, onToggleExplorer, gearRef, onSwitchTheme } = props
+  const { explorerOpen, onToggleExplorer, gearRef, onSwitchTheme, onHelp } = props
   // 裝飾圖示的懸停提示仿 VS Code 的英文名稱（DESIGN §1-4：偽裝用標籤用英文）
   const decorative = [
     { Icon: SearchIcon, name: 'Search' },
@@ -190,7 +194,7 @@ function ActivityBar(props: {
           <AccountIcon size={24} />
         </span>
         {onSwitchTheme !== undefined ? (
-          <ManageButton buttonRef={gearRef} onSwitchTheme={onSwitchTheme} />
+          <ManageButton buttonRef={gearRef} onSwitchTheme={onSwitchTheme} onHelp={onHelp} />
         ) : (
           <span aria-hidden="true" {...tip('Manage', 'right')} className="flex h-[48px] items-center justify-center">
             <GearIcon size={24} />

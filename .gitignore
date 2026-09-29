@@ -6,3 +6,6 @@ dist
 # IDEA 專案檔（各人本機）
 .idea
 *.iml
+
+# Docker compose 本機設定（PUBLIC_URL、HOST_PORT）
+.env

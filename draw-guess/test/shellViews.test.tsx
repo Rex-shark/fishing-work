@@ -57,9 +57,9 @@ describe('預設值＝vscode 外觀', () => {
 })
 
 describe('畫師工具列收合斷點（ShellViews.toolbar.compactBelowPx）', () => {
-  it('預設 1100px（DESIGN §5 vscode 分頁列）', () => {
-    expect(DEFAULT_TOOLBAR_VIEW.compactBelowPx).toBe(1100)
-    expect(fullToolbarQuery(DEFAULT_TOOLBAR_VIEW.compactBelowPx)).toBe('(min-width: 1100px)')
+  it('預設 1120px（DESIGN §5 vscode 分頁列；Epic 7 工具列加寬，由 1100 提高）', () => {
+    expect(DEFAULT_TOOLBAR_VIEW.compactBelowPx).toBe(1120)
+    expect(fullToolbarQuery(DEFAULT_TOOLBAR_VIEW.compactBelowPx)).toBe('(min-width: 1120px)')
   })
 
   it('斷點由殼層決定', () => {

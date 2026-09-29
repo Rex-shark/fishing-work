@@ -6,7 +6,8 @@ import { HomeThemeCards } from '../src/home/HomeThemeCards'
 import { UPCOMING_LABEL, cardKeyTarget, stepAvailable, tabStopIndex } from '../src/layout/themeCardNav'
 import { PLANNED_THEMES, THEME_CATALOG, buildThemeCatalog } from '../src/shells/catalog'
 import { pptShell } from '../src/shells/ppt/definition'
-import { CodeEditorIcon, SlidesIcon } from '../src/shells/themeIcons'
+import { meetShell } from '../src/shells/meet/definition'
+import { CodeEditorIcon, SlidesIcon, VideoCallIcon } from '../src/shells/themeIcons'
 import type { ShellThemeOption } from '../src/shells/types'
 import { vscodeShell } from '../src/shells/vscode/definition'
 
@@ -17,18 +18,24 @@ const fs = (await import('node:fs' as string)) as { readFileSync(path: URL, enco
 const themeCss = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8')
 
 describe('THEME_CATALOG：已註冊可選、規劃中為「即將推出」', () => {
-  it('目前：程式編輯器、簡報皆已註冊（可選；Epic 3 Phase 3 註冊 ppt）', () => {
+  it('目前：程式編輯器、簡報、視訊會議皆已註冊（可選；Epic 3 Phase 3 註冊 ppt、Epic 5 註冊 meet）', () => {
     expect(THEME_CATALOG.map(({ id, name, available }) => ({ id, name, available }))).toEqual([
       { id: 'vscode', name: '程式編輯器', available: true },
       { id: 'ppt', name: '簡報', available: true },
+      { id: 'meet', name: '視訊會議', available: true },
     ])
   })
 
   it('已註冊項目的名稱、描述與圖示取自註冊表', () => {
     expect(THEME_CATALOG[0]?.icon).toBe(vscodeShell.icon)
     expect(THEME_CATALOG[1]?.icon).toBe(SlidesIcon)
-    expect(THEME_CATALOG.map((o) => o.description)).toEqual([vscodeShell.description, pptShell.description])
-    expect(THEME_CATALOG.map((o) => o.description)).toEqual(['深色程式編輯器，像在改程式碼', '白底簡報軟體，像在做投影片'])
+    expect(THEME_CATALOG[2]?.icon).toBe(VideoCallIcon)
+    expect(THEME_CATALOG.map((o) => o.description)).toEqual([vscodeShell.description, pptShell.description, meetShell.description])
+    expect(THEME_CATALOG.map((o) => o.description)).toEqual([
+      '深色程式編輯器，像在改程式碼',
+      '白底簡報軟體，像在做投影片',
+      '深色視訊會議，像在開會分享畫面',
+    ])
   })
 
   it('規劃中項目也要有 description（Epic 4 決策 7），與註冊後的值一致', () => {
@@ -130,7 +137,7 @@ describe('HomeThemeCards 靜態渲染：無障礙語意（首頁，Epic 4）', (
     const html = render(WITH_UPCOMING, 'vscode')
     expect(html).toContain('role="radiogroup"')
     expect(html).toContain('aria-label="介面風格"')
-    expect(html.match(/role="radio"/g)).toHaveLength(2)
+    expect(html.match(/role="radio"/g)).toHaveLength(3)
     expect(html).toMatch(/aria-checked="true"[^>]*tabindex="0"/)
     expect(html).toMatch(/aria-checked="false" aria-disabled="true" tabindex="-1"/)
   })
@@ -146,7 +153,9 @@ describe('HomeThemeCards 靜態渲染：無障礙語意（首頁，Epic 4）', (
 
   it('即將推出的卡片：「即將推出」膠囊、opacity .55、cursor-default、沒有 hover 位移，不是原生 disabled', () => {
     const html = render(WITH_UPCOMING, 'vscode')
-    const upcoming = html.slice(html.lastIndexOf('<button'))
+    // 即將推出的卡片（簡報）：Epic 5 起後面還有「視訊會議」，改以 aria-disabled 定位該張卡片
+    const at = html.indexOf('aria-disabled="true"')
+    const upcoming = html.slice(html.lastIndexOf('<button', at), html.indexOf('</button>', at))
     expect(upcoming).toContain(`>${UPCOMING_LABEL}</span>`)
     expect(upcoming).toMatch(/rounded-full border border-home-border[^"]*text-home-fg-dim/)
     expect(upcoming).toContain('opacity-55')

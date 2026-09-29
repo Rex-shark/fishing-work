@@ -242,7 +242,7 @@ export class Room {
   protected round: RoundPublic = idleRound();
   private roundTimer: TimerHandle | null = null;
 
-  /** 筆跡歷史（正規化後只含 begin/move/end，§5「筆跡歷史正規化」） */
+  /** 筆跡歷史（正規化後只含 begin/move/end 與至多一個 background，§5「筆跡歷史正規化」） */
   private ops: DrawOp[] = [];
   /** 目前 open stroke（begin 後、end 前） */
   private openStroke: string | null = null;
@@ -522,13 +522,22 @@ export class Room {
         if (op.strokeId !== this.strokeOrder.at(-1)) return drop('undoNotLast');
         this.openStroke = null;
         this.strokeOrder.pop();
-        this.ops = this.ops.filter((o) => o.type === 'clear' || o.strokeId !== op.strokeId);
+        this.ops = this.ops.filter((o) => o.type === 'background' || o.type === 'clear' || o.strokeId !== op.strokeId);
         break;
       case 'clear':
-        this.ops = [];
+        // 只清筆跡，背景保留（Epic 7 決策 2）
+        this.ops = this.ops.filter((o) => o.type === 'background');
         this.strokeOrder = [];
         this.openStroke = null;
         break;
+      case 'background': {
+        // 歷史只保留最後一個 background（原地取代舊的；不受歷史上限限制，正規化後只剩一個）；
+        // 不影響 open stroke 與 undo 順序
+        const i = this.ops.findIndex((o) => o.type === 'background');
+        if (i >= 0) this.ops[i] = op;
+        else this.ops.push(op);
+        break;
+      }
     }
     return { effects: [{ kind: 'emit', to: { except: playerId }, event: 'draw:op', payload: op }], dropped: null };
   }

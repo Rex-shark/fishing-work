@@ -1,6 +1,8 @@
 // ppt 主題：PowerPoint 偽裝殼層（DESIGN.md §13；plan/camouflage-themes.md「PPT 主題版面對照」；architecture §7）。
 //   標題列（橘紅，「簡報1 - PowerPoint」、右側 connection 插槽）
-//   ｜功能區分頁（檔案＝選單「切換偽裝…」；常用＝裝飾按鈕群；繪圖＝畫師時 toolbar 插槽，否則整組灰化）
+//   ｜功能區分頁（檔案＝選單「切換偽裝…」；常用＝裝飾按鈕群；繪圖＝畫師時 toolbar 插槽，否則整組灰化；
+//     說明＝遊戲中點了才作用，內容為一排說明主題按鈕 → ShellProps.help.open(主題)（Epic 6，DESIGN §13.2、§16）；
+//     「檔案」選單第二項「說明…」→ ShellProps.help.open()（決策 8：< 1024px「說明」分頁隱藏時的入口））
 //   ｜左縮圖窗格（players 插槽 → SlidePlayers）｜中央灰色工作區＋投影片（canvas 插槽，畫布底色仍為 CANVAS_BACKGROUND，1px 外框＋投影片陰影）
 //   ｜投影片下方備忘稿列（roundStatus 插槽）｜右註解窗格（chat 插槽，容器帶 data-chat-drop-zone）
 //   ｜狀態列（投影片 N / M、中文(台灣)、備忘稿；中央「從目前投影片開始」＝ volunteer 插槽；右側顯示設定、62% 裝飾）。
@@ -8,15 +10,16 @@
 // 狀態列不因畫師變色（§13.3）；畫師身分以縮圖橘框與「繪圖」分頁作用呈現。
 // 功能元件的呈現：對話框＝PptDialog、玩家清單＝SlidePlayers、聊天＝註解卡片（CommentChat）、狀態列項目＝深色字、
 // 工具列收合斷點、「▶ 從目前投影片開始」（pptViews），以 ShellViewsContext 提供；淺色底的配色由正式 view 與 token（--fg-on-active）處理，不在容器上改寫 CSS 變數。
-// 殼層不 import uiStore／catalog（踩雷紀錄 Phase 2）；主題資料經 ShellProps.themes。不讀 store/game：人數經 ShellProps.counts。
-import { useRef, useState, type ReactNode, type RefObject } from 'react'
+// 殼層不 import uiStore／catalog（踩雷紀錄 Phase 2）；主題資料經 ShellProps.themes、說明入口經 ShellProps.help。不讀 store/game：人數經 ShellProps.counts。
+import { useRef, useState, type ComponentType, type ReactNode, type RefObject } from 'react'
 import { MIN_PLAYERS, PALETTE, type RoundPhase } from '@fishing-work/shared'
 import { HUE_GRADIENT } from '../../features/canvas/brush'
+import { HELP_TOPICS, type HelpTopicId } from '../../features/help/helpTopics'
 import { canVolunteer } from '../../features/round/roundDisplay'
-import { CloseIcon, EllipsisIcon, EraserIcon, SearchIcon, StopIcon, TrashIcon, UndoIcon } from '../../layout/icons'
+import { CloseIcon, EllipsisIcon, EraserIcon, FillIcon, SearchIcon, StopIcon, TrashIcon, UndoIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
 import { useMediaQuery } from '../../layout/useElementSize'
-import type { ShellGameSlots, ShellPlayerCounts, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
+import type { ShellGameSlots, ShellHelp, ShellPlayerCounts, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
 import { ShellViewsContext } from '../views'
 import { FileTab, PptThemeDialog } from './FileMenu'
 import { PptResumeDialog } from './PptDialog'
@@ -30,14 +33,19 @@ import {
   NewSlideIcon,
   NormalViewIcon,
   NotesIcon,
+  PaletteIcon,
   PasteIcon,
   PenIcon,
+  PictureIcon,
+  QuestionBubbleIcon,
   ReadingViewIcon,
   RedoIcon,
+  RefreshIcon,
   SaveIcon,
   ShapesIcon,
   SlideshowIcon,
   SorterIcon,
+  SwitchThemeIcon,
   TextBoxIcon,
 } from './pptIcons'
 import {
@@ -86,8 +94,8 @@ export function PptShell(props: ShellProps) {
   )
 }
 
-function GameScreen(props: { round: ShellRoundState; counts: ShellPlayerCounts; themes: ShellThemeSwitch } & ShellGameSlots) {
-  const { round, counts, themes, players, canvas, toolbar, chat, roundStatus, volunteer, connection, dialogs } = props
+function GameScreen(props: { round: ShellRoundState; counts: ShellPlayerCounts; themes: ShellThemeSwitch; help: ShellHelp } & ShellGameSlots) {
+  const { round, counts, themes, help, players, canvas, toolbar, chat, roundStatus, volunteer, connection, dialogs } = props
   // 「投影片 N / M」為裝飾（N 在線、M 玩家數）；人數由 App 注入（殼層不讀 store）
   return (
     <PptFrame
@@ -96,6 +104,7 @@ function GameScreen(props: { round: ShellRoundState; counts: ShellPlayerCounts; 
       ribbonDefault={defaultRibbonTab(round.isDrawer, round.phase)}
       drawTools={round.canDraw ? toolbar : null}
       themes={themes}
+      help={help}
       thumbnails={players}
       slide={canvas}
       dialogs={dialogs}
@@ -125,6 +134,8 @@ interface PptFrameProps {
   drawTools?: ReactNode
   /** 切換偽裝（遊戲中才有）；省略時「檔案」為裝飾 */
   themes?: ShellThemeSwitch
+  /** 遊戲說明（遊戲中才有）；省略時「說明」分頁為裝飾 */
+  help?: ShellHelp
   thumbnails: ReactNode
   /** 投影片（畫布）；父層為 size container */
   slide: ReactNode
@@ -141,7 +152,7 @@ interface PptFrameProps {
 }
 
 function PptFrame(props: PptFrameProps) {
-  const { dirty, connection, ribbonDefault, drawTools, themes, thumbnails, slide, dialogs, notes, comments, counter, statusCenter, overlay } =
+  const { dirty, connection, ribbonDefault, drawTools, themes, help, thumbnails, slide, dialogs, notes, comments, counter, statusCenter, overlay } =
     props
   const wide = useMediaQuery(WIDE_QUERY)
   /** 寬螢幕：縮圖窗格是否收起；窄螢幕：覆蓋層是否開啟（預設關） */
@@ -170,6 +181,8 @@ function PptFrame(props: PptFrameProps) {
         drawTools={drawTools}
         fileRef={fileRef}
         onSwitchTheme={themes !== undefined ? () => setThemePickOpen(true) : undefined}
+        onHelp={help?.open}
+        onHelpList={help !== undefined ? () => help.open() : undefined}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -256,23 +269,27 @@ function TitleBar({ dirty, connection }: { dirty: boolean; connection: ReactNode
 
 // ─── 功能區 ─────────────────────────────────────────────────────
 
-function Ribbon(props: {
+export function Ribbon(props: {
   fallback: RibbonContentTab
   drawTools?: ReactNode
   fileRef: RefObject<HTMLButtonElement | null>
   onSwitchTheme?: () => void
+  /** 開啟說明的某個主題（遊戲中）；省略時「說明」分頁為裝飾 */
+  onHelp?: (topicId: HelpTopicId) => void
+  /** 開啟說明清單（「檔案」選單的「說明…」，窄螢幕入口；決策 8） */
+  onHelpList?: () => void
 }) {
-  const { fallback, drawTools, fileRef, onSwitchTheme } = props
+  const { fallback, drawTools, fileRef, onSwitchTheme, onHelp, onHelpList } = props
   const [pick, setPick] = useState<RibbonPick | null>(null)
   const active = activeRibbonTab(pick, fallback)
   const panelId = 'ppt-ribbon-panel'
   return (
     <div className="shrink-0 border-b border-border bg-activity">
       <div role="tablist" aria-label="功能區" className="flex h-[28px] items-stretch overflow-hidden bg-tab-inactive">
-        <FileTab buttonRef={fileRef} onSwitchTheme={onSwitchTheme} />
+        <FileTab buttonRef={fileRef} onSwitchTheme={onSwitchTheme} onHelp={onHelpList} />
         {RIBBON_TABS.slice(1).map((tab) => {
           const narrowHidden = RIBBON_TABS_HIDDEN_WHEN_NARROW.includes(tab) ? 'max-lg:hidden' : ''
-          const content = RIBBON_CONTENT_TABS.find((t) => t === tab)
+          const content = RIBBON_CONTENT_TABS.find((t) => t === tab && (t !== '說明' || onHelp !== undefined))
           if (content === undefined) {
             return (
               <span key={tab} aria-hidden="true" className={`flex shrink-0 items-center border-t-2 border-transparent px-3 text-fg ${narrowHidden}`}>
@@ -291,7 +308,7 @@ function Ribbon(props: {
               onClick={() => setPick({ tab: content, base: fallback })}
               className={`flex shrink-0 cursor-pointer items-center border-t-2 px-3 transition-colors duration-100 focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-border-focus ${
                 selected ? 'border-accent bg-tab-active text-accent' : 'border-transparent text-fg hover:bg-hover'
-              }`}
+              }${narrowHidden !== '' ? ` ${narrowHidden}` : ''}`}
             >
               {tab}
             </button>
@@ -304,10 +321,18 @@ function Ribbon(props: {
         aria-label={active}
         className="flex h-[64px] items-stretch overflow-x-auto overflow-y-hidden py-1"
       >
-        {active === '繪圖' ? <DrawRibbon tools={drawTools} /> : <HomeRibbon />}
+        <RibbonContent active={active} drawTools={drawTools} onHelp={onHelp} />
       </div>
     </div>
   )
+}
+
+/** 功能區內容（64px）：「繪圖」＝畫師工具列（或灰化）、「說明」＝說明主題按鈕（遊戲中）、其餘＝「常用」裝飾 */
+export function RibbonContent(props: { active: RibbonContentTab; drawTools?: ReactNode; onHelp?: (topicId: HelpTopicId) => void }) {
+  const { active, drawTools, onHelp } = props
+  if (active === '繪圖') return <DrawRibbon tools={drawTools} />
+  if (active === '說明' && onHelp !== undefined) return <HelpRibbon onOpen={onHelp} />
+  return <HomeRibbon />
 }
 
 /** 功能區的一組：內容＋下方 11px 群組名稱，右側 1px 分隔 */
@@ -406,11 +431,45 @@ function DrawRibbon({ tools }: { tools?: ReactNode }) {
         <span className="relative block h-[2px] w-[80px] bg-border">
           <span className="absolute top-0 left-0 block h-[2px] w-[20%] bg-accent" />
         </span>
+        {/* 背景色（Epic 7）：與真工具列同位置（粗細之後、橡皮擦之前） */}
+        <FillIcon />
         <EraserIcon />
         <UndoIcon />
         <TrashIcon />
         <StopIcon />
       </div>
+    </RibbonGroup>
+  )
+}
+
+/** 說明主題的 Office 風格線條圖示（16px；一主題一個） */
+const HELP_TOPIC_ICONS: Record<HelpTopicId, ComponentType<{ size?: number }>> = {
+  'be-drawer': PenIcon,
+  guess: QuestionBubbleIcon,
+  'switch-theme': SwitchThemeIcon,
+  tools: PaletteIcon,
+  image: PictureIcon,
+  reconnect: RefreshIcon,
+}
+
+/** 「說明」（Epic 6，DESIGN §13.2）：一排說明主題按鈕（16px 圖示＋標籤），點了直接開該主題的說明（對話框第二步） */
+export function HelpRibbon({ onOpen }: { onOpen: (topicId: HelpTopicId) => void }) {
+  return (
+    <RibbonGroup caption="說明">
+      {HELP_TOPICS.map((topic) => {
+        const Icon = HELP_TOPIC_ICONS[topic.id]
+        return (
+          <button
+            key={topic.id}
+            type="button"
+            onClick={() => onOpen(topic.id)}
+            className="flex h-[28px] shrink-0 cursor-pointer items-center gap-[6px] rounded-[2px] px-[8px] text-[12px] text-fg transition-colors duration-100 hover:bg-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-border-focus"
+          >
+            <Icon size={16} />
+            {topic.title}
+          </button>
+        )
+      })}
     </RibbonGroup>
   )
 }

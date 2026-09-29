@@ -649,6 +649,122 @@ describe('§5 draw:op 驗證（open stroke、strokeId、undo）與筆跡歷史�
   });
 });
 
+// ─── draw：background（Epic 7）───────────────────────────────────
+
+describe('§5 background op（Epic 7：驗證與歷史正規化）', () => {
+  const bg = (color: string): DrawOp => ({ type: 'background', color });
+
+  it('合法：存入歷史並原樣轉發給畫師以外的人（色碼大小寫原樣保存）', () => {
+    toDrawing(3);
+    const fx = drawOk(bg('#ffecea'));
+    expect(fx).toEqual([{ kind: 'emit', to: { except: A }, event: 'draw:op', payload: bg('#ffecea') }]);
+    expect(ops()).toEqual([bg('#ffecea')]);
+  });
+
+  it('非畫師送出 → 丟棄（notDrawer）；非 drawing 階段 → 丟棄（phase）', () => {
+    joinPlayers(2);
+    expect(drawDropped(bg('#000000'))).toBe('phase');
+    ok(room.volunteer('s1'));
+    expect(drawDropped(bg('#000000'))).toBe('phase');
+    ok(room.setTopic('s1', '蘋果'));
+    expect(drawDropped(bg('#000000'), 's2')).toBe('notDrawer');
+    ok(room.cancel('s1'));
+    expect(drawDropped(bg('#000000'))).toBe('phase');
+    expect(ops()).toEqual([]);
+  });
+
+  it.each<[string, unknown]>([
+    ['color 缺', { type: 'background' }],
+    ['color 短碼 #fff', { type: 'background', color: '#fff' }],
+    ['color 沒有 #', { type: 'background', color: 'FFECEA' }],
+    ['color 8 碼（含 alpha）', { type: 'background', color: '#FFECEA80' }],
+    ['color 色名', { type: 'background', color: 'black' }],
+    ['color 為數字', { type: 'background', color: 0 }],
+    ['color 前後帶空白', { type: 'background', color: ' #000000' }],
+  ])('色碼不合法（%s）→ 丟棄', (_label, op) => {
+    toDrawing(2);
+    expect(drawDropped(op)).toBe('invalid:color');
+    expect(ops()).toEqual([]);
+  });
+
+  it('客戶端多塞的欄位不存、不外流', () => {
+    toDrawing(2);
+    const fx = drawOk({ type: 'background', color: '#000000', strokeId: 'x', evil: 1 });
+    expect(emits(fx)[0].payload).toEqual(bg('#000000'));
+    expect(ops()).toEqual([bg('#000000')]);
+  });
+
+  it('歷史只保留最後一個 background（原地取代），筆跡不受影響', () => {
+    toDrawing(2);
+    drawOk(bg('#FFECEA'));
+    const s1 = stroke('k1');
+    drawOk(bg('#000000'));
+    const s2 = stroke('k2');
+    drawOk(bg('#569CD6'));
+    expect(ops()).toEqual([bg('#569CD6'), ...s1, ...s2]);
+    expect(ops().filter((o) => o.type === 'background')).toHaveLength(1);
+  });
+
+  it('clear 只清筆跡、背景保留；之後無筆畫可 undo', () => {
+    toDrawing(2);
+    stroke('k1');
+    drawOk(bg('#FFECEA'));
+    drawOk(begin('k2'));
+    drawOk(CLEAR);
+    expect(ops()).toEqual([bg('#FFECEA')]);
+    expect(drawDropped(undo('k1'))).toBe('undoNotLast');
+    expect(drawDropped(move('k2'))).toBe('notOpenStroke');
+  });
+
+  it('undo 不影響背景；background 不影響 open stroke 與 undo 順序', () => {
+    toDrawing(2);
+    const s1 = stroke('k1');
+    drawOk(begin('k2'));
+    drawOk(bg('#FFECEA'));
+    drawOk(move('k2'));
+    drawOk(end('k2'));
+    drawOk(undo('k2'));
+    expect(ops()).toEqual([...s1, bg('#FFECEA')]);
+    drawOk(undo('k1'));
+    expect(ops()).toEqual([bg('#FFECEA')]);
+    expect(drawDropped(undo('k1'))).toBe('undoNotLast');
+  });
+
+  it(`歷史達上限 ${MAX_OPS_PER_ROUND} 時 background 仍受理（取代舊的，不撐大歷史）`, () => {
+    toDrawing(2);
+    drawOk(bg('#FFECEA'));
+    drawOk(begin('k1'));
+    for (let i = 2; i < MAX_OPS_PER_ROUND; i++) room.draw('s1', move('k1'));
+    expect(ops()).toHaveLength(MAX_OPS_PER_ROUND);
+    expect(drawDropped(move('k1'))).toBe('opsLimit');
+    drawOk(bg('#000000'));
+    expect(ops()).toHaveLength(MAX_OPS_PER_ROUND);
+    expect(ops()[0]).toEqual(bg('#000000'));
+  });
+
+  it('中途加入者的快照含背景（與筆跡一起重播）', () => {
+    toDrawing(2);
+    const s1 = stroke('k1');
+    drawOk(bg('#FFECEA'));
+    const snap = join('s9', 'Late').snapshot;
+    expect(snap.ops).toEqual([...s1, bg('#FFECEA')]);
+  });
+
+  it('新回合開始（setTopic）ops 清空 → 回到預設底色', () => {
+    toDrawing(2);
+    drawOk(bg('#FFECEA'));
+    ok(room.cancel('s1'));
+    // ended 與 idle 期間保留上一回合畫面（含背景）
+    expect(ops()).toEqual([bg('#FFECEA')]);
+    clock.advance(ENDED_MS);
+    expect(round().phase).toBe('idle');
+    expect(ops()).toEqual([bg('#FFECEA')]);
+    ok(room.volunteer('s1'));
+    ok(room.setTopic('s1', '香蕉'));
+    expect(ops()).toEqual([]);
+  });
+});
+
 // ─── cancel ──────────────────────────────────────────────────────
 
 describe('§5 cancel', () => {

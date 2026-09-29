@@ -1,5 +1,6 @@
 // vscode 主題進遊戲後的「切換偽裝」入口（plan/camouflage-themes.md 決策 7；DESIGN.md §13.4）：
 //   活動列底部設定齒輪（Manage）→ 選單「切換偽裝…」→ 快速選單列出主題（ShellProps.themes；未上線顯示「即將推出」不可選）→ 選取即切換。
+//   選單第二項「說明…」（Epic 6，DESIGN §5「說明」）→ ShellProps.help.open()：遊戲說明清單（快速輸入框，features/help/HelpDialog）。
 // 選單仿 VS Code 的 Manage 選單：貼齊活動列右側、底邊對齊齒輪；portal 到 body（避免被 overflow 容器裁掉，踩雷紀錄 Epic 1 Phase 5）。
 // 鍵盤：齒輪 Enter／Space 開啟並聚焦第一項；↑↓／Home／End 移動；Esc 關閉並把焦點還給齒輪；Tab 或點選單外關閉。
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
@@ -8,7 +9,7 @@ import { GearIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
 import type { ShellThemeSwitch } from '../types'
 import { QuickInput } from './QuickInput'
-import { chooseTheme, stepMenuIndex, themePickInitialIndex, themePickItems } from './themePick'
+import { chooseTheme, manageMenuEntries, selectManageEntry, stepMenuIndex, themePickInitialIndex, themePickItems } from './themePick'
 
 interface MenuPosition {
   left: number
@@ -21,8 +22,9 @@ export interface ManageMenuItem {
   onSelect(): void
 }
 
-/** 活動列底部的設定齒輪（可操作版；自動重連畫面仍為裝飾） */
-export function ManageButton({ buttonRef, onSwitchTheme }: { buttonRef: RefObject<HTMLButtonElement | null>; onSwitchTheme: () => void }) {
+/** 活動列底部的設定齒輪（可操作版；自動重連畫面仍為裝飾）；onHelp 省略時選單沒有「說明…」 */
+export function ManageButton(props: { buttonRef: RefObject<HTMLButtonElement | null>; onSwitchTheme: () => void; onHelp?: () => void }) {
+  const { buttonRef, onSwitchTheme, onHelp } = props
   const [menu, setMenu] = useState<MenuPosition | null>(null)
 
   function toggle() {
@@ -40,16 +42,11 @@ export function ManageButton({ buttonRef, onSwitchTheme }: { buttonRef: RefObjec
     if (refocus) buttonRef.current?.focus()
   }
 
-  const items: ManageMenuItem[] = [
-    {
-      id: 'switch-theme',
-      label: '切換偽裝…',
-      onSelect: () => {
-        close(false)
-        onSwitchTheme()
-      },
-    },
-  ]
+  const items: ManageMenuItem[] = manageMenuEntries(onHelp !== undefined).map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    onSelect: () => selectManageEntry(entry, { close, onSwitchTheme, onHelp }),
+  }))
 
   return (
     <>

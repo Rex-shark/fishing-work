@@ -6,13 +6,19 @@ import { applyCanvasBackground } from '../src/features/canvas/canvasBackground'
 import { CHAT_DROP_ZONE_ATTR } from '../src/features/chat/dropZone'
 import { SHELLS } from '../src/shells'
 import { PLANNED_THEMES } from '../src/shells/catalog'
+import { MEET_VIEWS } from '../src/shells/meet/meetViews'
+import { PPT_VIEWS } from '../src/shells/ppt/pptViews'
+import { resolveHelpView, resolveVolunteerView } from '../src/shells/views'
 
 const featureSources = import.meta.glob<string>('../src/features/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
+// 遊戲說明（Epic 6）：內容與對話框共用，殼層名稱一律來自 ShellViews
+const helpSources = import.meta.glob<string>('../src/features/help/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 const appSources = import.meta.glob<string>('../src/App.tsx', { query: '?raw', import: 'default', eager: true })
 // .css 即使加 ?raw 在 Vitest 也會被 CSS 處理成空字串，改以 node:fs 讀原始文字（app 的 tsconfig 不含 Node 型別，動態 import 後自行標型別）
 const fs = (await import('node:fs' as string)) as { readFileSync(path: URL, encoding: 'utf8'): string }
 const themeCss = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8')
 const vscodeSources = import.meta.glob<string>('../src/shells/vscode/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
+const meetSources = import.meta.glob<string>('../src/shells/meet/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 // 卡片鍵盤純邏輯（首頁使用；Epic 3 Phase 2 起共用）
 const themeCardSources = import.meta.glob<string>(['../src/layout/themeCardNav.ts'], {
   query: '?raw',
@@ -49,8 +55,17 @@ const FORBIDDEN: [string, RegExp][] = [
   ['system 註解前綴（字串裡的 `// `）', /['"`]\/\/ /],
   ['[HH:mm] 時間戳', /\[\{formatTime|\[\$\{(?:time|formatTime)|\[\{(?:line|message|m)\.(?:time|at)\}\]/],
   ['狀態列按鈕色彩寫死在功能元件（改由 ShellViews.status 提供）', /statusbar-hover|focus-on-color|bg-statusbar/],
-  ['工具列收合斷點寫死', /min-width: ?1100px|\b1100\b/],
+  ['工具列收合斷點寫死', /min-width: ?11[02]0px|\b11[02]0\b/],
+  // Epic 5：視訊會議偽裝字樣（Meet、會議代碼、通話／分享畫面用語、參加者 tile）只在 shells/meet
+  ['Meet 字樣', /\bmeet\b|Google Meet/i],
+  ['會議代碼', /kqw-mzdv-ptj/],
+  ['視訊會議用語', /視訊會議|通話中|正在分享畫面|分享畫面|尚無人分享|參加者|會議控制項|字幕列/],
+  // Epic 6：各殼層切換偽裝的操作路徑（齒輪、⋮、「→ 切換偽裝」）只在殼層的 ShellViews.help.switchHint
+  ['殼層的切換偽裝路徑（改由 ShellViews.help 提供）', /齒輪|⋮|→ 切換偽裝/],
 ]
+
+/** 視訊會議字樣的正向對照（Epic 5）：這些字樣只在 meet 殼層，掃描規則必須抓得到 */
+const MEET_PATTERNS = FORBIDDEN.filter(([name]) => /Meet 字樣|會議代碼|視訊會議用語/.test(name))
 
 /** 終端機字樣的正向對照：這些字樣現在只在 vscode 殼層，掃描規則必須抓得到（避免規則寫錯而永遠通過） */
 const TERMINAL_PATTERNS = FORBIDDEN.filter(([name]) => /❯|註解前綴|HH:mm/.test(name))
@@ -88,6 +103,40 @@ describe('功能元件不含 VS Code 字樣與版面假設', () => {
     // 舊版 ChatPanel／chatFormat 的寫法也必須被抓到
     expect(TERMINAL_PATTERNS[1][1].test("return [{ tone: 'comment', text: `// ${m.text}` }]")).toBe(true)
     expect(TERMINAL_PATTERNS[2][1].test('<span className="text-fg-dim">[{formatTime(message.at)}] </span>')).toBe(true)
+  })
+
+  it('視訊會議字樣的掃描規則抓得到 meet 殼層（正向對照；Epic 5）', () => {
+    expect(MEET_PATTERNS).toHaveLength(3)
+    const meet = Object.values(meetSources).join('\n')
+    expect(meet).not.toBe('')
+    for (const [name, pattern] of MEET_PATTERNS) expect(pattern.test(meet), name).toBe(true)
+    // 功能元件若寫進這些字樣必須被抓到
+    for (const bad of ["// 放進 Meet 的影片條", "<span>{name} 正在分享畫面</span>", "const code = 'kqw-mzdv-ptj'", '<h2>通話中的訊息</h2>']) {
+      expect(MEET_PATTERNS.some(([, pattern]) => pattern.test(bad)), bad).toBe(true)
+    }
+    // 不誤判一般用語
+    expect(MEET_PATTERNS.some(([, pattern]) => pattern.test('meeting 與 meetup 不是偽裝字樣；分享圖片也不是'))).toBe(false)
+  })
+
+  it('切換偽裝路徑的掃描規則抓得到三殼層的 switchHint（正向對照；Epic 6）', () => {
+    const [, pattern] = FORBIDDEN.find(([name]) => name.startsWith('殼層的切換偽裝路徑')) ?? ['', /$^/]
+    for (const hint of ['左下角齒輪 → 切換偽裝', '檔案 → 切換偽裝', '更多 ⋮ → 切換偽裝']) expect(pattern.test(hint), hint).toBe(true)
+    // 不誤判一般的箭頭說明與主題標題
+    expect(pattern.test('// 聊天室圖片：檔案 → 送出前的縮圖')).toBe(false)
+    expect(pattern.test("title: '如何切換偽裝'")).toBe(false)
+  })
+
+  it('features/help 不寫死任何殼層的名稱（切換路徑、我來畫按鈕文字都由 ShellViews 代入）', () => {
+    const files = Object.keys(helpSources)
+    expect(files.some((f) => f.endsWith('/help/helpTopics.ts'))).toBe(true)
+    expect(files.some((f) => f.endsWith('/help/HelpDialog.tsx'))).toBe(true)
+    for (const f of files) expect(entries.some(([file]) => file === f), f).toBe(true)
+    const names = [null, PPT_VIEWS, MEET_VIEWS].flatMap((v) => [resolveHelpView(v).switchHint, resolveVolunteerView(v).label])
+    expect(new Set(names).size).toBe(6)
+    for (const [file, src] of Object.entries(helpSources)) {
+      expect(names.filter((n) => src.includes(n)), file).toEqual([])
+      expect(importPaths(src).filter((p) => /\/shells\//.test(p) && !p.endsWith('/shells/views')), file).toEqual([])
+    }
   })
 
   it('功能元件不引用特定殼層（只可用 shells/views 抽象）', () => {
@@ -161,6 +210,16 @@ describe('卡片鍵盤純邏輯（layout/themeCardNav）與殼層的相依方向
       const imports = [...src.matchAll(/from '([^']+)'/g)].map((m) => m[1] ?? '')
       expect(imports.filter((p) => /uiStore$|\/catalog$|ThemeCards$|\/home\//.test(p)), file).toEqual([])
     }
+  })
+
+  it('shells/**（含 types、views）不 import uiStore 與說明的開關／對話框（Epic 6：只可用 features/help/helpTopics 的資料與型別；開啟經 ShellProps.help）', () => {
+    const bad = (src: string) => importPaths(src).filter((p) => /uiStore$|\/help\/(?:helpOpen|HelpDialog)$/.test(p))
+    for (const [file, src] of Object.entries(allShellSources)) expect(bad(src), file).toEqual([])
+    // 正向對照
+    expect(bad("import { openHelp } from '../../features/help/helpOpen'")).toHaveLength(1)
+    expect(bad("import { HelpDialog } from '../features/help/HelpDialog'")).toHaveLength(1)
+    expect(bad("import { useUiStore } from '../../layout/uiStore'")).toHaveLength(1)
+    expect(bad("import { HELP_TOPICS } from '../../features/help/helpTopics'")).toEqual([])
   })
 })
 

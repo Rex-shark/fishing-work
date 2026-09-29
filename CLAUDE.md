@@ -14,9 +14,9 @@
 **fishing-work** 是一個**簡易互動遊戲平台**：部署在 Rex 本機，同事透過公司區網進來玩。
 第一款遊戲為**我畫你猜（draw-guess）**：首頁輸入暱稱即可加入，不需帳號；自願玩家當畫師、自訂題目後在畫布作畫，其他人即時看畫猜題。
 
-特殊需求：首頁為不偽裝的柔和 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）或 PowerPoint，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布統一黑底白筆不隨主題。
+特殊需求：首頁為不偽裝的柔和 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）、PowerPoint 或 Google Meet 視訊會議，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布預設黑底白筆不隨主題，畫師可換背景色並同步給所有人。
 
-目前狀態（2026-09-25）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過；目前沒有進行中的 Epic。進度見 [plan/backlog.md](plan/backlog.md)。
+目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」工程完成、舵手驗收通過（`plan/meet-theme.md`），待 Rex 目視。Epic 6「遊戲說明」工程完成、舵手驗收通過（`plan/help-topics.md`），待 Rex 目視。Epic 7「畫布背景色與新色塊」工程完成、舵手驗收通過（`plan/canvas-background.md`），待 Rex 目視。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。進度見 [plan/backlog.md](plan/backlog.md)。
 
 ---
 
@@ -30,6 +30,9 @@ fishing-work/
 ├── server/                 # Node + TypeScript + Socket.IO：房間、回合、筆跡中繼、猜題裁判，並提供各遊戲靜態檔
 ├── shared/                 # 前後端共用的事件契約、常數、純函式（answer / text / nickname）
 ├── tsconfig.base.json      # 三模組共用 TS 設定
+├── Dockerfile              # 多階段映像（node:24-slim、非 root、healthcheck），Epic 9
+├── docker-compose.yml      # 換電腦部署：docker compose up -d --build（HOST_PORT、PUBLIC_URL 可寫在 .env）
+├── .dockerignore
 ├── plan/                   # 開發計畫（動態）：backlog 索引、各 Epic 詳細計畫、踩雷紀錄
 ├── spec/                   # 規範文件（穩定）：overview.md 產品與規則、architecture.md 架構與事件契約
 ├── user/
@@ -52,7 +55,7 @@ fishing-work/
 | 共用型別 | TypeScript，`shared/`（事件契約、常數、純函式；無執行期相依） | 已建立 |
 | 測試 | Vitest `^4`（不可升 5，Node 25 不支援） | shared / server 純邏輯 |
 | 資料庫 | 無，狀態全在伺服器記憶體 | 日後要戰績或題庫再評估 SQLite |
-| 部署 | Rex 本機單一 Node 程序，同事以區網 IP 連線 | 不需 Docker、HTTPS、雲端 |
+| 部署 | 單一 Node 程序：本機直接跑，或 Docker 容器（換電腦用，Epic 9）；同事以區網 IP 連線 | 不需 HTTPS、雲端 |
 
 ---
 
@@ -69,6 +72,7 @@ npm run typecheck           # 三個 workspace 的 tsc --noEmit
 npm test                    # Vitest（shared、server）
 npm run lint                # ESLint（目前只涵蓋 draw-guess）
 npm run tunnel              # Cloudflare 快速通道（需先 brew install cloudflared），指向 :80，印出 https://xxx.trycloudflare.com
+docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建置映像並在背景啟動，:80；停止用 docker compose down
 ```
 
 > `npm run dev`、`npm start` 是長跑指令，**不要在前景執行**（會卡住 session）。驗證指令要分開跑、各自看 exit code。
@@ -101,6 +105,11 @@ npm run tunnel              # Cloudflare 快速通道（需先 brew install clou
 | [plan/chat-image.md](plan/chat-image.md) | Epic 2 聊天室圖片（拖曳上傳、即時中繼、不保留） |
 | [plan/camouflage-themes.md](plan/camouflage-themes.md) | Epic 3 多偽裝主題（vscode／ppt 殼層、遊戲內切換） |
 | [plan/home-page.md](plan/home-page.md) | Epic 4 首頁（不偽裝的柔和 UI：暱稱＋風格卡片，選好才進殼層；自動重連不經首頁） |
+| [plan/meet-theme.md](plan/meet-theme.md) | Epic 5 視訊會議偽裝主題（Google Meet 風格的第三套殼層 `meet`） |
+| [plan/help-topics.md](plan/help-topics.md) | Epic 6 遊戲說明（偽裝介面裡的「說明」入口 → 兩步說明對話框，內容一份三殼層共用） |
+| [plan/canvas-background.md](plan/canvas-background.md) | Epic 7 畫布背景色與新色塊（`background` op 同步底色；PALETTE 加黑與膚色） |
+| [plan/voice-input.md](plan/voice-input.md) | Epic 8 語音輸入（語音轉文字；whisper.cpp＋opencc 正體）——**⏸ 暫緩**：區網 http 下瀏覽器不開放麥克風 |
+| [plan/docker-deploy.md](plan/docker-deploy.md) | Epic 9 Docker 部署（多階段映像、compose、容器內分享網址） |
 
 ---
 
@@ -108,7 +117,7 @@ npm run tunnel              # Cloudflare 快速通道（需先 brew install clou
 
 - **所有實作必須由 `plan/` 驅動**：修改程式碼前後皆須同步對應 Epic 文件與 `backlog.md`。規範見 [plan/README.md](plan/README.md)。
 - **本專案無資料庫**，`spec/db/erd.mmd` 暫不維護；遊戲狀態模型寫在 `spec/architecture.md`（規劃中）。
-- **`DESIGN.md`**：已建立（共通原則 ＋ 各偽裝主題章節：vscode §3–§5、ppt §13；首頁 §14 不偽裝、柔和 UI）。**產生任何畫面、元件、樣式前先讀 [DESIGN.md](DESIGN.md)**，色碼一律用 token，不得寫死；新主題只加 token 覆寫與殼層，不動功能元件。
+- **`DESIGN.md`**：已建立（共通原則 ＋ 各偽裝主題章節：vscode §3–§5、ppt §13、meet §15；首頁 §14 不偽裝、柔和 UI；說明 §16）。**產生任何畫面、元件、樣式前先讀 [DESIGN.md](DESIGN.md)**，色碼一律用 token，不得寫死；新主題只加 token 覆寫與殼層，不動功能元件。
 
 ---
 
@@ -124,3 +133,4 @@ npm run tunnel              # Cloudflare 快速通道（需先 brew install clou
 
 多 session 協作的身分與職責寫在 [.claude/team/ROSTER.md](.claude/team/ROSTER.md)，查詢與登記用 `/team-identity`。
 子代理沒有 session 身分；派工 prompt 須註明不得登記名冊、不得跨 session 傳訊。
+驗收：龍骨回報完成後，舵手派 [`acceptance-reviewer`](.claude/agents/acceptance-reviewer.md) 子代理做獨立驗收（四項指令、契約比對、協定測試、瀏覽器實測），舵手依報告定案與回寫文件，不再親自驗收（Rex 2026-09-29）。

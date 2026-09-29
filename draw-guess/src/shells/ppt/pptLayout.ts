@@ -23,19 +23,19 @@ export function pptWindowTitle(phase: RoundPhase): string {
 
 // ─── 功能區（Ribbon） ────────────────────────────────────────────
 
-/** 功能區分頁（DESIGN §13.2，11 個）；「檔案」開選單，「常用」「繪圖」有內容，其餘為裝飾 */
+/** 功能區分頁（DESIGN §13.2，11 個）；「檔案」開選單，「常用」「繪圖」「說明」（Epic 6，遊戲中）有內容，其餘為裝飾 */
 export const RIBBON_TABS = ['檔案', '常用', '插入', '設計', '轉場', '動畫', '投影片放映', '校閱', '檢視', '繪圖', '說明'] as const
 export type RibbonTab = (typeof RIBBON_TABS)[number]
 
-/** 可切換內容的分頁 */
-export type RibbonContentTab = Extract<RibbonTab, '常用' | '繪圖'>
-export const RIBBON_CONTENT_TABS: readonly RibbonContentTab[] = ['常用', '繪圖']
+/** 可切換內容的分頁（「說明」只在遊戲中可作用，自動重連畫面為裝飾；Epic 6） */
+export type RibbonContentTab = Extract<RibbonTab, '常用' | '繪圖' | '說明'>
+export const RIBBON_CONTENT_TABS: readonly RibbonContentTab[] = ['常用', '繪圖', '說明']
 
 /** 窄螢幕（< 1024px）先藏起的裝飾分頁（「檔案」「常用」「繪圖」一定保留） */
 export const RIBBON_TABS_HIDDEN_WHEN_NARROW: readonly RibbonTab[] = ['轉場', '動畫', '校閱', '檢視', '說明']
 
-/** 預設作用分頁：自己是畫師且回合進行中（出題、作畫）→「繪圖」；否則「常用」（DESIGN §13.2） */
-export function defaultRibbonTab(isDrawer: boolean, phase: RoundPhase): RibbonContentTab {
+/** 預設作用分頁：自己是畫師且回合進行中（出題、作畫）→「繪圖」；否則「常用」（DESIGN §13.2）；「說明」只在點選後作用 */
+export function defaultRibbonTab(isDrawer: boolean, phase: RoundPhase): Exclude<RibbonContentTab, '說明'> {
   return isDrawer && (phase === 'choosing' || phase === 'drawing') ? '繪圖' : '常用'
 }
 
@@ -75,6 +75,8 @@ export const START_SLIDESHOW_LABEL = '從目前投影片開始'
 export const PPT_DIALOG_TITLE: Record<DialogPurpose, string> = {
   topic: '輸入標題',
   cancelRound: '捨棄變更？',
+  // 說明（Epic 6）：標題列改顯示對話框的 title（「說明」或主題名稱）；此值只在沒有 title 時使用
+  help: '說明',
 }
 
 /** 自動重連畫面（screen 'resume'）的對話框標題（沿用舊登入框的「加入簡報」） */
@@ -105,7 +107,31 @@ export function dialogKeyAction(key: string, isComposing: boolean): 'cancel' | n
   return key === 'Escape' ? 'cancel' : null
 }
 
-// ─── 「檔案」選單 → 切換偽裝 ─────────────────────────────────────
+/** 說明對話框（purpose 'help'）清單步驟的關閉按鈕 */
+export const DIALOG_CLOSE = '關閉'
+
+/** 遊戲說明「如何切換偽裝」的路徑（plan/help-topics.md 決策 6） */
+export const PPT_SWITCH_HINT = '檔案 → 切換偽裝'
+
+// ─── 「檔案」選單 → 切換偽裝、說明 ─────────────────────────────────
+
+/** 選單鍵盤（可操作項目 count 個；current 為目前焦點，-1＝不在項目上）：↑↓ 循環、Home／End 到兩端；其他鍵或沒有項目回 null */
+export function stepMenuItem(count: number, current: number, key: string): number | null {
+  if (count <= 0) return null
+  const at = current < 0 ? 0 : current
+  switch (key) {
+    case 'ArrowDown':
+      return current < 0 ? 0 : (at + 1) % count
+    case 'ArrowUp':
+      return current < 0 ? count - 1 : (at - 1 + count) % count
+    case 'Home':
+      return 0
+    case 'End':
+      return count - 1
+    default:
+      return null
+  }
+}
 
 export const THEME_CURRENT_NOTE = '目前使用'
 export const THEME_UPCOMING_NOTE = '即將推出'

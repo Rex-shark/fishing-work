@@ -258,7 +258,7 @@ describe('PPT_VIEWS：註解、狀態列、工具列、我來畫', () => {
     expect(PPT_STATUS_VIEW.buttonClassName).not.toMatch(/fg-statusbar|focus-on-color/)
   })
 
-  it('工具列收合斷點：功能區整列給工具列，640px 以下才收合（vscode 為 1100）', () => {
+  it('工具列收合斷點：功能區整列給工具列，640px 以下才收合（vscode 為 1120）', () => {
     expect(PPT_TOOLBAR_VIEW.compactBelowPx).toBe(640)
   })
 

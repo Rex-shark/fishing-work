@@ -9,7 +9,8 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
-| — | （目前沒有進行中的 Epic） | | |
+| ⏸ | Epic 8：語音輸入（語音轉文字） | 2026-09-29 ~ — | [voice-input.md](voice-input.md)：沿用 live2D 的 whisper.cpp 做法，按麥克風講話轉成正體文字填入聊天；Meet 麥克風按鈕、ppt「聽寫」、vscode 輸入列麥克風；**2026-09-29 暫緩**：只能用區網 IP，http 下瀏覽器不開放麥克風；需區網 HTTPS 通過可行性測試才恢復 |
+| 🔄 | Epic 9：Docker 部署 | 2026-09-29 ~ — | [docker-deploy.md](docker-deploy.md)：多階段 Dockerfile（node:24-slim、非 root、healthcheck）＋ docker-compose；容器內分享網址改由 `PUBLIC_URL` 或提示；換電腦 `docker compose up -d --build` 一行部署；Phase 1 完成、龍骨 docker 驗證通過（映像 362MB），待舵手協定測試 |
 
 ---
 
@@ -17,6 +18,9 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
+| ✅ | Epic 7：畫布背景色與新色塊 | 2026-09-28 ~ 2026-09-29 | [canvas-background.md](canvas-background.md)：PALETTE 加黑與膚色（10 色）；「背景色」按鈕以 `background` op 把畫布底色同步給所有人（clear 保留、undo 不影響、新回合回黑底）；vscode 工具列收合斷點 1100 → 1120px；協定測試＋舵手實測＋Rex 目視通過 |
+| ✅ | Epic 6：遊戲說明 | 2026-09-26 ~ 2026-09-29 | [help-topics.md](help-topics.md)：ppt「說明」分頁、vscode 齒輪「說明…」、meet「資訊」／「更多 ⋮」→ 同一份六個主題的兩步說明對話框；舵手實測＋Rex 目視通過 |
+| ✅ | Epic 5：視訊會議偽裝主題（Google Meet 風格） | 2026-09-25 ~ 2026-09-29 | [meet-theme.md](meet-theme.md)：第三套殼層 `meet`——畫布＝分享中的畫面、玩家＝參加者 tile、聊天＝白色訊息面板、「分享畫面」＝我來畫；只加殼層與 token；三主題混玩驗證通過；舵手實測＋Rex 目視通過 |
 | ✅ | Epic 4：首頁（柔和 UI 選介面風格） | 2026-09-25 ~ 2026-09-25 | [home-page.md](home-page.md)：不偽裝的柔和 UI 首頁（暱稱＋風格卡片＋進入遊戲），選好才進殼層；重新整理不閃首頁（index.html 內嵌腳本＋resume 畫面）；遊戲中畫面位元組不變；舵手實測＋Rex 目視通過 |
 | ✅ | Epic 2：聊天室圖片 | 2026-09-25 ~ 2026-09-25 | [chat-image.md](chat-image.md)：拖曳／貼上圖片、Socket.IO 二進位中繼、不保留、10 MB 上限、慢連線保護；30 人壓測通過；Rex 實機拖圖通過 |
 | ✅ | Epic 1：我畫你猜 MVP | 2026-09-24 ~ 2026-09-25 | [draw-guess-mvp.md](draw-guess-mvp.md)：回合狀態機、畫布同步、聊天猜題計分、IDE 偽裝、畫具強化、區網 80 埠部署、30 人壓測；Rex 實機區網實測通過 |

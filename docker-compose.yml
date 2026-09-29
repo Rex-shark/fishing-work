@@ -1,0 +1,13 @@
+# fishing-work 容器部署（plan/docker-deploy.md 決策 4、spec/architecture.md §3「Docker 部署」）
+# 啟動：docker compose up -d --build
+# 主機埠被占用時：HOST_PORT=8080 docker compose up -d --build（網址要帶 :8080）
+services:
+  fishing-work:
+    build: .
+    image: fishing-work:latest
+    ports:
+      - "${HOST_PORT:-80}:80"
+    environment:
+      # 可選：給同事的分享網址，例如 http://192.168.1.50/draw-guess/（沒設時為空字串，程式視為未設）
+      PUBLIC_URL: ${PUBLIC_URL:-}
+    restart: unless-stopped

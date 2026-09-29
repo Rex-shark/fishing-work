@@ -41,6 +41,12 @@ function isBrushSize(v: unknown): v is number {
 export function sanitizeDrawOp(raw: unknown): SanitizeResult {
   if (!isRecord(raw)) return { ok: false, reason: 'notObject' };
   if (raw.type === 'clear') return { ok: true, op: { type: 'clear' } };
+  if (raw.type === 'background') {
+    // 畫布背景色（Epic 7）：任意 #RRGGBB（大小寫皆可、原樣保存，同 begin 的 color）
+    const { color } = raw;
+    if (typeof color !== 'string' || !COLOR_PATTERN.test(color)) return { ok: false, reason: 'color' };
+    return { ok: true, op: { type: 'background', color } };
+  }
 
   const strokeId = readStrokeId(raw.strokeId);
   switch (raw.type) {

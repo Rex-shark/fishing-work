@@ -1,15 +1,16 @@
 // ppt 主題進遊戲後的「切換偽裝」入口（plan/camouflage-themes.md 決策 7；DESIGN.md §13.4）：
 //   功能區「檔案」分頁 → 選單（portal 到 body，避免被 overflow 容器裁掉）「切換偽裝…」→ PPT 對話框列出主題（ShellProps.themes）
 //   → 選取後「確定」即切換（未上線顯示「即將推出」不可選；目前主題標「目前使用」）。
+//   第二項「說明…」（Epic 6 決策 8，窄螢幕也進得了說明）→ 遊戲說明清單（ShellProps.help.open()）；選取時先把焦點還給「檔案」，說明關閉時焦點回到「檔案」。
 // 選單的其餘項目（資訊、新增、開啟…）為裝飾，不可聚焦、點了無反應。
-// 鍵盤：「檔案」Enter／Space 開啟並聚焦「切換偽裝…」；Esc／Tab 關閉並把焦點還給「檔案」；點選單外、視窗縮放時關閉。
+// 鍵盤：「檔案」Enter／Space 開啟並聚焦「切換偽裝…」；↑↓ 循環、Home／End；Esc／Tab 關閉並把焦點還給「檔案」；點選單外、視窗縮放時關閉。
 // 對話框：↑↓／Home／End 在可選項目間移動、Enter＝確定、Esc＝取消（焦點還給「檔案」）。
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { tip } from '../../layout/tooltipPlacement'
 import type { ShellThemeSwitch } from '../types'
 import { PptDialogFrame } from './PptDialog'
-import { DIALOG_CANCEL, DIALOG_OK, choosePptTheme, pptThemeInitialIndex, pptThemeItems, stepThemeIndex } from './pptLayout'
+import { DIALOG_CANCEL, DIALOG_OK, choosePptTheme, pptThemeInitialIndex, pptThemeItems, stepMenuItem, stepThemeIndex } from './pptLayout'
 
 interface MenuPosition {
   left: number
@@ -19,8 +20,9 @@ interface MenuPosition {
 /** 裝飾用的選單項目（仿 PowerPoint 的「檔案」後台清單） */
 const DECOR_ITEMS = ['資訊', '新增', '開啟', '儲存', '另存新檔', '列印', '共用']
 
-/** 功能區分頁列最左的「檔案」：遊戲中可操作（開選單）；自動重連畫面（沒有 themes）為裝飾 */
-export function FileTab({ buttonRef, onSwitchTheme }: { buttonRef: RefObject<HTMLButtonElement | null>; onSwitchTheme?: () => void }) {
+/** 功能區分頁列最左的「檔案」：遊戲中可操作（開選單）；自動重連畫面（沒有 themes）為裝飾。onHelp 省略時選單沒有「說明…」 */
+export function FileTab(props: { buttonRef: RefObject<HTMLButtonElement | null>; onSwitchTheme?: () => void; onHelp?: () => void }) {
+  const { buttonRef, onSwitchTheme, onHelp } = props
   const [menu, setMenu] = useState<MenuPosition | null>(null)
 
   if (onSwitchTheme === undefined) {
@@ -73,6 +75,14 @@ export function FileTab({ buttonRef, onSwitchTheme }: { buttonRef: RefObject<HTM
               close(false)
               switchTheme()
             }}
+            onHelp={
+              onHelp !== undefined
+                ? () => {
+                    close(true)
+                    onHelp()
+                  }
+                : undefined
+            }
           />,
           document.body,
         )}
@@ -80,15 +90,17 @@ export function FileTab({ buttonRef, onSwitchTheme }: { buttonRef: RefObject<HTM
   )
 }
 
-function FileMenuList(props: {
+export function FileMenuList(props: {
   position: MenuPosition
   anchor: RefObject<HTMLElement | null>
   onClose: (refocus: boolean) => void
   onSwitchTheme: () => void
+  onHelp?: () => void
 }) {
-  const { position, anchor, onClose, onSwitchTheme } = props
+  const { position, anchor, onClose, onSwitchTheme, onHelp } = props
   const rootRef = useRef<HTMLDivElement>(null)
   const itemRef = useRef<HTMLButtonElement>(null)
+  const helpRef = useRef<HTMLButtonElement>(null)
   // onClose 每次重繪都是新函式（遊戲狀態一變殼層就重繪）；監聽器只在開啟時掛一次，改讀最新的 onClose
   const closeRef = useRef(onClose)
   useEffect(() => {
@@ -123,11 +135,13 @@ function FileMenuList(props: {
       onClose(true)
       return
     }
-    // 只有一個可操作項目：↑↓／Home／End 都停在它上面
-    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
-      e.preventDefault()
-      itemRef.current?.focus()
-    }
+    // 可操作項目：「切換偽裝…」＋（遊戲說明時）「說明…」；↑↓ 循環、Home／End 到兩端
+    const items = [itemRef.current, helpRef.current].filter((el): el is HTMLButtonElement => el !== null)
+    const current = items.findIndex((el) => el === document.activeElement)
+    const next = stepMenuItem(items.length, current, e.key)
+    if (next === null) return
+    e.preventDefault()
+    items[next]?.focus()
   }
 
   return (
@@ -155,6 +169,18 @@ function FileMenuList(props: {
       >
         切換偽裝…
       </button>
+      {onHelp !== undefined && (
+        <button
+          ref={helpRef}
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={onHelp}
+          className="flex h-[28px] w-full cursor-pointer items-center px-4 text-left text-fg outline-none hover:bg-hover focus:bg-active"
+        >
+          說明…
+        </button>
+      )}
     </div>
   )
 }

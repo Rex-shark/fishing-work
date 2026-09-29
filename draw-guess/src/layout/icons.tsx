@@ -279,3 +279,15 @@ export function StopIcon(p: IconProps) {
     </Svg>
   )
 }
+
+/** 背景色（Epic 7；自繪「填滿」：傾斜的油漆桶＋一滴顏料） */
+export function FillIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4.5 12.5 11 6l6 6-6.5 6.5a1.4 1.4 0 0 1-2 0l-4-4a1.4 1.4 0 0 1 0-2Z" />
+      <path d="M4.5 12.5H17" />
+      <path d="M7.5 2.5 11 6" />
+      <path d="M21 17.5c0 1.1-.7 2-1.5 2s-1.5-.9-1.5-2c0-1.2 1.5-3.5 1.5-3.5s1.5 2.3 1.5 3.5Z" />
+    </Svg>
+  )
+}

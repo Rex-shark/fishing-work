@@ -75,7 +75,7 @@
   --fg-on-active: #ffffff;
   --bg-card: #252526;
 
-  /* 註解頭像底色（DESIGN §13.2：依暱稱雜湊取 6 色之一；白字 --fg-on-avatar 對比皆 ≥ 5.9:1）。跨主題共用、ppt 不覆寫；目前只有 ppt 使用 */
+  /* 註解頭像底色（DESIGN §13.2：依暱稱雜湊取 6 色之一；白字 --fg-on-avatar 對比皆 ≥ 5.9:1）。跨主題共用、各主題不覆寫；ppt 註解頭像與 meet 參加者 tile 使用 */
   --avatar-1: #005a9e;
   --avatar-2: #006f73;
   --avatar-3: #6b4fa0;
@@ -83,6 +83,18 @@
   --avatar-5: #8c4a00;
   --avatar-6: #486860;
   --fg-on-avatar: #ffffff;
+
+  /* Epic 5 新增：面板 token 六件組（DESIGN §3）：殼層自畫的白底面板（meet 的「通話中的訊息」、對話框文字按鈕）用；
+     vscode 不使用，給等於側欄的值（外觀不變） */
+  --bg-panel: #252526;
+  --bg-panel-hover: #2a2d2e;
+  --fg-on-panel: #cccccc;
+  --fg-on-panel-muted: #858585;
+  --border-panel: #3c3c3c;
+  --accent-panel: #3794ff;
+
+  /* 「視訊會議」卡片圖示色（DESIGN §13.4：攝影機，綠；跨主題共用、各主題不覆寫） */
+  --brand-meet: #1e8e3e;
 }
 
 /*
@@ -141,7 +153,85 @@
   --fg-on-active: #252525;
   --bg-card: #ffffff;
 
+  /* 面板 token（Epic 5，DESIGN §13.1）：ppt 不使用；值＝ppt 側欄同名色，外觀不變 */
+  --bg-panel: #f3f2f1;
+  --bg-panel-hover: #edebe9;
+  --fg-on-panel: #252525;
+  --fg-on-panel-muted: #605e5c;
+  --border-panel: #d2d0ce;
+  --accent-panel: #0078d4;
+
   /* 字型（§13：系統無襯線） */
+  --font-code: system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+}
+
+/*
+ * 視訊會議主題（DESIGN.md §15.1；plan/meet-theme.md 決策 3）：深色會議區＋白色側邊面板。只覆寫同名 token，Tailwind class 不變；
+ * 值與 DESIGN §15.1 表逐字一致（test/meetTheme.test.ts 解析 DESIGN 表比對）。--fg-on-active 見 §15.1 --bg-active 列的說明。
+ * 不覆寫 --bg-canvas（畫布底色固定 CANVAS_BACKGROUND，由 main.tsx 注入）、--brand-*、--avatar-1..6／--fg-on-avatar。
+ */
+[data-theme='meet'] {
+  color-scheme: dark;
+
+  /* 會議區底（底部控制列、影片條、舞台）；畫師時控制列不變色 */
+  --bg-activity: #202124;
+  --bg-sidebar: #202124;
+  --bg-editor: #202124;
+  --bg-titlebar: #202124;
+  --bg-statusbar: #202124;
+  --bg-statusbar-drawer: #202124;
+  /* 主畫面 tile 與參加者 tile 底 */
+  --bg-tab-active: #3C4043;
+  --bg-tab-inactive: #3C4043;
+  --bg-slide: #3C4043;
+  --bg-input: #F1F3F4;
+  /* 工具提示與工具列「⋯」面板（深灰白字）；對話框改用 --bg-panel（決策 13(1)） */
+  --bg-quickinput: #3C4043;
+  --bg-card: #FFFFFF;
+  --bg-hover: #3C4043;
+  --bg-active: #8AB4F8;
+  --fg-on-active: #202124;
+  --bg-selection: #394457;
+
+  /* 邊框與前景 */
+  --border: #5F6368;
+  --border-focus: #8AB4F8;
+  --fg: #E8EAED;
+  --fg-editor: #E8EAED;
+  --fg-statusbar: #E8EAED;
+  --fg-muted: #9AA0A6;
+  --fg-dim: #80868B;
+  --fg-link: #8AB4F8;
+  --accent: #8AB4F8;
+  --accent-hover: #AECBFA;
+  --bg-button-secondary: #3C4043;
+  --bg-button-secondary-hover: #5F6368;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.3);
+  --statusbar-hover: rgba(255, 255, 255, 0.12);
+  --focus-on-color: #FFFFFF;
+  --quickinput-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --slide-shadow: none;
+
+  /* 語意色 */
+  --sem-comment: #9AA0A6;
+  --sem-variable: #E8EAED;
+  --sem-function: #E8EAED;
+  --sem-number: #E8EAED;
+  --sem-string: #E8EAED;
+  --sem-keyword: #E8EAED;
+  --sem-type: #188038;
+  --sem-error: #D93025;
+  --sem-warning: #FDD663;
+
+  /* 面板 token（右側白色「通話中的訊息」面板、對話框） */
+  --bg-panel: #FFFFFF;
+  --bg-panel-hover: #F1F3F4;
+  --fg-on-panel: #202124;
+  --fg-on-panel-muted: #5F6368;
+  --border-panel: #DADCE0;
+  --accent-panel: #1967D2;
+
+  /* 字型（§15.1：全介面無襯線） */
   --font-code: system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
 }
 
@@ -203,6 +293,8 @@
   --color-avatar-4: var(--avatar-4);
   --color-avatar-5: var(--avatar-5);
   --color-avatar-6: var(--avatar-6);
+  --color-panel: var(--bg-panel);
+  --color-panel-hover: var(--bg-panel-hover);
 
   /* 邊框與前景 */
   --color-border: var(--border);
@@ -222,6 +314,10 @@
   --color-scrollbar-thumb: var(--scrollbar-thumb);
   --color-statusbar-hover: var(--statusbar-hover);
   --color-focus-on-color: var(--focus-on-color);
+  --color-fg-on-panel: var(--fg-on-panel);
+  --color-fg-on-panel-muted: var(--fg-on-panel-muted);
+  --color-border-panel: var(--border-panel);
+  --color-accent-panel: var(--accent-panel);
 
   /* 語意色 */
   --color-sem-comment: var(--sem-comment);
@@ -237,6 +333,7 @@
   /* 主題卡片圖示色 */
   --color-brand-editor: var(--brand-editor);
   --color-brand-slides: var(--brand-slides);
+  --color-brand-meet: var(--brand-meet);
 
   /* 首頁（DESIGN §14.2；只在 [data-theme='home'] 下有值） */
   --color-home-bg: var(--home-bg);

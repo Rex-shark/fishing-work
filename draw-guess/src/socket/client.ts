@@ -295,7 +295,7 @@ function receiveImage({ id, data }: ImagePayload): void {
   store().addImageUrl(id, URL.createObjectURL(new Blob([bytes], { type: mime })))
 }
 
-/** 本回合筆跡歷史（正規化後）已達 MAX_OPS_PER_ROUND：server 會丟棄新的 begin/move/end，只剩 undo / clear 可用 */
+/** 本回合筆跡歷史（正規化後）已達 MAX_OPS_PER_ROUND：server 會丟棄新的 begin/move/end，只剩 undo / clear / background 可用 */
 export function isOpsFull(opsLength: number): boolean {
   return opsLength >= MAX_OPS_PER_ROUND
 }
@@ -307,7 +307,7 @@ export function isOpsFull(opsLength: number): boolean {
  * 重連接管後的快照會覆蓋本機 ops，以 server 為準。
  */
 export function sendDrawOp(op: DrawOp): boolean {
-  if (op.type !== 'undo' && op.type !== 'clear' && isOpsFull(store().ops.length)) return false
+  if (op.type !== 'undo' && op.type !== 'clear' && op.type !== 'background' && isOpsFull(store().ops.length)) return false
   store().appendOp(op)
   if (socket.connected) socket.emit('draw:op', op)
   return true

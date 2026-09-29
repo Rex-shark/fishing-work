@@ -108,26 +108,44 @@ export function drawOp(ctx: RenderContext, op: DrawOp, state: StrokeState): void
       return
     case 'undo':
       return
+    case 'background':
+      // 背景色不畫進畫布：由 Canvas 依 canvasBackground(ops) 設成畫布元素的 CSS 背景（§6，Epic 7）
+      return
   }
 }
 
 /**
- * 把 op 歷史化簡成「目前畫面上實際存在」的 op：
- * clear 丟掉之前的全部，undo 移除該 strokeId 的 begin/move/end。結果不含 undo / clear。
+ * 把 op 歷史化簡成「目前畫面上實際存在」的 op（architecture §5「筆跡歷史正規化」）：
+ * clear 丟掉之前的筆跡（background 保留），undo 移除該 strokeId 的 begin/move/end（不影響 background），
+ * background 只留最後一個（原地取代舊的）。結果不含 undo / clear。
  * server 快照裡是否保留 undo / clear 都能正確處理。
  */
 export function compactOps(ops: readonly DrawOp[]): DrawOp[] {
   let result: DrawOp[] = []
   for (const op of ops) {
     if (op.type === 'clear') {
-      result = []
+      result = result.filter((o) => o.type === 'background')
     } else if (op.type === 'undo') {
-      result = result.filter((o) => o.type === 'clear' || o.strokeId !== op.strokeId)
+      result = result.filter((o) => o.type === 'background' || o.type === 'clear' || o.strokeId !== op.strokeId)
+    } else if (op.type === 'background') {
+      result = replaceBackground(result, op)
     } else {
       result.push(op)
     }
   }
   return result
+}
+
+/**
+ * background 歷史只留最後一個：已有就原地取代（長度不變），否則附加到尾端。
+ * 渲染時背景永遠在筆跡之下，與它在 ops 裡的位置無關（Epic 7 決策 2）
+ */
+export function replaceBackground(ops: readonly DrawOp[], op: Extract<DrawOp, { type: 'background' }>): DrawOp[] {
+  const i = ops.findIndex((o) => o.type === 'background')
+  if (i < 0) return [...ops, op]
+  const next = [...ops]
+  next[i] = op
+  return next
 }
 
 /**

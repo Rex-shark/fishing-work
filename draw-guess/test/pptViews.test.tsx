@@ -164,7 +164,9 @@ describe('PptResumeDialog：自動重連畫面的對話框只放一行說明（E
   })
 
   it('對話框用途不再有 join（登入改在首頁）', () => {
-    expect(Object.keys(PPT_DIALOG_TITLE).sort()).toEqual(['cancelRound', 'topic'])
+    // Epic 6 起多了 'help'（遊戲說明）；join 仍不存在
+    expect(Object.keys(PPT_DIALOG_TITLE).sort()).toEqual(['cancelRound', 'help', 'topic'])
+    expect(PPT_DIALOG_TITLE).not.toHaveProperty('join')
   })
 })
 
@@ -179,10 +181,11 @@ function switcher(current: ShellId, options = THEME_CATALOG) {
 const withUpcoming = THEME_CATALOG.map((o) => (o.id === 'ppt' ? { ...o, available: false } : o))
 
 describe('pptThemeItems／choosePptTheme：與登入卡片同一份 catalog', () => {
-  it('兩者上線：目前主題標「目前使用」', () => {
+  it('全部上線（Epic 5 起三個主題）：目前主題標「目前使用」', () => {
     expect(pptThemeItems(switcher('ppt').themes).map((i) => [i.id, i.note, i.disabled, i.current])).toEqual([
       ['vscode', undefined, false, false],
       ['ppt', THEME_CURRENT_NOTE, false, true],
+      ['meet', undefined, false, false],
     ])
     expect(pptThemeInitialIndex(switcher('ppt').themes)).toBe(1)
   })
@@ -239,7 +242,7 @@ describe('「檔案」分頁與切換偽裝對話框（靜態渲染）', () => {
     const html = renderToStaticMarkup(<PptThemeDialog themes={switcher('ppt').themes} onClose={() => {}} />)
     expect(html).toMatch(/role="dialog" aria-label="切換偽裝"/)
     expect(html).toContain('role="listbox"')
-    expect(html.match(/role="option"/g)).toHaveLength(2)
+    expect(html.match(/role="option"/g)).toHaveLength(3)
     expect(html).toMatch(/aria-selected="true"[^>]*>.*簡報.*目前使用/)
     expect(html).toContain('>確定<')
     expect(html).toContain('>取消<')

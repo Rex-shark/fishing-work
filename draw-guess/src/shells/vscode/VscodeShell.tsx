@@ -4,12 +4,12 @@
 //   自動重連（screen 'resume'，Epic 4）：同一殼層，側欄與面板空白、編輯區為快捷鍵浮水印，視窗頂部的快速輸入框只放一行 notice。
 // 作畫中：分頁加 ●（仿未儲存）；視窗標題由註冊表的 titleFor 產生（App 同步）。
 // 功能元件的呈現：對話框＝快速輸入框（VscodeDialog）、玩家清單＝檔案樹（ExplorerPlayers）、聊天＝終端機輸出（TerminalChat）、
-// 工具列 < 1100px 收合、狀態列項目白字、「▷ 我來畫」（viewDefaults），以 ShellViewsContext 提供。
-// 切換偽裝（決策 7）：遊戲中活動列設定齒輪 → 「切換偽裝…」→ 快速選單（ShellFrame／ManageMenu，資料為 props.themes）。
+// 工具列 < 1120px 收合、狀態列項目白字、「▷ 我來畫」（viewDefaults），以 ShellViewsContext 提供。
+// 切換偽裝（決策 7）：遊戲中活動列設定齒輪 → 「切換偽裝…」→ 快速選單（ShellFrame／ManageMenu，資料為 props.themes）；「說明…」→ props.help.open()（Epic 6）。
 import type { ReactNode } from 'react'
 import { EllipsisIcon, SplitIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
-import type { ShellGameSlots, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
+import type { ShellGameSlots, ShellHelp, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
 import { ShellViewsContext, type ShellViews } from '../views'
 import { EditorTab, EditorTabBar, Gutter } from './EditorTabs'
 import { ExplorerPlayers } from './ExplorerPlayers'
@@ -17,7 +17,7 @@ import { CANVAS_TAB, isCanvasDirty, isDrawerStatusBar } from './ideLayout'
 import { QuickInputNotice, VscodeDialog } from './QuickInput'
 import { ShellFrame } from './ShellFrame'
 import { StatusBar } from './StatusBar'
-import { VSCODE_CHAT_VIEW, VSCODE_STATUS_VIEW, VSCODE_TOOLBAR_VIEW, VSCODE_VOLUNTEER_VIEW } from './viewDefaults'
+import { VSCODE_CHAT_VIEW, VSCODE_HELP_VIEW, VSCODE_STATUS_VIEW, VSCODE_TOOLBAR_VIEW, VSCODE_VOLUNTEER_VIEW } from './viewDefaults'
 
 const VSCODE_VIEWS: ShellViews = {
   Dialog: VscodeDialog,
@@ -26,6 +26,7 @@ const VSCODE_VIEWS: ShellViews = {
   toolbar: VSCODE_TOOLBAR_VIEW,
   status: VSCODE_STATUS_VIEW,
   volunteer: VSCODE_VOLUNTEER_VIEW,
+  help: VSCODE_HELP_VIEW,
 }
 
 export function VscodeShell(props: ShellProps) {
@@ -44,11 +45,12 @@ export function VscodeShell(props: ShellProps) {
   )
 }
 
-function GameScreen(props: { round: ShellRoundState; themes: ShellThemeSwitch } & ShellGameSlots) {
-  const { round, themes, players, canvas, toolbar, chat, roundStatus, volunteer, connection, dialogs } = props
+function GameScreen(props: { round: ShellRoundState; themes: ShellThemeSwitch; help: ShellHelp } & ShellGameSlots) {
+  const { round, themes, help, players, canvas, toolbar, chat, roundStatus, volunteer, connection, dialogs } = props
   return (
     <ShellFrame
       themes={themes}
+      help={help}
       sidebar={players}
       editor={<Editor round={round} canvas={canvas} toolbar={toolbar} dialogs={dialogs} />}
       panel={chat}

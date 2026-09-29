@@ -1,0 +1,19 @@
+# Docker 建置脈絡排除清單（plan/docker-deploy.md 決策 6）
+# 注意：.dockerignore 的樣式以脈絡根目錄為基準，`node_modules` 只排除根目錄那層，子目錄要用 `**/`。
+**/node_modules
+**/dist
+.git
+.gitignore
+.idea
+**/*.iml
+.claude
+plan
+spec
+user
+**/*.md
+**/.DS_Store
+**/*.local
+.env
+Dockerfile
+.dockerignore
+docker-compose.yml

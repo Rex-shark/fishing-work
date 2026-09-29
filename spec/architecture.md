@@ -96,6 +96,14 @@ fishing-work/
 
 ---
 
+### Docker 部署（Epic 9，換電腦用）
+
+- 根目錄 `Dockerfile` 多階段：`build`（`npm ci`＋`npm run build`）→ `runtime`（`node:24-slim`，只含 server 正式相依與 `server/dist`、`server/public`、`draw-guess/dist`，相對路徑與 repo 相同）。容器內以 `node` 使用者執行，`PORT=80`、`HOST=0.0.0.0`、`IN_CONTAINER=1`，`HEALTHCHECK` 打 `/healthz`。
+- 根目錄 `docker-compose.yml`：`ports: "${HOST_PORT:-80}:80"`、`restart: unless-stopped`。新電腦：`git clone` 後 `docker compose up -d --build`；同事連 `http://<新電腦區網 IP>/draw-guess/`。
+- **分享網址 log**：新增可選環境變數 `PUBLIC_URL`。有設就印它（事件 `server.lan`，`share=[PUBLIC_URL]`、`source: "PUBLIC_URL"`）；沒設且 `IN_CONTAINER=1` 時不列出容器內的 172.x 位址、也不印 localhost（容器埠不一定等於主機對外埠），改印事件 `server.lan.container`：「請用主機的區網 IP：http://<主機 IP>:<對外埠>/draw-guess/，或設定 PUBLIC_URL」。非容器、未設 `PUBLIC_URL` 時與舊版完全相同（事件 `server.lan`，欄位 `{ share, local }`，不帶 `source`）。
+- 映像實作（2026-09-29 龍骨）：runtime 以 `server/package.json` 產生只含 `express`、`socket.io` 的 package.json 搭配 repo lockfile 安裝（`socket.io-client` 是 draw-guess 的正式相依，`npm ci --omit=dev -w` 會多裝）；build 階段刪除專案自己的 `*.map`（內含 TS 原始碼）；`HEALTHCHECK --start-interval=2s` 需 Docker Engine 25 以上，舊版忽略該參數。`PUBLIC_URL`、`HOST_PORT` 可寫在根目錄 `.env`（compose 自動讀取；`.env` 不進 git、不進映像）。
+- 不含 HTTPS、不推 registry（在目標電腦上 build，避開 CPU 架構差異）；Cloudflare Tunnel 仍在主機上跑、指向主機的對外埠。
+
 ## 4. Socket 事件契約（namespace `/draw-guess`）
 
 以下型別放在 `shared/src/draw-guess/events.ts`，**前後端直接 import，不各自宣告**。
@@ -114,7 +122,8 @@ export type DrawOp =
   | { type: 'move';  strokeId: string; points: Point[] }          // 每個動畫影格批次送一次
   | { type: 'end';   strokeId: string }
   | { type: 'undo';  strokeId: string }                           // 移除該筆畫，客戶端重繪
-  | { type: 'clear' };
+  | { type: 'clear' }                                             // 只清筆跡，不重設背景（Epic 7）
+  | { type: 'background'; color: string };                        // 畫布背景色（Epic 7）：#RRGGBB；歷史只保留最後一個；每回合從 CANVAS_BACKGROUND 開始
 
 export type RoundPhase = 'idle' | 'choosing' | 'drawing' | 'ended';
 export type EndReason = 'allGuessed' | 'timeout' | 'drawerLeft' | 'cancelled' | null;
@@ -211,8 +220,8 @@ export interface ServerToClientEvents {
 | `CHAT_HISTORY` | 100 | 快照帶的聊天則數 |
 | `CANVAS_LOGICAL` | `{ width: 1280, height: 720 }` | 邏輯畫布尺寸（16:9） |
 | `BRUSH_MIN` / `BRUSH_MAX` / `BRUSH_DEFAULT` | 1 / 64 / 4 | 粗細範圍（邏輯像素，整數）與預設值。2026-09-24 Rex 目視回饋：固定四段不夠、要能更粗，改為滑桿拖曳（取代原 `BRUSH_SIZES = [2, 4, 8, 16]`） |
-| `PALETTE` | `['#FFFFFF', '#9E9E9E', '#F44747', '#FF8C00', '#FFD700', '#6A9955', '#569CD6', '#C586C0']` | **預設色塊**（快速選色），索引 0 白色為預設，**所有主題一致**；不再是合法色的白名單。2026-09-24 Rex 目視回饋：顏色要能從色相條任選，server 改為接受任意 `#RRGGBB`。（2026-09-25 曾擬加黑色供白底主題，Rex 定案畫布統一黑底後撤回） |
-| `CANVAS_BACKGROUND` | `'#1E1E1E'` | **畫布底色，所有主題與所有玩家一致**（畫布內容是共享狀態，底色不同會讓同一筆畫在別人螢幕上看不見）；CSS 由此常數注入，不是主題 token。Rex 2026-09-25：先暫統一黑底、預設白筆 |
+| `PALETTE` | `['#FFFFFF', '#000000', '#FFECEA', '#9E9E9E', '#F44747', '#FF8C00', '#FFD700', '#6A9955', '#569CD6', '#C586C0']` | **預設色塊**（快速選色），索引 0 白色為預設，**所有主題一致**；不再是合法色的白名單。2026-09-24 Rex 目視回饋：顏色要能從色相條任選，server 改為接受任意 `#RRGGBB`。（2026-09-25 曾擬加黑色供白底主題，Rex 定案畫布統一黑底後撤回）（2026-09-28 Rex：加黑色與膚色 `#FFECEA`，10 色，Epic 7；黑筆搭配可換的背景色使用） |
+| `CANVAS_BACKGROUND` | `'#1E1E1E'` | **畫布預設底色，所有主題與所有玩家一致**；Epic 7 起畫師可在回合中以 `background` op 換底色（同步給所有人），新回合回到此值（畫布內容是共享狀態，底色不同會讓同一筆畫在別人螢幕上看不見）；CSS 由此常數注入，不是主題 token。Rex 2026-09-25：先暫統一黑底、預設白筆 |
 | `COLOR_PATTERN` | `/^#[0-9A-Fa-f]{6}$/` | 合法色碼格式；客戶端送出前一律正規化為大寫 6 位 |
 | `IMAGE_MIMES` | `['image/png', 'image/jpeg', 'image/gif', 'image/webp']` | 可傳的圖片格式（Epic 2） |
 | `MAX_IMAGE_BYTES` | 10 485 760（10 MB） | 單張上限（客戶端縮圖後）；Socket.IO `maxHttpBufferSize` 設為此值 + 64 KiB。2026-09-25 Rex：2 MB 太小，改 10 MB |
@@ -223,7 +232,7 @@ export interface ServerToClientEvents {
 | `RECONNECT_GRACE_SECONDS` | 15 | 斷線後保留玩家（分數、畫師身分）的寬限期，逾時才視為離開 |
 | `MAX_PLAYERS` | 50 | 房間人數上限（**含寬限期中的玩家**，因為名額與暱稱一樣在寬限期內保留；2026-09-24 定案不排除）；達上限的新玩家回 `ROOM_FULL`，最多等 15 秒逾期釋出。tunnel 對外公開時的記憶體保護 |
 | `MAX_POINTS_PER_MOVE` | 64 | 一則 `move` 最多帶的點數；超過整則丟棄 |
-| `MAX_OPS_PER_ROUND` | 10000 | 本回合筆跡歷史（正規化後的 begin/move/end）上限；超過丟棄新 op 並 log，`clear` 仍可用 |
+| `MAX_OPS_PER_ROUND` | 10000 | 本回合筆跡歷史（正規化後的 begin/move/end，加上至多一個 background）上限；超過丟棄新的 begin/move/end 並 log，`undo`／`clear`／`background` 仍可用 |
 | `STROKE_ID_MAX` | 64 | strokeId 長度上限（客戶端用 `crypto.randomUUID()`） |
 
 ### 答案判定（`shared/src/draw-guess/answer.ts`）
@@ -305,16 +314,18 @@ export const NICKNAME_INVALID_MESSAGE: string, NICKNAME_TAKEN_MESSAGE: string   
 | `end` | `strokeId` = 目前 open stroke |
 | `undo` | `strokeId` = 歷史中**最後一筆仍存在的 stroke**（可連續 undo，每次撤剩餘的最後一筆）；若有 open stroke 先視為已 end |
 | `clear` | 永遠合法（drawing 階段、畫師） |
+| `background` | `color` 符合 `COLOR_PATTERN`（drawing 階段、畫師）；多餘欄位丟棄；Epic 7 |
 
 - **open stroke**：`begin` 後、`end` 前的那一筆。收到新的 `begin` 時舊的 open stroke 視為已 `end`（指標離開視窗會漏掉 pointerup）。
-- 歷史上限：正規化後的 ops 數 ≥ `MAX_OPS_PER_ROUND` 時丟棄新的 `begin`／`move`／`end` 並 log；`undo`／`clear` 仍受理。
+- 歷史上限：正規化後的 ops 數 ≥ `MAX_OPS_PER_ROUND` 時丟棄新的 `begin`／`move`／`end` 並 log；`undo`／`clear`／`background` 仍受理（`background` 正規化後只剩一個，不會撐滿）。
 - 不做每秒速率限制（區網／tunnel）；上限即保護。
 
 ### 筆跡歷史正規化（server 與 client 都照此維護 `ops[]`）
 
-- `ops[]` **只含** `begin` / `move` / `end`；`undo` 會把該 strokeId 的所有 op 從歷史移除，`clear` 清空，兩者本身不存入。
+- `ops[]` **只含** `begin` / `move` / `end`，以及至多一個 `background`（Epic 7）；`undo` 會把該 strokeId 的所有 op 從歷史移除（略過 `background`），`clear` 清掉所有筆跡但保留 `background`，兩者本身不存入。
 - 因此快照的 `ops` 直接重播即得目前畫面；中途加入者不需要理解 undo。
-- 轉發給其他客戶端的仍是原始 op（含 `undo` / `clear`），客戶端收到後對自己的 `ops[]` 做同樣的正規化再重繪。
+- 轉發給其他客戶端的仍是原始 op（含 `undo` / `clear` / `background`），客戶端收到後對自己的 `ops[]` 做同樣的正規化再重繪。
+- **`background`（Epic 7）**：歷史只保留最後一個 `background` op（收到新的就移除舊的）；`clear` 清掉所有筆跡但**保留** `background`；`undo` 不影響 `background`；回合開始 ops 清空即回到 `CANVAS_BACKGROUND`。渲染時背景永遠在筆跡之下，與它在 ops 裡的位置無關。
 
 ### 聊天訊息判定（phase = drawing 時）
 
@@ -372,7 +383,7 @@ phase ≠ drawing 時所有訊息都是一般聊天。
 ## 6. 畫布模型（client）
 
 - 邏輯尺寸 1280×720，`<canvas>` 的 `width/height` 固定為邏輯尺寸，以 CSS 等比縮放到容器；指標事件座標換算為 0..1 後送出。
-- 畫布本身透明，底色由 CSS 背景提供，**值固定為 `CANVAS_BACKGROUND`（#1E1E1E），不隨偽裝主題改變**；預設筆色固定 `PALETTE[0]` 白。原因：畫布是共享狀態，畫師看到的與所有人看到的必須一致（Rex 2026-09-25 定案）。橡皮擦用 `globalCompositeOperation = 'destination-out'`。
+- 畫布本身透明，底色由 CSS 背景提供：**預設 `CANVAS_BACKGROUND`（#1E1E1E），不隨偽裝主題改變**；Epic 7 起畫師可按「背景色」把底色換成目前筆色（`background` op，同步所有人；`Canvas` 依 ops 推導 `canvasBackground(ops)` 以 inline style 套在畫布元素，`<html>` 的 `--bg-canvas` 常數注入維持給殼層裝飾用）；預設筆色固定 `PALETTE[0]` 白。「清空畫布」只在有筆跡時可按（只有背景時停用，因為清空不清背景；Epic 7）。原因：畫布是共享狀態，畫師看到的與所有人看到的必須一致（Rex 2026-09-25 定案）。橡皮擦用 `globalCompositeOperation = 'destination-out'`。
 - 筆畫：`lineCap = lineJoin = 'round'`；`begin` 落點、`move` 逐點 `lineTo`。
 - 客戶端保存完整 `ops[]`；`undo`／`clear`／收到快照時**從 ops 全量重繪**，其餘為增量繪製。
 - 畫師本地即時繪製不等 server 回音；server 不回傳畫師自己的 op。
@@ -383,7 +394,7 @@ phase ≠ drawing 時所有訊息都是一般聊天。
 - 本地 `ops[]` 達 `MAX_OPS_PER_ROUND` 時停止送 `begin`／`move`／`end` 並提示，`undo`／`clear` 仍可用。
 - 畫師的 `undo` 按鈕送目前歷史最後一筆 stroke 的 id；沒有筆畫時按鈕停用。
 - **粗細**：水平滑桿左右拖曳（或點擊），範圍 `BRUSH_MIN..BRUSH_MAX`，即時顯示數值與預覽圓點；送出的 `size` 取整數。
-- **顏色**：8 個預設色塊（`PALETTE`）＋**色相條**（0–360° 的彩虹漸層，拖曳或點擊選色，轉成 `hsl(h, 100%, 50%)` 再轉 `#RRGGBB` 大寫）；目前色顯示在工具列上。選色即切回畫筆。
+- **顏色**：10 個預設色塊（`PALETTE`，含黑與膚色）＋**色相條**（0–360° 的彩虹漸層，拖曳或點擊選色，轉成 `hsl(h, 100%, 50%)` 再轉 `#RRGGBB` 大寫）；目前色顯示在工具列上。選色即切回畫筆。
 
 ---
 
@@ -397,6 +408,9 @@ socket/client.ts              # 型別化 socket、連線；connect 後以 sessi
 store/game.ts                 # Zustand：me、players、round、ops、chat、connection、brush（{ tool, color, size, hue }，跨回合保留，reset 不清，重新整理才重設）
 features/
   lobby/ConnectionStatus.tsx  # 連線狀態（殼層插槽）；NicknameScreen 已於 Epic 4 退場（登入改在 home/）
+  help/helpTopics.ts          # Epic 6：說明主題資料（id、標題、段落；佔位符 {volunteer}／{switch}）＋ renderTopic 純函式
+  help/HelpDialog.tsx         # Epic 6：兩步說明對話框（清單 → 內文 → 返回／關閉，兩步各自 key 重掛），用殼層 Dialog（purpose 'help'、body）；開關在 uiStore.helpTopic；放 dialogs 最前（出題／放棄確認疊在上面）
+  help/helpOpen.ts            # Epic 6：開啟說明並記住開啟焦點、關閉後還回（vscode 齒輪、ppt 功能區按鈕／檔案選單、meet 資訊／更多選單）
   canvas/Canvas.tsx           # 渲染與指標事件
   canvas/render.ts            # 純函式：ops → canvas（可測）
   canvas/ToolBar.tsx          # 畫師專用：顏色、粗細、橡皮擦、復原、清空、放棄；收合斷點由殼層 toolbar.compactBelowPx 提供（toolbarLayout.ts 純函式）
@@ -410,22 +424,23 @@ features/
   round/countdown.ts          # 倒數以本機時鐘計算（時鐘偏差 v1 接受）；顯示值須 clamp 到該階段長度，避免剛開始顯示 01:01
   round/TopicDialog.tsx       # 畫師出題
 shells/index.ts               # 偽裝主題註冊表（Epic 3）：SHELLS、DEFAULT_SHELL_ID、resolveShellId（未知或未註冊 id 回退 vscode 但不覆寫存檔）、getShell；定義 { id, name, description, icon, Shell, titleFor, faviconHref }（description：首頁卡片一行描述，Epic 4）。畫布底色與預設筆色不屬於主題
-shells/types.ts               # ShellProps 插槽：players、canvas、toolbar、chat、roundStatus、volunteer、connection、round: { phase, isDrawer, canDraw }、themes（ShellThemeSwitch：目前主題、選項 ShellThemeOption[]、切換）；自動重連畫面為 { screen: 'resume', notice, connection }（Epic 4：登入改在首頁，殼層不再有輸入框與卡片）；ShellTitleState 供 titleFor。resume 變體的 notice 為 string（App 給「正在重新加入…」）。DialogProps 自 Epic 4 起無 footer（DialogPurpose 也無 'join'）；QuickInput 無 footer、initialActive 保留（ManageMenu 用）。殼層不 import uiStore／catalog，主題資料一律由 App 經 ShellProps.themes 注入（避免循環）
+shells/types.ts               # ShellProps 插槽：players、canvas、toolbar、chat、roundStatus、volunteer、connection、round: { phase, isDrawer, canDraw, drawerName }（drawerName：畫師暱稱，App 由 players 依 round.drawerId 推導，無畫師為 null；Epic 5 meet 主畫面標籤用，殼層不讀 store）、themes（ShellThemeSwitch：目前主題、選項 ShellThemeOption[]、切換）；自動重連畫面為 { screen: 'resume', notice, connection }（Epic 4：登入改在首頁，殼層不再有輸入框與卡片）；ShellTitleState 供 titleFor。resume 變體的 notice 為 string（App 給「正在重新加入…」）。DialogProps 自 Epic 4 起無 footer（DialogPurpose 也無 'join'）；QuickInput 無 footer、initialActive 保留（ManageMenu 用）。殼層不 import uiStore／catalog，主題資料一律由 App 經 ShellProps.themes 注入（避免循環）。Epic 6：遊戲畫面加 `help: ShellHelp`＝`{ open(topicId?): void }`（必填，App 注入，殼層的說明入口呼叫）
 shells/catalog.ts             # THEME_CATALOG = buildThemeCatalog(SHELLS, PLANNED_THEMES)：已註冊者 available:true；已規劃未註冊者（目前 ppt）available:false 顯示「即將推出」不可選；註冊後自動取代，元件不必改
 shells/themeIcons.tsx         # 自繪圖示：程式編輯器（角括號，--brand-editor）、簡報（投影片方塊，--brand-slides）；不用商標
 shells/vscode/ManageMenu.tsx  # 活動列齒輪選單（aria-haspopup=menu），目前只有「切換偽裝…」→ themePick.ts 的 ThemeQuickPick（快速選單列出主題，目前使用／即將推出）；登入畫面的齒輪仍為裝飾
-shells/views.ts               # ShellViewsContext：殼層提供 Dialog（join／topic／cancelRound）、PlayerList、選填的 chat（ChatView：panelClassName／listClassName／Line／Composer；資料為 ChatLineData）、toolbar（compactBelowPx，預設 1100，ppt 640）、status（buttonClassName）、volunteer `{ label, icon? }`（預設「▷ 我來畫」，ppt「從目前投影片開始」＋放映圖示，無障礙名稱不變）；未提供者用 shells/vscode/viewDefaults。ShellProps.counts `{ online, total }` 由 App 注入給殼層狀態列（殼層不得 import store/game，shellBoundary 把關）
+shells/views.ts               # ShellViewsContext：殼層提供 Dialog（join／topic／cancelRound）、PlayerList、選填的 chat（ChatView：panelClassName／listClassName／Line／Composer、選填 overlayClassName＝拖圖覆蓋層外觀（Epic 5，預設 vscode 樣式）；資料為 ChatLineData；ChatLineProps 另有選填 groupWithPrevious＝與前一則同人（ChatPanel 計算，殼層可合併顯示））、toolbar（compactBelowPx，預設 1100，ppt 640）、status（buttonClassName）、volunteer `{ label, icon? }`（預設「▷ 我來畫」，ppt「從目前投影片開始」＋放映圖示，無障礙名稱不變）；未提供者用 shells/vscode/viewDefaults。ShellProps.counts `{ online, total }` 由 App 注入給殼層狀態列（殼層不得 import store/game，shellBoundary 把關）。Epic 6：DialogProps 加選填 body（段落）、DialogPurpose 加 'help'；ShellViews 加選填 help（HelpView `{ switchHint }`，不帶「…」；DEFAULT_HELP_VIEW＝vscode「左下角齒輪 → 切換偽裝」、resolveHelpView／useHelpView）
 shells/document.ts            # applyDocumentTheme(doc, theme, state)：DocumentTheme＝殼層 ShellDefinition 或 HOME_DOCUMENT（id 'home'、title「fishing-work」、favicon.svg）；initialDocumentTheme(hasSavedSession, shell) 給 main.tsx 首次繪製前用。同步<html data-theme>（'home' 或殼層 id）、document.title（首頁「fishing-work」；殼層 titleFor）、favicon（首頁 favicon.svg；殼層 faviconHref）。main.tsx 第一次繪製前依 hasSavedSession() 決定首次值（Epic 4）
-shells/vscode/                # VscodeShell（活動列｜側欄｜編輯區｜底部面板｜狀態列，原 layout/IdeShell）、ShellFrame、StatusBar、EditorTabs、QuickInput（VscodeDialog；Epic 4 起無 footer）、QuickInputNotice（resume 畫面：快速輸入框只有一行 `// 正在重新加入…`，role=status）、ExplorerPlayers、ideLayout、definition、TerminalChat＋terminalFormat（終端機聊天 ChatView：`// `、`❯`、`[HH:mm]`）、viewDefaults（預設 ChatView／ToolbarView／StatusView＝vscode 樣式）；殼層以 data-chat-drop-zone 標出聊天投放區，ChatPanel 找最近祖先並 portal 覆蓋層
-shells/ppt/                   # definition、PptShell（橘紅標題列｜11 個功能區分頁｜左縮圖窗格｜灰工作區＋黑投影片｜備忘稿列｜右註解窗格｜淺灰狀態列；< 1024px 縮圖窗格改覆蓋層）、PptDialog（確定／取消、Enter／Esc；Epic 4 起無 footer）、PptResumeDialog（resume 畫面：標題「加入簡報」＋一行「正在重新加入…」，role=status）、SlidePlayers（玩家＝編號縮圖卡）、FileMenu（「檔案」分頁選單：切換偽裝…）、pptIcons、pptLayout
+shells/vscode/                # VscodeShell（活動列｜側欄｜編輯區｜底部面板｜狀態列，原 layout/IdeShell）、ShellFrame、StatusBar、EditorTabs、QuickInput（VscodeDialog；Epic 4 起無 footer）、QuickInputNotice（resume 畫面：快速輸入框只有一行 `// 正在重新加入…`，role=status）、ExplorerPlayers、ideLayout、definition、TerminalChat＋terminalFormat（終端機聊天 ChatView：`// `、`❯`、`[HH:mm]`）、viewDefaults（預設 ChatView／ToolbarView／StatusView＝vscode 樣式）；殼層以 data-chat-drop-zone 標出聊天投放區，ChatPanel 找最近祖先並 portal 覆蓋層；Epic 6：ManageMenu 第二項「說明…」（manageMenuEntries／selectManageEntry 純函式）
+shells/ppt/                   # definition、PptShell（橘紅標題列｜11 個功能區分頁｜左縮圖窗格｜灰工作區＋黑投影片｜備忘稿列｜右註解窗格｜淺灰狀態列；< 1024px 縮圖窗格改覆蓋層）、PptDialog（確定／取消、Enter／Esc；Epic 4 起無 footer）、PptResumeDialog（resume 畫面：標題「加入簡報」＋一行「正在重新加入…」，role=status）、SlidePlayers（玩家＝編號縮圖卡）、FileMenu（「檔案」分頁選單：切換偽裝…）、pptIcons、pptLayout；Epic 6：「說明」分頁可作用（Ribbon／RibbonContent／HelpRibbon／HelpButton 供測試匯出）、PPT_DIALOG_TITLE.help、「檔案」選單第二項「說明…」
 shells/ppt/PptShell.tsx       # 標題列｜功能區｜左縮圖窗格｜中央投影片｜右註解窗格｜備忘稿列｜狀態列（PowerPoint 偽裝）
-layout/uiStore.ts             # 含 shellId（localStorage、try/catch，本機偏好，不進 server；setShellId 對未註冊或相同 id 不動作、不寫入，預存的未註冊 id 不覆寫；分頁之間不同步、不監聽 storage 事件）、nicknameDraft（換主題時保留暱稱草稿）；import 註冊表（layout 依賴 shells，無循環）
+shells/meet/                  # Epic 5（DESIGN §15）：definition（'meet'、「視訊會議」、攝影機圖示、`Meet – kqw-mzdv-ptj`、favicon-meet.svg）、MeetShell（舞台：主畫面 tile＋浮動工具列＋字幕列｜右側影片條＝參加者 tile｜右側白色「通話中的訊息」面板｜底部控制列：時間／代碼、六個圓形按鈕（分享畫面＝volunteer、更多＝切換偽裝、其餘裝飾）、離開、右側資訊／使用者(N)／訊息（切換面板）／活動）、MeetDialog（白卡片 `--bg-panel`、藍字按鈕）、ParticipantTiles（PlayerList view）、MeetChat（ChatView：暱稱＋時間、同人合併、膠囊輸入列、白底覆蓋層）、meetViews（ShellViews 組裝：toolbar compactBelowPx 1280、status、volunteer）、meetIcons、meetLayout（標題、會議代碼常數、斷點）；shellRound.ts 的 drawerNameOf 供 App 推導 round.drawerName；shells/avatar.ts 為 ppt／meet 共用的頭像色函式；Epic 6：「資訊」按鈕開說明清單、「更多 ⋮」選單第二項「說明…」、meetDialogHeading
+layout/uiStore.ts             # 含 shellId（localStorage、try/catch，本機偏好，不進 server；setShellId 對未註冊或相同 id 不動作、不寫入，預存的未註冊 id 不覆寫；分頁之間不同步、不監聽 storage 事件）、nicknameDraft（換主題時保留暱稱草稿）；import 註冊表（layout 依賴 shells，無循環）；helpTopic: 'list' | HelpTopicId | null（Epic 6 說明對話框）
 layout/themeCardNav.ts        # 風格卡片鍵盤導覽純函式（roving tabindex、←/→ 跳過不可選、Home/End）；layout/ThemeCards.tsx（IDE 樣式卡片）已於 Epic 4 退場
 home/HomeScreen.tsx           # 首頁（Epic 4，不偽裝、柔和 UI，DESIGN §14）：標題、暱稱（join／rememberedNickname／nicknameDraft、字數、錯誤）、風格卡片、「進入遊戲」、連線狀態一行、頁尾。可 import shells/catalog、shells/types、layout/uiStore、layout/themeCardNav、socket/client、store/game；不得 import shells/vscode、shells/ppt、shells/views（首頁在殼層之外）。連線狀態文字：connected「已連線」、connecting「正在連線到伺服器…」、disconnected「連線中斷，重新連線中…」（DESIGN §14.3）
 home/homeLabels.ts            # 首頁文案（連線狀態三種文字等）純資料／函式，供測試
 home/HomeThemeCards.tsx       # 首頁風格卡片（radiogroup／radio、roving tabindex、Enter＝進入遊戲）：圖示＋名稱＋描述（來自註冊表）、選取打勾徽章、不可選「即將推出」膠囊；點卡片只寫 uiStore.shellId，首頁外觀不隨之改變
 test/shellBoundary.test.ts    # 原始碼掃描：功能元件不得含偽裝字樣、不得 import 特定殼層（Epic 3 Phase 1 起把關）
-styles/theme.css              # CSS 變數：:root 為 vscode；[data-theme="ppt"] 覆寫同名 token；[data-theme="home"] 為首頁的獨立命名空間 --home-*（不重用殼層 token，DESIGN §14.2）；值依 DESIGN.md §3 與 §13。--bg-canvas 不在此檔：由 main.tsx 啟動時以 inline style 把 CANVAS_BACKGROUND 注入 <html>
+styles/theme.css              # CSS 變數：:root 為 vscode；[data-theme="ppt"] 覆寫同名 token；[data-theme="home"] 為首頁的獨立命名空間 --home-*（不重用殼層 token，DESIGN §14.2）；[data-theme="meet"] 覆寫同名 token（DESIGN §15.1）；面板 token 六件組 --bg-panel／--bg-panel-hover／--fg-on-panel／--fg-on-panel-muted／--border-panel／--accent-panel 供殼層自畫的白底面板用（vscode／ppt 值＝側欄色，Epic 5）；值依 DESIGN.md §3 與 §13。--bg-canvas 不在此檔：由 main.tsx 啟動時以 inline style 把 CANVAS_BACKGROUND 注入 <html>
 ```
 
 ### 偽裝殼層（Epic 3 起為多主題）
@@ -451,7 +466,7 @@ styles/theme.css              # CSS 變數：:root 為 vscode；[data-theme="ppt
 ## 8. 伺服器結構（`server/src/`）
 
 ```
-index.ts                      # 讀環境變數（PORT、HOST）→ createApp → listen；印出區網分享網址；SIGINT/SIGTERM 優雅關閉
+index.ts                      # 讀環境變數（PORT、HOST、PUBLIC_URL、IN_CONTAINER）→ createApp → listen；印出區網分享網址；SIGINT/SIGTERM 優雅關閉
 app.ts                        # createApp 工廠：Express（trust proxy）+ http + Socket.IO + 各遊戲 namespace；e2e 以隨機埠與短計時呼叫
 static.ts                     # /、/draw-guess/（SPA fallback，規則見 §3）、/healthz
 games/draw-guess/
@@ -465,8 +480,9 @@ games/draw-guess/
   scoring.ts                  # 計分純函式（畫師 +20×猜對人數、猜對者 100−floor(50×elapsed/roundMs)）
 lib/log.ts                    # 簡單結構化 log（時間、事件、玩家）
 lib/network.ts                # 區網 IPv4 列舉、分享網址、log 用客戶端位址（CF-Connecting-IP → X-Forwarded-For → socket）
+lib/shareLog.ts               # 分享網址 log 的純函式：PUBLIC_URL 優先、IN_CONTAINER 時改印提示（Epic 9，spec §3「Docker 部署」）
 public/index.html             # 首頁：遊戲清單
-test/                         # Vitest：room、room.round、scoring、network、e2e/（起隨機埠 server + socket.io-client）、helpers/fakeClock（answer / text / nickname 的測試在 shared/test/）
+test/                         # Vitest：room、room.round、scoring、network、shareLog、e2e/（起隨機埠 server + socket.io-client）、helpers/fakeClock（answer / text / nickname 的測試在 shared/test/）
 ```
 
 ---
@@ -514,6 +530,10 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 | 日期 | 變更 | 原因 |
 |------|------|------|
+| 2026-09-29 | **Epic 9 Docker 部署**：§3 新增「Docker 部署」（多階段映像、compose、`PUBLIC_URL`／`IN_CONTAINER` 分享網址 log）；Epic 8 語音輸入暫緩，契約未寫入 | Rex 2026-09-29：「撰寫 DOCKERFILE，我要換電腦部署」；麥克風暫緩 |
+| 2026-09-28 | **Epic 7 畫布背景色**：§4 `PALETTE` 加黑與膚色（10 色）、`DrawOp` 加 `background`；§5 驗證表與歷史正規化（只留最後一個、`clear` 保留、`undo` 不影響）；§6 畫布底色可換、工具列「背景色」按鈕 | Rex 2026-09-28：色塊加黑色與膚色 #FFECEA；改背景色按鈕把背景設成目前顏色 |
+| 2026-09-26 | **Epic 6 遊戲說明**：§7 `features/help/`、`ShellProps.help`、`DialogProps.body`／`'help'`、`ShellViews.help`、`uiStore.helpTopic`；契約與 server 不變 | Rex 2026-09-26：ppt「說明」分頁改成真的說明（如何切換偽裝、如何當畫師） |
+| 2026-09-25 | **Epic 5 視訊會議主題**：§7 新增 `shells/meet/`、`ShellId` 加 `'meet'`、theme.css `[data-theme="meet"]` 與六個面板 token；契約與 server 不變 | Rex 2026-09-25「來個 UI，Google Meet 版本」 |
 | 2026-09-25 | **Epic 4 首頁**：§7 新增 `home/`（HomeScreen、HomeThemeCards）、App 三分支 `pickScreen`、`ShellProps` 的 `login` 改 `resume`、註冊表加 `description`、document.ts 泛化（home）、theme.css `[data-theme="home"]`；NicknameScreen 與 layout/ThemeCards 退場。契約與 server 不變 | Rex 2026-09-25 需求修正：首頁不是預設 VS Code，是柔和 UI 首頁以卡片選風格 |
 | 2026-09-24 | 初版定案（Rex 拍板 Node） | — |
 | 2026-09-24 | §2 版本鎖定、§3 靜態檔規則、§4 空字串規則、§8 測試位置、§10 lint（Phase 0 驗收） | 龍骨 Phase 0 提問 |

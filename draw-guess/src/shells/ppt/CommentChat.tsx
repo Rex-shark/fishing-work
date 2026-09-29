@@ -11,11 +11,9 @@ import { IMAGE_LABEL } from '../../features/chat/chatFormat'
 import { ImageMessage } from '../../features/chat/ImageMessage'
 import { ErrorIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
-import { COMMENT_PLACEHOLDER, COMMENT_SEND_LABEL, avatarColorIndex, avatarInitial } from './commentFormat'
+import { avatarBgClass, avatarInitial } from '../avatar'
+import { COMMENT_PLACEHOLDER, COMMENT_SEND_LABEL } from './commentFormat'
 import { CheckIcon, SendIcon } from './pptIcons'
-
-/** 頭像底色（theme.css --avatar-1..6；Tailwind 需要完整 class 字面值才會產生） */
-const AVATAR_BG = ['bg-avatar-1', 'bg-avatar-2', 'bg-avatar-3', 'bg-avatar-4', 'bg-avatar-5', 'bg-avatar-6'] as const
 
 /** 卡片內縮圖上限（DESIGN §13.2「圖片卡片內縮圖 200px」；高度沿用 §5 的 160） */
 const COMMENT_THUMB_MAX_WIDTH = 200
@@ -41,7 +39,7 @@ function Avatar({ nickname }: { nickname: string | null }) {
     <span
       aria-hidden="true"
       className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] leading-none font-bold text-fg-on-avatar ${
-        AVATAR_BG[avatarColorIndex(nickname)]
+        avatarBgClass(nickname)
       }`}
     >
       {avatarInitial(nickname)}

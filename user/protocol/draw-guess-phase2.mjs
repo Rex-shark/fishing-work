@@ -66,14 +66,16 @@ check('drawing 時 volunteer → ROUND_BUSY', rv3.ok === false && rv3.error === 
 // ── draw:op 驗證與轉發 ──
 bOps.length = 0;
 A.s.emit('draw:op', { type: 'begin', strokeId: 's1', tool: 'pen', color: WHITE, size: 4, point: { x: 0.1, y: 0.1 } });
-A.s.emit('draw:op', { type: 'begin', strokeId: 'bad-color', tool: 'pen', color: '#123456', size: 4, point: { x: 0.1, y: 0.1 } });
+// 2026-09-28 舵手修正：Epic 1 Phase 6 起任意 #RRGGBB 都合法（COLOR_PATTERN），改用格式不符的色碼
+A.s.emit('draw:op', { type: 'begin', strokeId: 'bad-color', tool: 'pen', color: '#12345', size: 4, point: { x: 0.1, y: 0.1 } });
 A.s.emit('draw:op', { type: 'move', strokeId: 's1', points: [{ x: 1.5, y: 0.2 }] });
 A.s.emit('draw:op', { type: 'move', strokeId: 's1', points: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.3 }] });
 A.s.emit('draw:op', { type: 'move', strokeId: 'nope', points: [{ x: 0.2, y: 0.2 }] });
 A.s.emit('draw:op', { type: 'begin', strokeId: 's1', tool: 'pen', color: WHITE, size: 4, point: { x: 0.5, y: 0.5 } });
 A.s.emit('draw:op', { type: 'end', strokeId: 's1' });
 A.s.emit('draw:op', { type: 'begin', strokeId: 'x'.repeat(65), tool: 'pen', color: WHITE, size: 4, point: { x: 0.5, y: 0.5 } });
-A.s.emit('draw:op', { type: 'begin', strokeId: 'bad-size', tool: 'eraser', color: WHITE, size: 5, point: { x: 0.5, y: 0.5 } });
+// 2026-09-28 舵手修正：Phase 6 起粗細為 BRUSH_MIN..BRUSH_MAX（1..64）整數，改用超出上限的 65
+A.s.emit('draw:op', { type: 'begin', strokeId: 'bad-size', tool: 'eraser', color: WHITE, size: 65, point: { x: 0.5, y: 0.5 } });
 A.s.emit('draw:op', { type: 'move', strokeId: 's1', points: Array.from({ length: 65 }, () => ({ x: 0.5, y: 0.5 })) });
 B.s.emit('draw:op', { type: 'begin', strokeId: 'from-b', tool: 'pen', color: WHITE, size: 4, point: { x: 0.5, y: 0.5 } });
 await sleep(400);

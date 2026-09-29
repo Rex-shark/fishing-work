@@ -9,7 +9,7 @@
 
 | 欄位 | 值 |
 |---|---|
-| 職責 | 專案負責人＋架構師：釐清需求、定技術方向、寫 `plan/` 與 `spec/`、做設計決策、派工給子代理或其他 session 並驗收；實作以派工為主，本人不寫業務程式 |
+| 職責 | 專案負責人＋架構師：釐清需求、定技術方向、寫 `plan/` 與 `spec/`、做設計決策、派工給子代理或其他 session；**驗收交給 `acceptance-reviewer` 子代理**（Rex 2026-09-29），舵手依其報告定案與回寫文件；實作以派工為主，本人不寫業務程式 |
 | sessionId | local_be20d490-c7fe-468a-a892-a41dd0732c46 |
 | transcript | eb6d4668-b763-4f3e-9c0a-19cadba29ac4 |
 | 標題 | Helm |
@@ -31,7 +31,7 @@
 
 | 定義檔 | 職責邊界 |
 |---|---|
-| （尚未建立） | 技術棧定案後，依專案形態決定是否建立 `backend-dev` / `frontend-dev` / `code-reviewer` |
+| [`.claude/agents/acceptance-reviewer.md`](../agents/acceptance-reviewer.md) | 舵手的獨立驗收：重跑四項指令、比對契約、跑與補 `user/protocol/` 協定測試、內建瀏覽器實測、回報證據；不改產品程式碼與規格文件、不 commit（Rex 2026-09-29 建立） |
 
 > 派工時一律在 prompt 註明：「你是 <派工者名字> 派出的子代理，沒有團隊身分：不要登記名冊、不要跨 session 傳訊、不要自稱名冊裡的名字；需要聯絡別的 session 就回報主對話。」
 

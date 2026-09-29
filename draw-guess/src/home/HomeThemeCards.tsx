@@ -1,6 +1,6 @@
 // 首頁的介面風格卡片（plan/home-page.md 決策 2、7、8；DESIGN §14.3、§14.4）。
 //   卡片：底 --home-surface、圓角 --home-radius、內距 20px、1px --home-border、--home-shadow；左上 64px 圓形淡色底（home-icon-disc）放 48px 圖示；
-//   名稱 16px／600、描述（註冊表 description）13px --home-fg-muted。
+//   名稱 16px／600、描述（註冊表 description）13px／18px --home-fg-muted，允許兩行、text-wrap: balance（Epic 5 決策 13(6)）；卡片等高（grid stretch）。
 //   選取：2px --home-accent 邊框（1px border ＋ 1px inset ring，不改尺寸）＋底 --home-accent-soft ＋右上 20px 打勾徽章。
 //   hover（可選者）：底 --home-surface-hover、--home-shadow-hover、上移 2px；200ms；prefers-reduced-motion 時不位移。
 //   不可選（即將推出）：opacity .55、cursor default、右上「即將推出」膠囊。
@@ -62,7 +62,7 @@ export function HomeThemeCards({ options, value, onSelect, onEnter, labelledBy }
       aria-label={labelledBy === undefined ? '介面風格' : undefined}
       aria-labelledby={labelledBy}
       onKeyDown={handleKeyDown}
-      className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4"
+      className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-4"
     >
       {options.map((option, i) => {
         const checked = option.id === value
@@ -87,7 +87,7 @@ export function HomeThemeCards({ options, value, onSelect, onEnter, labelledBy }
             <Icon size={64} className="home-icon-disc rounded-full p-2" />
             <span className="flex flex-col gap-1">
               <span className="text-[16px] leading-[22px] font-semibold text-home-fg">{option.name}</span>
-              <span className="text-[13px] leading-[18px] text-home-fg-muted">{option.description}</span>
+              <span className="text-[13px] leading-[18px] text-home-fg-muted [text-wrap:balance]">{option.description}</span>
             </span>
             {checked && option.available && <CheckBadge />}
             {!option.available && (

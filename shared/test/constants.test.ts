@@ -22,8 +22,13 @@ describe('COLOR_PATTERN', () => {
     expect(COLOR_PATTERN.test(c)).toBe(false);
   });
 
-  it('PALETTE 8 色皆合法且為大寫 6 位', () => {
-    expect(PALETTE).toHaveLength(8);
+  it('PALETTE 10 色（Epic 7：白、黑、膚色、灰、紅、橘、黃、綠、藍、紫）且與 spec §4 一致', () => {
+    expect(PALETTE).toEqual(['#FFFFFF', '#000000', '#FFECEA', '#9E9E9E', '#F44747', '#FF8C00', '#FFD700', '#6A9955', '#569CD6', '#C586C0']);
+    expect(new Set(PALETTE).size).toBe(PALETTE.length);
+  });
+
+  it('PALETTE 皆合法且為大寫 6 位', () => {
+    expect(PALETTE).toHaveLength(10);
     for (const c of PALETTE) {
       expect(COLOR_PATTERN.test(c)).toBe(true);
       expect(c).toBe(c.toUpperCase());

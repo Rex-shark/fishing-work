@@ -214,6 +214,19 @@ describe('drawOp', () => {
   })
 })
 
+describe('background op 不畫進畫布（底色由 CSS 提供，Epic 7）', () => {
+  it('drawOp(background) 不呼叫任何 context 方法；redrawAll 只清畫布、照畫筆跡', () => {
+    const ctx = new FakeCtx()
+    drawOp(ctx, { type: 'background', color: '#FFECEA' }, new Map())
+    expect(ctx.calls).toEqual([])
+    const withBg = new FakeCtx()
+    const without = new FakeCtx()
+    redrawAll(withBg, [{ type: 'background', color: '#FFECEA' }, begin('a', 0.1, 0.1), end('a')])
+    redrawAll(without, [begin('a', 0.1, 0.1), end('a')])
+    expect(withBg.calls).toEqual(without.calls)
+  })
+})
+
 describe('compactOps：歷史正規化', () => {
   it('undo 移除該 stroke 的 begin/move/end，undo 本身不留', () => {
     const ops = [begin('a', 0, 0), move('a', [0.1, 0.1]), end('a'), begin('b', 0.5, 0.5), end('b'), { type: 'undo', strokeId: 'b' } as DrawOp]
@@ -228,6 +241,14 @@ describe('compactOps：歷史正規化', () => {
   it('clear 丟掉之前的全部，clear 本身不留', () => {
     const ops: DrawOp[] = [begin('a', 0, 0), end('a'), { type: 'clear' }, begin('b', 0, 0)]
     expect(compactOps(ops)).toEqual([begin('b', 0, 0)])
+  })
+
+  it('background（Epic 7）：只留最後一個（原地取代）；clear 保留背景；undo 不影響背景', () => {
+    const bgA: DrawOp = { type: 'background', color: '#FFECEA' }
+    const bgB: DrawOp = { type: 'background', color: '#000000' }
+    expect(compactOps([bgA, begin('a', 0, 0), end('a'), bgB])).toEqual([bgB, begin('a', 0, 0), end('a')])
+    expect(compactOps([begin('a', 0, 0), end('a'), bgA, { type: 'clear' }, begin('b', 0, 0)])).toEqual([bgA, begin('b', 0, 0)])
+    expect(compactOps([bgA, begin('a', 0, 0), end('a'), { type: 'undo', strokeId: 'a' }])).toEqual([bgA])
   })
 
   it('已正規化的歷史原樣回傳', () => {

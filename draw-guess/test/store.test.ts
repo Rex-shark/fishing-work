@@ -60,6 +60,31 @@ describe('store：ops 正規化與全量重繪版本', () => {
     expect(get().opsVersion).toBe(1)
   })
 
+  it('background（Epic 7）：首次附加、之後原地取代（只留最後一個），不遞增 opsVersion', () => {
+    get().appendOp(begin('a'))
+    get().appendOp({ type: 'background', color: '#FFECEA' })
+    get().appendOp(end('a'))
+    get().appendOp({ type: 'background', color: '#000000' })
+    expect(get().ops).toEqual([begin('a'), { type: 'background', color: '#000000' }, end('a')])
+    expect(get().opsVersion).toBe(0)
+  })
+
+  it('clear 只清筆跡、保留背景；undo 不影響背景', () => {
+    for (const op of [begin('a'), end('a'), begin('b'), end('b')]) get().appendOp(op)
+    get().appendOp({ type: 'background', color: '#FFECEA' })
+    get().appendOp({ type: 'undo', strokeId: 'b' })
+    expect(get().ops).toEqual([begin('a'), end('a'), { type: 'background', color: '#FFECEA' }])
+    get().appendOp({ type: 'clear' })
+    expect(get().ops).toEqual([{ type: 'background', color: '#FFECEA' }])
+  })
+
+  it('進入 drawing（新回合）清空 ops，背景一併回到預設', () => {
+    get().setRound(round({ phase: 'choosing', drawerId: 'p1' }))
+    get().applyOps([{ type: 'background', color: '#FFECEA' }])
+    get().setRound(round({ phase: 'drawing', drawerId: 'p1' }))
+    expect(get().ops).toEqual([])
+  })
+
   it('applyOps 整批替換並正規化', () => {
     get().applyOps([begin('a'), end('a'), { type: 'undo', strokeId: 'a' }, begin('b')])
     expect(get().ops).toEqual([begin('b')])

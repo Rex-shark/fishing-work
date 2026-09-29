@@ -1,5 +1,5 @@
 // 快速輸入框（仿 VS Code 命令面板 / Quick Pick；DESIGN.md §5「畫面」、§4 陰影與圓角）＝ vscode 主題的對話框呈現。
-// 用於出題、放棄確認、切換偽裝的快速選單；自動重連畫面只放一行提示（QuickInputNotice）。上方一個輸入框（可省略），下方一串選項；Enter 執行反白的選項、↑↓ 切換、Esc 關閉。
+// 用於出題、放棄確認、遊戲說明（Epic 6）、切換偽裝的快速選單；自動重連畫面只放一行提示（QuickInputNotice）。上方一個輸入框（可省略），下方一串選項；Enter 執行反白的選項、↑↓ 切換、Esc 關閉。
 // Enter 走 form 原生 submit（單一文字欄位的隱式送出），注音等輸入法選字的 Enter 不會觸發（踩雷紀錄 Phase 3）。
 // 功能元件以 ShellViews.Dialog（shells/views.ts）使用，本主題的實作為檔尾的 VscodeDialog。
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
@@ -32,6 +32,8 @@ interface QuickInputProps {
   input?: QuickInputField
   /** 選單上方的說明列（純選單時當提問） */
   title?: ReactNode
+  /** 說明列下方的內文段落（Epic 6 遊戲說明；DESIGN §16：13px／行高 18px、段距 6px）；省略時不渲染任何元素 */
+  body?: ReactNode
   items: QuickItem[]
   onEscape?: () => void
   /** 框內最下方的訊息（錯誤以 text-sem-error 顯示） */
@@ -45,7 +47,7 @@ interface QuickInputProps {
 /** 快速輸入框的外框樣式（QuickInput 與 QuickInputNotice 共用） */
 const QUICK_INPUT_BOX = 'z-30 w-[600px] max-w-[calc(100%-32px)] rounded-[3px] border border-border bg-quickinput p-[6px] text-[13px] text-fg shadow-quickinput'
 
-export function QuickInput({ label, input, title, items, onEscape, message, className, initialActive = 0 }: QuickInputProps) {
+export function QuickInput({ label, input, title, body, items, onEscape, message, className, initialActive = 0 }: QuickInputProps) {
   const [active, setActive] = useState(initialActive)
   const listRef = useRef<HTMLUListElement>(null)
   const listId = useId()
@@ -108,6 +110,7 @@ export function QuickInput({ label, input, title, items, onEscape, message, clas
       className={`${QUICK_INPUT_BOX} ${className ?? ''}`}
     >
       {title !== undefined && <div className="px-1 pb-1 leading-[22px] text-fg">{title}</div>}
+      {body !== undefined && <div className="flex flex-col gap-[6px] px-1 pb-[6px] text-[13px] leading-[18px] text-fg">{body}</div>}
 
       {input !== undefined && (
         <input
@@ -203,16 +206,18 @@ export function QuickInputNotice({ notice }: { notice: string }) {
 const DIALOG_POSITION: Record<DialogPurpose, string> = {
   topic: 'absolute top-[35px] left-1/2 -translate-x-1/2',
   cancelRound: 'absolute top-[35px] left-1/2 -translate-x-1/2',
+  help: 'absolute top-[35px] left-1/2 -translate-x-1/2',
 }
 
 /** 選項前綴 `› `、提問白字、提示以註解 `// ` 呈現（仿命令面板與程式註解） */
-export function VscodeDialog({ purpose, label, input, title, items, onEscape, note, error }: DialogProps) {
+export function VscodeDialog({ purpose, label, input, title, body, items, onEscape, note, error }: DialogProps) {
   return (
     <QuickInput
       label={label}
       className={DIALOG_POSITION[purpose]}
       input={input}
       title={title !== undefined ? <span className="text-fg">{title}</span> : undefined}
+      body={body}
       items={items.map((item) => ({ ...item, label: `› ${item.label}` }))}
       onEscape={onEscape}
       message={

@@ -1,7 +1,7 @@
 // 畫師工具列（殼層的 toolbar 插槽；DESIGN.md §5 畫師工具列、§6「圖示按鈕」「滑桿」「色相條」「工具提示」）。
-// 目前色圓點、8 個 16px 預設色塊（PALETTE）、色相條、粗細滑桿（1–64）、橡皮擦／復原／清空／放棄。
+// 目前色圓點、10 個 16px 預設色塊（PALETTE）、色相條、粗細滑桿（1–64）、背景色／橡皮擦／復原／清空／放棄。
 // 只在「自己是畫師且 phase = drawing」時渲染。選色（色塊或色相條）即切回畫筆；橡皮擦再按一次也切回畫筆。
-// 視窗寬度小於殼層給的斷點（ShellViews.toolbar.compactBelowPx；預設 1100px）時色相條與滑桿收進「⋯」彈出面板
+// 視窗寬度小於殼層給的斷點（ShellViews.toolbar.compactBelowPx；省略時用 DEFAULT_TOOLBAR_VIEW）時色相條與滑桿收進「⋯」彈出面板
 // （portal 到 body，不被外層的 overflow 容器裁掉）。
 // 「放棄」開啟確認對話框（CancelConfirm），不用 window.confirm。
 // 按下狀態（bg-active）的字色與選中色塊外框用 --fg-on-active（深色主題為白、淺色主題為深色字），不借用狀態列的 --fg-statusbar。
@@ -9,14 +9,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { PALETTE, type DrawOp } from '@fishing-work/shared'
-import { EllipsisIcon, EraserIcon, StopIcon, TrashIcon, UndoIcon } from '../../layout/icons'
+import { EllipsisIcon, EraserIcon, FillIcon, StopIcon, TrashIcon, UndoIcon } from '../../layout/icons'
 import { placeFloating, tip } from '../../layout/tooltipPlacement'
 import { useUiStore } from '../../layout/uiStore'
 import { useMediaQuery } from '../../layout/useElementSize'
 import { isOpsFull, sendDrawOp } from '../../socket/client'
 import { useToolbarView } from '../../shells/views'
 import { selectCanDraw, useGameStore } from '../../store/game'
-import { hueToHex, swatchLabel } from './brush'
+import { backgroundLabel, backgroundOp, hueToHex, swatchLabel } from './brush'
 import { HueSlider, SizeSlider } from './Slider'
 import { fullToolbarQuery } from './toolbarLayout'
 
@@ -37,7 +37,9 @@ export function ToolBar() {
   const tool = useGameStore((s) => s.brush.tool)
   const setBrush = useGameStore((s) => s.setBrush)
   const undoTarget = useGameStore((s) => lastStrokeId(s.ops))
-  const hasOps = useGameStore((s) => s.ops.length > 0)
+  // 有筆跡才能清空（background 不算筆跡：clear 只清筆跡、保留背景，Epic 7）
+  const hasOps = useGameStore((s) => s.ops.some((o) => o.type !== 'background'))
+  const color = useGameStore((s) => s.brush.color)
   const opsFull = useGameStore((s) => isOpsFull(s.ops.length))
   const confirming = useUiStore((s) => s.cancelConfirmOpen)
   const setConfirming = useUiStore((s) => s.setCancelConfirmOpen)
@@ -52,6 +54,11 @@ export function ToolBar() {
 
   function handleClear() {
     if (hasOps) sendDrawOp({ type: 'clear' })
+  }
+
+  // 背景色＝目前筆色（橡皮擦模式也用目前筆色；目前背景已是該色時照送，無害）；Epic 7 決策 5
+  function handleBackground() {
+    sendDrawOp(backgroundOp(color))
   }
 
   return (
@@ -77,6 +84,9 @@ export function ToolBar() {
 
       <Separator />
 
+      <IconButton label={backgroundLabel(color)} onClick={handleBackground}>
+        <FillIcon />
+      </IconButton>
       <IconButton label="橡皮擦" pressed={tool === 'eraser'} onClick={() => setBrush({ tool: tool === 'eraser' ? 'pen' : 'eraser' })}>
         <EraserIcon />
       </IconButton>
@@ -104,7 +114,7 @@ function CurrentColor() {
   )
 }
 
-/** 8 個預設色塊（spec §4 PALETTE）：選色即切回畫筆 */
+/** 10 個預設色塊（spec §4 PALETTE）：選色即切回畫筆 */
 function Swatches() {
   const tool = useGameStore((s) => s.brush.tool)
   const current = useGameStore((s) => s.brush.color)
