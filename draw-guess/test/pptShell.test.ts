@@ -32,8 +32,8 @@ afterEach(() => {
 })
 
 describe('註冊表：ppt', () => {
-  it('SHELLS 為 vscode、ppt、meet（首頁卡片順序；Epic 5 起 meet 接在後面）；ppt 可解析', () => {
-    expect(SHELLS.map((s) => s.id)).toEqual(['vscode', 'ppt', 'meet'])
+  it('SHELLS 為 vscode、ppt、meet、excel（首頁卡片順序；Epic 5 起 meet、Epic 13 起 excel 接在後面）；ppt 可解析', () => {
+    expect(SHELLS.map((s) => s.id)).toEqual(['vscode', 'ppt', 'meet', 'excel'])
     expect(isRegisteredShellId('ppt')).toBe(true)
     expect(resolveShellId('ppt')).toBe('ppt')
     expect(getShell('ppt')).toBe(pptShell)

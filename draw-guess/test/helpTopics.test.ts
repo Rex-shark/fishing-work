@@ -53,6 +53,12 @@ describe('主題資料（決策 5）', () => {
     expect(findHelpTopic('switch-theme')?.paragraphs[0]).toBe('{switch}，選一個想要的介面風格；下次進入時首頁會預選它。')
   })
 
+  it('「畫師工具與放棄」與 Epic 11 工具列一致：提到顏色面板與背景色，不再提色相條', () => {
+    const p = findHelpTopic('tools')?.paragraphs ?? []
+    expect(p[0]).toBe('作畫時的工具列有：顏色（色塊，或點最左的目前顏色打開顏色面板）、背景色、粗細滑桿、橡皮擦、復原、清空畫布。')
+    expect(p.join('')).not.toContain('色相條')
+  })
+
   it('對話框文字：清單標題「說明」、第二步「返回」「關閉」（DESIGN §16）', () => {
     expect([HELP_LIST_TITLE, HELP_BACK_LABEL, HELP_CLOSE_LABEL]).toEqual(['說明', '返回', '關閉'])
   })

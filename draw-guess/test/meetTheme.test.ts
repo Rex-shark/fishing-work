@@ -60,8 +60,9 @@ describe("theme.css [data-theme='meet']（DESIGN §15.1）", () => {
     expect(fgOnActive).toBe('#202124')
   })
 
-  it('區塊的變數＝§15.1 表＋ --fg-on-active，值逐字一致（不自訂值、不多不少）', () => {
-    const expected = Object.fromEntries([...table, ['--fg-on-active', fgOnActive ?? '']])
+  it('區塊的變數＝§15.1 表＋ --fg-on-active ＋ --grid-line，值逐字一致（不自訂值、不多不少）', () => {
+    // --grid-line（Epic 13，DESIGN §17.1）：meet 不使用，值＝meet 的 --border
+    const expected = Object.fromEntries([...table, ['--fg-on-active', fgOnActive ?? ''], ['--grid-line', table.get('--border') ?? '']])
     expect(Object.fromEntries(css)).toEqual(expected)
   })
 

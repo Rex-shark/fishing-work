@@ -13,7 +13,6 @@
 // 殼層不 import uiStore／catalog（踩雷紀錄 Phase 2）；主題資料經 ShellProps.themes、說明入口經 ShellProps.help。不讀 store/game：人數經 ShellProps.counts。
 import { useRef, useState, type ComponentType, type ReactNode, type RefObject } from 'react'
 import { MIN_PLAYERS, PALETTE, type RoundPhase } from '@fishing-work/shared'
-import { HUE_GRADIENT } from '../../features/canvas/brush'
 import { HELP_TOPICS, type HelpTopicId } from '../../features/help/helpTopics'
 import { canVolunteer } from '../../features/round/roundDisplay'
 import { CloseIcon, EllipsisIcon, EraserIcon, FillIcon, SearchIcon, StopIcon, TrashIcon, UndoIcon } from '../../layout/icons'
@@ -21,31 +20,33 @@ import { tip } from '../../layout/tooltipPlacement'
 import { useMediaQuery } from '../../layout/useElementSize'
 import type { ShellGameSlots, ShellHelp, ShellPlayerCounts, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
 import { ShellViewsContext } from '../views'
-import { FileTab, PptThemeDialog } from './FileMenu'
-import { PptResumeDialog } from './PptDialog'
+import { FileTab, OfficeThemeDialog } from '../office/FileMenu'
 import {
-  AlignLeftIcon,
-  BulletsIcon,
   CommentIcon,
-  LayoutIcon,
   MaximizeIcon,
   MinimizeIcon,
-  NewSlideIcon,
   NormalViewIcon,
-  NotesIcon,
   PaletteIcon,
   PasteIcon,
   PenIcon,
   PictureIcon,
   QuestionBubbleIcon,
-  ReadingViewIcon,
   RedoIcon,
   RefreshIcon,
   SaveIcon,
+  SwitchThemeIcon,
+} from '../office/officeIcons'
+import { PptResumeDialog } from './PptDialog'
+import {
+  AlignLeftIcon,
+  BulletsIcon,
+  LayoutIcon,
+  NewSlideIcon,
+  NotesIcon,
+  ReadingViewIcon,
   ShapesIcon,
   SlideshowIcon,
   SorterIcon,
-  SwitchThemeIcon,
   TextBoxIcon,
 } from './pptIcons'
 import {
@@ -225,7 +226,7 @@ function PptFrame(props: PptFrameProps) {
         </section>
 
         {overlay}
-        {themes !== undefined && themePickOpen && <PptThemeDialog themes={themes} onClose={closeThemePick} />}
+        {themes !== undefined && themePickOpen && <OfficeThemeDialog themes={themes} onClose={closeThemePick} />}
       </div>
 
       <StatusBar counter={counter} paneVisible={paneVisible} onTogglePane={togglePane} center={statusCenter} />
@@ -420,14 +421,16 @@ function DrawRibbon({ tools }: { tools?: ReactNode }) {
   return (
     <RibbonGroup caption="畫筆（只有本回合的畫師可以使用）" tooltip="只有本回合的畫師可以使用繪圖工具">
       <div aria-hidden="true" className="pointer-events-none flex h-[30px] items-center gap-[6px] text-fg opacity-40 select-none">
-        <PenIcon />
+        {/* 目前顏色鈕（Epic 11：取代原本的畫筆圖示與色相條，與真工具列同位置）：22×22 內 14px 圓點，填預設白筆（PALETTE[0]） */}
+        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
+          <span className="block h-[14px] w-[14px] rounded-full border border-border" style={{ backgroundColor: PALETTE[0] }} />
+        </span>
         <span className="flex items-center gap-[4px]">
           {PALETTE.map((color) => (
             // 畫筆色是遊戲資料（spec PALETTE），以 style 帶入（同 ToolBar）
             <span key={color} className="block h-4 w-4 rounded-[2px] border border-border" style={{ backgroundColor: color }} />
           ))}
         </span>
-        <span className="block h-[10px] w-[96px] rounded-[5px]" style={{ backgroundImage: HUE_GRADIENT }} />
         <span className="relative block h-[2px] w-[80px] bg-border">
           <span className="absolute top-0 left-0 block h-[2px] w-[20%] bg-accent" />
         </span>

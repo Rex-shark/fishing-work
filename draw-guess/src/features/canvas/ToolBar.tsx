@@ -1,24 +1,26 @@
-// 畫師工具列（殼層的 toolbar 插槽；DESIGN.md §5 畫師工具列、§6「圖示按鈕」「滑桿」「色相條」「工具提示」）。
-// 目前色圓點、10 個 16px 預設色塊（PALETTE）、色相條、粗細滑桿（1–64）、背景色／橡皮擦／復原／清空／放棄。
-// 只在「自己是畫師且 phase = drawing」時渲染。選色（色塊或色相條）即切回畫筆；橡皮擦再按一次也切回畫筆。
-// 視窗寬度小於殼層給的斷點（ShellViews.toolbar.compactBelowPx；省略時用 DEFAULT_TOOLBAR_VIEW）時色相條與滑桿收進「⋯」彈出面板
-// （portal 到 body，不被外層的 overflow 容器裁掉）。
+// 畫師工具列（殼層的 toolbar 插槽；DESIGN.md §5 畫師工具列、§6「圖示按鈕」「滑桿」「顏色面板」「工具提示」）。
+// 目前顏色鈕（開顏色面板，Epic 11）、10 個 16px 預設色塊（PALETTE）、粗細滑桿（1–64）、背景色／橡皮擦／復原／清空／放棄。
+// 只在「自己是畫師且 phase = drawing」時渲染。選色（色塊或顏色面板）即切回畫筆；橡皮擦再按一次也切回畫筆。
+// 視窗寬度小於殼層給的斷點（ShellViews.toolbar.compactBelowPx；省略時用 DEFAULT_TOOLBAR_VIEW）時粗細滑桿收進「⋯」彈出面板
+// （portal 到 body，不被外層的 overflow 容器裁掉；開關與定位同顏色面板，共用 useFloatingPanel）。
 // 「放棄」開啟確認對話框（CancelConfirm），不用 window.confirm。
 // 按下狀態（bg-active）的字色與選中色塊外框用 --fg-on-active（深色主題為白、淺色主題為深色字），不借用狀態列的 --fg-statusbar。
-// 色塊、目前色、色相條的顏色是遊戲資料（畫筆色），以 style 帶入，不是樣式 token（DESIGN §10 只約束介面色）。
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+// 色塊、目前色的顏色是遊戲資料（畫筆色），以 style 帶入，不是樣式 token（DESIGN §10 只約束介面色）。
+import { useCallback, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { PALETTE, type DrawOp } from '@fishing-work/shared'
 import { EllipsisIcon, EraserIcon, FillIcon, StopIcon, TrashIcon, UndoIcon } from '../../layout/icons'
-import { placeFloating, tip } from '../../layout/tooltipPlacement'
+import { tip } from '../../layout/tooltipPlacement'
 import { useUiStore } from '../../layout/uiStore'
 import { useMediaQuery } from '../../layout/useElementSize'
 import { isOpsFull, sendDrawOp } from '../../socket/client'
 import { useToolbarView } from '../../shells/views'
 import { selectCanDraw, useGameStore } from '../../store/game'
-import { backgroundLabel, backgroundOp, hueToHex, swatchLabel } from './brush'
-import { HueSlider, SizeSlider } from './Slider'
+import { backgroundLabel, backgroundOp, colorButtonLabel, hexToHsv, swatchLabel } from './brush'
+import { ColorPanel } from './ColorPanel'
+import { SizeSlider } from './Slider'
 import { fullToolbarQuery } from './toolbarLayout'
+import { useFloatingPanel } from './useFloatingPanel'
 
 /**
  * 歷史中最後一筆仍存在的 strokeId（ops 已正規化、本回合全由畫師產生，因此就是「自己最後一筆」）。
@@ -74,7 +76,6 @@ export function ToolBar() {
 
       {full ? (
         <>
-          <HueControl />
           <Separator />
           <SizeControl />
         </>
@@ -103,14 +104,22 @@ export function ToolBar() {
   )
 }
 
-/** 目前色圓點（DESIGN §5）：橡皮擦中仍顯示切回畫筆後的顏色 */
+/**
+ * 目前顏色鈕（決策 1；DESIGN §5）：22×22 圖示按鈕，內為 14px 目前色圓點（1px --border 外框）；點擊開關顏色面板。
+ * 橡皮擦中仍顯示切回畫筆後的顏色
+ */
 function CurrentColor() {
   const color = useGameStore((s) => s.brush.color)
-  const label = `目前顏色 ${color}`
+  const [open, setOpen] = useState(false)
+  const close = useCallback(() => setOpen(false), [])
+  const buttonRef = useRef<HTMLButtonElement>(null)
   return (
-    <span role="img" aria-label={label} {...tip(label)} className="mx-1 flex h-[22px] w-4 shrink-0 items-center justify-center">
-      <span className="block h-3 w-3 rounded-full border border-border" style={{ backgroundColor: color }} />
-    </span>
+    <>
+      <IconButton label={colorButtonLabel(color)} pressed={open} expanded={open} buttonRef={buttonRef} onClick={() => setOpen((v) => !v)}>
+        <span className="block h-[14px] w-[14px] rounded-full border border-border" style={{ backgroundColor: color }} />
+      </IconButton>
+      <ColorPanel open={open} close={close} buttonRef={buttonRef} />
+    </>
   )
 }
 
@@ -119,6 +128,10 @@ function Swatches() {
   const tool = useGameStore((s) => s.brush.tool)
   const current = useGameStore((s) => s.brush.color)
   const setBrush = useGameStore((s) => s.setBrush)
+  // 反推 HSV 寫回（灰階保留原色相；決策 3），顏色面板的把手才會在對應位置
+  function pick(color: string) {
+    setBrush({ color, ...hexToHsv(color, useGameStore.getState().brush.hue), tool: 'pen' })
+  }
   return (
     <div role="radiogroup" aria-label="預設顏色" className="flex items-center gap-[4px] px-1">
       {PALETTE.map((color, i) => {
@@ -132,7 +145,7 @@ function Swatches() {
             aria-checked={selected}
             aria-label={label}
             {...tip(label)}
-            onClick={() => setBrush({ color, tool: 'pen' })}
+            onClick={() => pick(color)}
             className={`h-4 w-4 shrink-0 cursor-pointer rounded-[2px] border border-border transition-[outline-color] duration-100 hover:outline-1 hover:outline-offset-1 hover:outline-fg-muted focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-border-focus ${
               selected ? 'outline-1 outline-offset-1 outline-fg-on-active hover:outline-fg-on-active' : ''
             }`}
@@ -144,13 +157,6 @@ function Swatches() {
   )
 }
 
-/** 色相條：選色相即把顏色設為 hsl(h,100%,50%) 的大寫 #RRGGBB 並切回畫筆 */
-function HueControl() {
-  const hue = useGameStore((s) => s.brush.hue)
-  const setBrush = useGameStore((s) => s.setBrush)
-  return <HueSlider hue={hue} onChange={(h) => setBrush({ hue: h, color: hueToHex(h), tool: 'pen' })} />
-}
-
 /** 粗細滑桿：不改變目前工具（橡皮擦也能調粗細） */
 function SizeControl() {
   const size = useGameStore((s) => s.brush.size)
@@ -159,61 +165,20 @@ function SizeControl() {
 }
 
 /**
- * 窄版「⋯」：彈出面板放色相條與粗細滑桿。
- * 面板 portal 到 body、position: fixed，定位在按鈕下方；點面板外、Esc（focus 回到按鈕）、視窗縮放時關閉。
+ * 窄版「⋯」：彈出面板只放粗細滑桿（Epic 11 起色相改在顏色面板）。
+ * 面板 portal 到 body、position: fixed，定位在按鈕下方；點面板外、Esc（focus 回到按鈕）、視窗縮放時關閉（useFloatingPanel）。
  */
 function MoreBrushMenu() {
   const [open, setOpen] = useState(false)
+  const close = useCallback(() => setOpen(false), [])
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-
-  // 定位（paint 前完成）；直接寫 DOM style，不觸發額外 render
-  useLayoutEffect(() => {
-    const button = buttonRef.current
-    const panel = panelRef.current
-    if (!open || button === null || panel === null) return
-    const r = button.getBoundingClientRect()
-    const pos = placeFloating(
-      { left: r.left, top: r.top, width: r.width, height: r.height },
-      { width: panel.offsetWidth, height: panel.offsetHeight },
-      { width: window.innerWidth, height: window.innerHeight },
-      'bottom',
-    )
-    panel.style.left = `${pos.left}px`
-    panel.style.top = `${pos.top}px`
-    // 開啟後把 focus 移到第一個滑桿，鍵盤可直接調整
-    panel.querySelector<HTMLElement>('[role="slider"]')?.focus({ preventScroll: true })
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    function onPointerDown(e: PointerEvent) {
-      const t = e.target
-      if (!(t instanceof Node)) return
-      if (panelRef.current?.contains(t) || buttonRef.current?.contains(t)) return
-      setOpen(false)
-    }
-    function onResize() {
-      setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown, true)
-    window.addEventListener('resize', onResize)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      window.removeEventListener('resize', onResize)
-    }
-  }, [open])
+  const { onKeyDown } = useFloatingPanel(open, close, buttonRef, panelRef)
 
   return (
     <>
       <Separator />
-      <IconButton
-        label="更多畫筆設定（色相、粗細）"
-        pressed={open}
-        expanded={open}
-        buttonRef={buttonRef}
-        onClick={() => setOpen((v) => !v)}
-      >
+      <IconButton label="更多畫筆設定（粗細）" pressed={open} expanded={open} buttonRef={buttonRef} onClick={() => setOpen((v) => !v)}>
         <EllipsisIcon />
       </IconButton>
       {open &&
@@ -222,18 +187,9 @@ function MoreBrushMenu() {
             ref={panelRef}
             role="dialog"
             aria-label="畫筆設定"
-            onKeyDown={(e) => {
-              if (e.key !== 'Escape') return
-              e.preventDefault()
-              setOpen(false)
-              buttonRef.current?.focus()
-            }}
+            onKeyDown={onKeyDown}
             className="fixed top-0 left-0 z-50 flex flex-col gap-1 rounded-[3px] border border-border bg-quickinput px-2 py-1 font-mono text-[13px] text-fg shadow-quickinput"
           >
-            <div className="flex items-center gap-1">
-              <span className="w-[3em] shrink-0">色相</span>
-              <HueControl />
-            </div>
             <div className="flex items-center gap-1">
               <span className="w-[3em] shrink-0">粗細</span>
               <SizeControl />

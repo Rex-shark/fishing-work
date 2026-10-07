@@ -7,7 +7,8 @@ import { UPCOMING_LABEL, cardKeyTarget, stepAvailable, tabStopIndex } from '../s
 import { PLANNED_THEMES, THEME_CATALOG, buildThemeCatalog } from '../src/shells/catalog'
 import { pptShell } from '../src/shells/ppt/definition'
 import { meetShell } from '../src/shells/meet/definition'
-import { CodeEditorIcon, SlidesIcon, VideoCallIcon } from '../src/shells/themeIcons'
+import { excelShell } from '../src/shells/excel/definition'
+import { CodeEditorIcon, SheetsIcon, SlidesIcon, VideoCallIcon } from '../src/shells/themeIcons'
 import type { ShellThemeOption } from '../src/shells/types'
 import { vscodeShell } from '../src/shells/vscode/definition'
 
@@ -18,11 +19,12 @@ const fs = (await import('node:fs' as string)) as { readFileSync(path: URL, enco
 const themeCss = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8')
 
 describe('THEME_CATALOG：已註冊可選、規劃中為「即將推出」', () => {
-  it('目前：程式編輯器、簡報、視訊會議皆已註冊（可選；Epic 3 Phase 3 註冊 ppt、Epic 5 註冊 meet）', () => {
+  it('目前：程式編輯器、簡報、視訊會議、試算表皆已註冊（可選；Epic 3 Phase 3 註冊 ppt、Epic 5 註冊 meet、Epic 13 註冊 excel）', () => {
     expect(THEME_CATALOG.map(({ id, name, available }) => ({ id, name, available }))).toEqual([
       { id: 'vscode', name: '程式編輯器', available: true },
       { id: 'ppt', name: '簡報', available: true },
       { id: 'meet', name: '視訊會議', available: true },
+      { id: 'excel', name: '試算表', available: true },
     ])
   })
 
@@ -30,11 +32,13 @@ describe('THEME_CATALOG：已註冊可選、規劃中為「即將推出」', () 
     expect(THEME_CATALOG[0]?.icon).toBe(vscodeShell.icon)
     expect(THEME_CATALOG[1]?.icon).toBe(SlidesIcon)
     expect(THEME_CATALOG[2]?.icon).toBe(VideoCallIcon)
-    expect(THEME_CATALOG.map((o) => o.description)).toEqual([vscodeShell.description, pptShell.description, meetShell.description])
+    expect(THEME_CATALOG[3]?.icon).toBe(SheetsIcon)
+    expect(THEME_CATALOG.map((o) => o.description)).toEqual([vscodeShell.description, pptShell.description, meetShell.description, excelShell.description])
     expect(THEME_CATALOG.map((o) => o.description)).toEqual([
       '深色程式編輯器，像在改程式碼',
       '白底簡報軟體，像在做投影片',
       '深色視訊會議，像在開會分享畫面',
+      '白底試算表，像在整理資料',
     ])
   })
 
@@ -137,7 +141,7 @@ describe('HomeThemeCards 靜態渲染：無障礙語意（首頁，Epic 4）', (
     const html = render(WITH_UPCOMING, 'vscode')
     expect(html).toContain('role="radiogroup"')
     expect(html).toContain('aria-label="介面風格"')
-    expect(html.match(/role="radio"/g)).toHaveLength(3)
+    expect(html.match(/role="radio"/g)).toHaveLength(THEME_CATALOG.length)
     expect(html).toMatch(/aria-checked="true"[^>]*tabindex="0"/)
     expect(html).toMatch(/aria-checked="false" aria-disabled="true" tabindex="-1"/)
   })
@@ -184,6 +188,14 @@ describe('HomeThemeCards 靜態渲染：無障礙語意（首頁，Epic 4）', (
     expect(html).not.toMatch(/(?<!motion-safe:)hover:-translate-y/)
     expect(html.match(/width="64" height="64"[^>]*class="[^"]*home-icon-disc rounded-full p-2"/g)).toHaveLength(THEME_CATALOG.length)
     expect(html).not.toMatch(/ring-border-focus|bg-hover|opacity-50/)
+  })
+
+  it('卡片格 auto-fill minmax(220px, 1fr)、gap 16px（DESIGN §14.3：Epic 13 四張卡片在 640px 欄寬排 2×2）', () => {
+    const html = render(THEME_CATALOG, 'vscode')
+    expect(html).toContain('class="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4"')
+    // 640px 欄寬：220×3＋16×2＝692 > 640 → 兩欄；220×2＋16＝456 ≤ 640
+    expect(220 * 3 + 16 * 2).toBeGreaterThan(640)
+    expect(220 * 2 + 16).toBeLessThanOrEqual(640)
   })
 
   it('radiogroup 可改由區塊小標標示（aria-labelledby）', () => {

@@ -1,6 +1,6 @@
 // 客戶端倒數：以 round.endsAt − Date.now() 計算，不靠 server 每秒推（architecture Phase 2 任務）。
 // 本機時鐘與 server 的偏差會直接反映在倒數上（v1 接受），因此顯示值 clamp 到該階段長度（architecture §7）：
-// 本機時鐘比 server 慢、或無條件進位時，剛開始不會出現 01:01（出題 60 秒）或 01:31（作畫 90 秒）。
+// 本機時鐘比 server 慢、或無條件進位時，剛開始不會出現 01:01（出題 60 秒）或 02:01（作畫 120 秒）。
 import { useSyncExternalStore } from 'react'
 import { CHOOSING_SECONDS, ENDED_SECONDS, ROUND_SECONDS, type RoundPhase } from '@fishing-work/shared'
 

@@ -12,7 +12,7 @@ import { MeetDialog } from '../src/shells/meet/MeetDialog'
 import { HelpButton, MeetShell } from '../src/shells/meet/MeetShell'
 import { MoreMenuList } from '../src/shells/meet/MeetMoreMenu'
 import { stepMenuItem as meetStepMenuItem } from '../src/shells/meet/meetLayout'
-import { FileMenuList } from '../src/shells/ppt/FileMenu'
+import { FileMenuList } from '../src/shells/office/FileMenu'
 import { MEET_VIEWS } from '../src/shells/meet/meetViews'
 import { PptDialog } from '../src/shells/ppt/PptDialog'
 import { HelpRibbon, Ribbon, RibbonContent } from '../src/shells/ppt/PptShell'
@@ -80,7 +80,7 @@ describe('HelpDialog：清單 → 內文 → 返回 → 清單 → 關閉（決�
     expect(detail?.label).toBe('說明：如何當畫師')
     expect(detail?.items.map((i) => i.label)).toEqual(['返回', '關閉'])
     expect(bodyText(detail)).toBe(
-      '<p>房間至少 2 人在線時，畫面上會出現「我來畫」，按下去你就是本回合的畫師。</p><p>接著在 60 秒內輸入題目（1–20 字）並按 Enter，就開始作畫，時間 90 秒。</p><p>作畫中不能在聊天室說出答案，也不能傳圖片。</p>',
+      '<p>房間至少 2 人在線時，畫面上會出現「我來畫」，按下去你就是本回合的畫師。</p><p>接著在 60 秒內輸入題目（1–20 字）並按 Enter，就開始作畫，時間 2 分鐘。</p><p>作畫中不能在聊天室說出答案，也不能傳圖片。</p>',
     )
     detail?.items[0]?.onSelect()
     expect(f.topic).toBe('list')

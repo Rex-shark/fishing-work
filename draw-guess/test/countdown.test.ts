@@ -40,11 +40,12 @@ describe('phaseRemainingSeconds：顯示值 clamp 到該階段長度（修剛開
     expect(phaseRemainingSeconds('choosing', 60_001, 0)).toBe(60)
   })
 
-  it('drawing：上限 90，正常遞減', () => {
-    expect(phaseRemainingSeconds('drawing', 95_000, 0)).toBe(ROUND_SECONDS)
-    expect(phaseRemainingSeconds('drawing', 90_000, 500)).toBe(90)
-    expect(phaseRemainingSeconds('drawing', 90_000, 1_000)).toBe(89)
-    expect(phaseRemainingSeconds('drawing', 90_000, 89_999)).toBe(1)
+  it(`drawing：上限 ${ROUND_SECONDS}，正常遞減`, () => {
+    const ms = ROUND_SECONDS * 1000
+    expect(phaseRemainingSeconds('drawing', ms + 5_000, 0)).toBe(ROUND_SECONDS)
+    expect(phaseRemainingSeconds('drawing', ms, 500)).toBe(ROUND_SECONDS)
+    expect(phaseRemainingSeconds('drawing', ms, 1_000)).toBe(ROUND_SECONDS - 1)
+    expect(phaseRemainingSeconds('drawing', ms, ms - 1)).toBe(1)
   })
 
   it('ended：上限 5', () => {

@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createRef } from 'react'
 import type { PlayerPublic } from '@fishing-work/shared'
 import { THEME_CATALOG } from '../src/shells/catalog'
-import { FileTab, PptThemeDialog } from '../src/shells/ppt/FileMenu'
+import { FileTab, OfficeThemeDialog as PptThemeDialog } from '../src/shells/office/FileMenu'
 import { PptDialog, PptResumeDialog } from '../src/shells/ppt/PptDialog'
 import {
   PPT_DIALOG_TITLE,
@@ -181,11 +181,12 @@ function switcher(current: ShellId, options = THEME_CATALOG) {
 const withUpcoming = THEME_CATALOG.map((o) => (o.id === 'ppt' ? { ...o, available: false } : o))
 
 describe('pptThemeItems／choosePptTheme：與登入卡片同一份 catalog', () => {
-  it('全部上線（Epic 5 起三個主題）：目前主題標「目前使用」', () => {
+  it('全部上線（Epic 13 起四個主題）：目前主題標「目前使用」', () => {
     expect(pptThemeItems(switcher('ppt').themes).map((i) => [i.id, i.note, i.disabled, i.current])).toEqual([
       ['vscode', undefined, false, false],
       ['ppt', THEME_CURRENT_NOTE, false, true],
       ['meet', undefined, false, false],
+      ['excel', undefined, false, false],
     ])
     expect(pptThemeInitialIndex(switcher('ppt').themes)).toBe(1)
   })
@@ -242,7 +243,7 @@ describe('「檔案」分頁與切換偽裝對話框（靜態渲染）', () => {
     const html = renderToStaticMarkup(<PptThemeDialog themes={switcher('ppt').themes} onClose={() => {}} />)
     expect(html).toMatch(/role="dialog" aria-label="切換偽裝"/)
     expect(html).toContain('role="listbox"')
-    expect(html.match(/role="option"/g)).toHaveLength(3)
+    expect(html.match(/role="option"/g)).toHaveLength(4)
     expect(html).toMatch(/aria-selected="true"[^>]*>.*簡報.*目前使用/)
     expect(html).toContain('>確定<')
     expect(html).toContain('>取消<')

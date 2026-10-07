@@ -146,7 +146,7 @@ function MeetFrame(props: MeetFrameProps) {
               {/* size container：畫布依剩餘寬高等比縮放 16:9；上方留給標籤與浮動工具列、下方留給字幕列（不蓋住畫布） */}
               <div className="absolute inset-x-[16px] top-[64px] bottom-[56px] flex items-center justify-center [container-type:size]">{stage}</div>
               <div className="absolute inset-x-[12px] top-[12px] flex h-[44px] items-center gap-[12px]">
-                {/* 畫師作畫中：上方整列給浮動工具列（完整工具列約 576px，與標籤並排會被裁掉）；標籤只給其他人看（決策 13(3)） */}
+                {/* 畫師作畫中：上方整列給浮動工具列（完整工具列約 469px（Epic 11 起），與標籤並排會被裁掉）；標籤只給其他人看（決策 13(3)） */}
                 {toolbar !== null && toolbar !== undefined ? (
                   <div className="mx-auto flex h-[44px] min-w-0 items-center overflow-x-auto rounded-[22px] bg-tab-active px-[12px] shadow-quickinput">
                     {toolbar}

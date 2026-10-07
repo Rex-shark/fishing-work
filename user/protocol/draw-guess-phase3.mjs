@@ -8,6 +8,8 @@
 import { io } from 'socket.io-client';
 const PORT = process.env.TEST_PORT ?? '3180';
 const URL = `http://127.0.0.1:${PORT}/draw-guess`;
+/** 作畫時間（秒）＝ shared 的 ROUND_SECONDS（spec §4；Epic 12 改 120） */
+const ROUND_SECONDS = 120;
 const R = [];
 const check = (name, cond, extra = '') => R.push([cond ? 'PASS' : 'FAIL', name, extra]);
 const connect = () => io(URL, { path: '/socket.io', transports: ['websocket'], forceNew: true, reconnection: false });
@@ -73,8 +75,8 @@ const pl = aPlayers.at(-1);
 const carol = pl?.find((p) => p.id === C.id);
 check('players:update：Carol hasGuessed=true、分數 50..100', carol?.hasGuessed === true && carol.score >= 50 && carol.score <= 100, JSON.stringify(pl?.map((p) => [p.nickname, p.hasGuessed, p.score])));
 const elapsed = (Date.now() - startedAt) / 1000;
-const expected = 100 - Math.floor((50 * elapsed) / 90);
-check('分數符合公式 100−floor(50×elapsed/90)（容許 ±1）', Math.abs(carol.score - expected) <= 1, `score=${carol?.score} expected≈${expected} elapsed=${elapsed.toFixed(1)}s`);
+const expected = 100 - Math.floor((50 * elapsed) / ROUND_SECONDS);
+check('分數符合公式 100−floor(50×elapsed/ROUND_SECONDS)（容許 ±1）', Math.abs(carol.score - expected) <= 1, `score=${carol?.score} expected≈${expected} elapsed=${elapsed.toFixed(1)}s`);
 await sleep(350);
 const g6 = await chat(C, 'Apple');
 await sleep(200);

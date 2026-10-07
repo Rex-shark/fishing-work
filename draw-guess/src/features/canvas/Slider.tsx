@@ -1,7 +1,7 @@
-// 畫師工具列的兩個滑桿（DESIGN.md §6「滑桿」「色相條」；spec §6「粗細」「顏色」）。
+// 畫師工具列的粗細滑桿與顏色面板的色相條（DESIGN.md §6「滑桿」「色相條」「顏色面板」；spec §6「粗細」「顏色」）。
 // 自製、不用元件庫：role="slider"＋aria-valuemin/max/now/text；指標拖曳或點擊軌道、鍵盤（←→↑↓、Shift、PageUp/Down、Home/End）。
 // 共同的指標與鍵盤行為在 SliderBase；外觀由各自的 children 依比例（0..1）繪製。
-import { useRef, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { tip } from '../../layout/tooltipPlacement'
 import {
   HUE_GRADIENT,
@@ -23,10 +23,12 @@ interface SliderBaseProps {
   keys: SliderKeyConfig
   onChange: (value: number) => void
   className: string
+  /** 執行期尺寸（例：色相條寬度由所在處提供） */
+  style?: CSSProperties
   children: (ratio: number) => ReactNode
 }
 
-function SliderBase({ label, valueText, tooltip, value, keys, onChange, className, children }: SliderBaseProps) {
+function SliderBase({ label, valueText, tooltip, value, keys, onChange, className, style, children }: SliderBaseProps) {
   const dragging = useRef<number | null>(null)
   const { min, max } = keys
 
@@ -80,6 +82,7 @@ function SliderBase({ label, valueText, tooltip, value, keys, onChange, classNam
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
       onKeyDown={handleKeyDown}
+      style={style}
       className={`relative flex shrink-0 cursor-pointer touch-none items-center rounded-[2px] outline-none select-none focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-border-focus ${className}`}
     >
       {children(valueRatio(value, min, max))}
@@ -127,10 +130,11 @@ export function SizeSlider({ value, onChange }: { value: number; onChange: (size
 }
 
 /**
- * 色相條：96×10px 彩虹漸層、圓角 5px、12px 圓形白框把手（填目前色相）；←/→ 每次 5°。
+ * 色相條（DESIGN §6）：彩虹漸層、高 12px、圓角 6px、12px 圓形白框把手（填目前色相的純色）；←/→ 每次 5°。
+ * 寬度由所在處提供（Epic 11：顏色面板內 216px）；把手在兩端會超出軌道 6px（面板有 8px 內距容納）。
  * 漸層與把手填色是資料（色相本身），以執行期 style 產生，不是主題色
  */
-export function HueSlider({ hue, onChange }: { hue: number; onChange: (hue: number) => void }) {
+export function HueSlider({ hue, onChange, width }: { hue: number; onChange: (hue: number) => void; width: number }) {
   const hex = hueToHex(hue)
   return (
     <SliderBase
@@ -140,11 +144,12 @@ export function HueSlider({ hue, onChange }: { hue: number; onChange: (hue: numb
       value={hue}
       keys={HUE_KEYS}
       onChange={onChange}
-      className="mx-[6px] h-[22px] w-[96px]"
+      className="h-[12px]"
+      style={{ width }}
     >
       {(ratio) => (
         <>
-          <span aria-hidden="true" className="absolute right-0 left-0 h-[10px] rounded-[5px]" style={{ backgroundImage: HUE_GRADIENT }} />
+          <span aria-hidden="true" className="absolute right-0 left-0 h-[12px] rounded-[6px]" style={{ backgroundImage: HUE_GRADIENT }} />
           <span
             aria-hidden="true"
             className="absolute h-[12px] w-[12px] rounded-full border-2 border-fg-statusbar"

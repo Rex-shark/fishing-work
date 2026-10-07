@@ -1,5 +1,6 @@
-// ppt 主題進遊戲後的「切換偽裝」入口（plan/camouflage-themes.md 決策 7；DESIGN.md §13.4）：
-//   功能區「檔案」分頁 → 選單（portal 到 body，避免被 overflow 容器裁掉）「切換偽裝…」→ PPT 對話框列出主題（ShellProps.themes）
+// Office 殼層（ppt、excel）進遊戲後的「切換偽裝」入口（plan/camouflage-themes.md 決策 7；DESIGN.md §13.4、§17.2；
+// Epic 13 決策 4 由 ppt/FileMenu 抽到 shells/office/，輸出與抽出前逐字相同）：
+//   功能區「檔案」分頁 → 選單（portal 到 body，避免被 overflow 容器裁掉）「切換偽裝…」→ Office 對話框列出主題（ShellProps.themes）
 //   → 選取後「確定」即切換（未上線顯示「即將推出」不可選；目前主題標「目前使用」）。
 //   第二項「說明…」（Epic 6 決策 8，窄螢幕也進得了說明）→ 遊戲說明清單（ShellProps.help.open()）；選取時先把焦點還給「檔案」，說明關閉時焦點回到「檔案」。
 // 選單的其餘項目（資訊、新增、開啟…）為裝飾，不可聚焦、點了無反應。
@@ -9,15 +10,15 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject 
 import { createPortal } from 'react-dom'
 import { tip } from '../../layout/tooltipPlacement'
 import type { ShellThemeSwitch } from '../types'
-import { PptDialogFrame } from './PptDialog'
-import { DIALOG_CANCEL, DIALOG_OK, choosePptTheme, pptThemeInitialIndex, pptThemeItems, stepMenuItem, stepThemeIndex } from './pptLayout'
+import { OfficeDialogFrame } from './OfficeDialog'
+import { DIALOG_CANCEL, DIALOG_OK, chooseOfficeTheme, officeThemeInitialIndex, officeThemeItems, stepMenuItem, stepThemeIndex } from './officeLayout'
 
 interface MenuPosition {
   left: number
   top: number
 }
 
-/** 裝飾用的選單項目（仿 PowerPoint 的「檔案」後台清單） */
+/** 裝飾用的選單項目（仿 Office 的「檔案」後台清單；PowerPoint 與 Excel 相同） */
 const DECOR_ITEMS = ['資訊', '新增', '開啟', '儲存', '另存新檔', '列印', '共用']
 
 /** 功能區分頁列最左的「檔案」：遊戲中可操作（開選單）；自動重連畫面（沒有 themes）為裝飾。onHelp 省略時選單沒有「說明…」 */
@@ -186,12 +187,12 @@ export function FileMenuList(props: {
 }
 
 /**
- * 「切換偽裝」對話框（PPT 風格）：清單列出主題（圖示、名稱、目前使用／即將推出），選取後「確定」切換。
+ * 「切換偽裝」對話框（Office 風格）：清單列出主題（圖示、名稱、目前使用／即將推出），選取後「確定」切換。
  * 放在殼層的定位容器內（置中）；關閉（取消、Esc、關閉鈕、選目前主題）時 onClose(true) 讓呼叫端把焦點還給「檔案」。
  */
-export function PptThemeDialog({ themes, onClose }: { themes: ShellThemeSwitch; onClose: (refocus: boolean) => void }) {
-  const items = pptThemeItems(themes)
-  const [active, setActive] = useState(() => pptThemeInitialIndex(themes))
+export function OfficeThemeDialog({ themes, onClose }: { themes: ShellThemeSwitch; onClose: (refocus: boolean) => void }) {
+  const items = officeThemeItems(themes)
+  const [active, setActive] = useState(() => officeThemeInitialIndex(themes))
   const listRef = useRef<HTMLUListElement>(null)
   const listId = useId()
   const optionId = (i: number) => `${listId}-opt-${i}`
@@ -204,7 +205,7 @@ export function PptThemeDialog({ themes, onClose }: { themes: ShellThemeSwitch; 
     const item = items[index]
     if (item === undefined || item.disabled) return
     // 真的切換時殼層會整個換掉，不必還焦點；選目前主題＝關閉
-    if (!choosePptTheme(themes, item.id)) onClose(true)
+    if (!chooseOfficeTheme(themes, item.id)) onClose(true)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -227,7 +228,7 @@ export function PptThemeDialog({ themes, onClose }: { themes: ShellThemeSwitch; 
   }
 
   return (
-    <PptDialogFrame as="div" label="切換偽裝" heading="切換偽裝" onKeyDown={handleKeyDown} onClose={() => onClose(true)}>
+    <OfficeDialogFrame as="div" label="切換偽裝" heading="切換偽裝" onKeyDown={handleKeyDown} onClose={() => onClose(true)}>
       <p className="mb-2 text-fg">選擇偽裝主題</p>
       <ul
         ref={listRef}
@@ -284,6 +285,6 @@ export function PptThemeDialog({ themes, onClose }: { themes: ShellThemeSwitch; 
           {DIALOG_CANCEL}
         </button>
       </div>
-    </PptDialogFrame>
+    </OfficeDialogFrame>
   )
 }

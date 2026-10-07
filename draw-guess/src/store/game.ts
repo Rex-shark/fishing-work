@@ -29,12 +29,16 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected'
  */
 export interface Brush {
   tool: Tool
-  /** 目前顏色，大寫 #RRGGBB（預設色塊 PALETTE 或色相條換算；spec §4 COLOR_PATTERN） */
+  /** 目前顏色，大寫 #RRGGBB；永遠＝hsvToHex(hue, sat, val)（預設色塊或顏色面板；spec §4 COLOR_PATTERN、§6「顏色」） */
   color: string
   /** 粗細，整數 BRUSH_MIN..BRUSH_MAX（邏輯像素） */
   size: number
-  /** 色相條把手位置（0..359°）；選預設色塊時不變 */
+  /** 色相 0..359°（顏色面板色相條；點灰階色塊時保留原值） */
   hue: number
+  /** 飽和度 0..100%（顏色面板方塊 x；面板操作為整數，點色塊反推可能帶小數，見 brush.hexToHsv） */
+  sat: number
+  /** 明度 0..100%（顏色面板方塊 y；同 sat） */
+  val: number
 }
 
 export interface GameState {
@@ -128,7 +132,8 @@ export const selectMyGain = (s: GameState): number | null => {
   return me === undefined ? null : scoreGain(s.scoreBaseline, me)
 }
 
-export const initialBrush: Brush = { tool: 'pen', color: PALETTE[0], size: BRUSH_DEFAULT, hue: 0 }
+/** 預設白筆（PALETTE[0]＝hsvToHex(0, 0, 100)；Epic 11 決策 3） */
+export const initialBrush: Brush = { tool: 'pen', color: PALETTE[0], size: BRUSH_DEFAULT, hue: 0, sat: 0, val: 100 }
 
 export const initialGameState: GameState = {
   me: null,

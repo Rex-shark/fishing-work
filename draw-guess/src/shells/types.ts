@@ -5,8 +5,8 @@ import type { ComponentType, ReactNode } from 'react'
 import type { RoundPhase } from '@fishing-work/shared'
 import type { HelpTopicId } from '../features/help/helpTopics'
 
-/** 偽裝主題 id（決策 2：vscode、ppt；ppt 於 Epic 3 Phase 3 註冊；meet 於 Epic 5 註冊） */
-export type ShellId = 'vscode' | 'ppt' | 'meet'
+/** 偽裝主題 id（決策 2：vscode、ppt；ppt 於 Epic 3 Phase 3 註冊；meet 於 Epic 5 註冊；excel 於 Epic 13 註冊） */
+export type ShellId = 'vscode' | 'ppt' | 'meet' | 'excel'
 
 /** 殼層需要的回合狀態（只用於版面與裝飾，例如作畫中標記、畫師時的配色、工具列與裝飾圖示的切換） */
 export interface ShellRoundState {

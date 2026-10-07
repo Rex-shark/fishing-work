@@ -95,6 +95,12 @@
 
   /* 「視訊會議」卡片圖示色（DESIGN §13.4：攝影機，綠；跨主題共用、各主題不覆寫） */
   --brand-meet: #1e8e3e;
+
+  /* Epic 13 新增（DESIGN §17.1）：
+     --grid-line：試算表儲存格格線（excel 使用；vscode 不使用，給等於 --border 的值，外觀不變）
+     --brand-sheets：「試算表」卡片圖示色（綠色表格；跨主題共用、各主題不覆寫） */
+  --grid-line: #3c3c3c;
+  --brand-sheets: #217346;
 }
 
 /*
@@ -160,6 +166,9 @@
   --fg-on-panel-muted: #605e5c;
   --border-panel: #d2d0ce;
   --accent-panel: #0078d4;
+
+  /* 儲存格格線（Epic 13，DESIGN §17.1）：ppt 不使用；值＝ppt --border，外觀不變 */
+  --grid-line: #d2d0ce;
 
   /* 字型（§13：系統無襯線） */
   --font-code: system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
@@ -231,35 +240,113 @@
   --border-panel: #DADCE0;
   --accent-panel: #1967D2;
 
+  /* 儲存格格線（Epic 13，DESIGN §17.1）：meet 不使用；值＝meet --border，外觀不變 */
+  --grid-line: #5F6368;
+
   /* 字型（§15.1：全介面無襯線） */
   --font-code: system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
 }
 
 /*
- * 首頁（DESIGN.md §14.2；plan/home-page.md 決策 1、6）：不偽裝的柔和 UI，獨立命名空間 --home-*，不重用殼層 token。
- * 首頁元件只用下方 @theme inline 映射出的 home-* class（bg-home-surface、text-home-fg、shadow-home、rounded-home…）。
+ * 試算表主題（DESIGN.md §17.1；plan/excel-theme.md 決策 3）：淺色 Office，與 ppt 同一家族、主色為 Excel 綠。只覆寫同名 token，Tailwind class 不變。
+ * 上段「§17.1 覆寫」與 DESIGN §17.1 表逐字一致；下段「與 ppt 相同」與 [data-theme='ppt'] 的值逐字一致（test/excelTheme.test.ts 兩邊都比對）。
+ * 不覆寫 --bg-canvas（畫布底色固定 CANVAS_BACKGROUND，由 main.tsx 注入）、--brand-*、--avatar-1..6／--fg-on-avatar。
+ */
+[data-theme='excel'] {
+  color-scheme: light;
+
+  /* §17.1 覆寫 */
+  --bg-titlebar: #217346;
+  --bg-editor: #FFFFFF;
+  --bg-active: #DCEBE2;
+  --bg-selection: #C6E0CF;
+  --border-focus: #217346;
+  --accent: #217346;
+  --accent-hover: #185C37;
+  --sem-function: #217346;
+  --sem-string: #217346;
+  --grid-line: #E1E1E1;
+
+  /* 與 ppt 相同（§17.1「未列者與 ppt 相同」） */
+  /* 背景 */
+  --bg-activity: #ffffff;
+  --bg-sidebar: #f3f2f1;
+  --bg-tab-active: #ffffff;
+  --bg-tab-inactive: #f3f2f1;
+  --bg-input: #ffffff;
+  --bg-quickinput: #ffffff;
+  --bg-statusbar: #f3f2f1;
+  --bg-statusbar-drawer: #f3f2f1;
+  --bg-hover: #edebe9;
+
+  /* 邊框與前景 */
+  --border: #d2d0ce;
+  --fg: #252525;
+  --fg-editor: #252525;
+  --fg-muted: #605e5c;
+  --fg-dim: #8a8886;
+  --fg-statusbar: #ffffff;
+  --fg-link: #0078d4;
+  --bg-button-secondary: #ffffff;
+  --bg-button-secondary-hover: #f3f2f1;
+  --statusbar-hover: rgba(0, 0, 0, 0.06);
+  --focus-on-color: #ffffff;
+
+  /* 語意色 */
+  --sem-comment: #605e5c;
+  --sem-variable: #252525;
+  --sem-type: #107c10;
+  --sem-number: #605e5c;
+  --sem-keyword: #0078d4;
+  --sem-error: #a4262c;
+  --sem-warning: #8a6d00;
+
+  /* 投影片、卡片 token：值同 ppt（--bg-card 為註解卡片底） */
+  --bg-slide: #ffffff;
+  --slide-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  /* 淺色 --bg-active 上用深色字 */
+  --fg-on-active: #252525;
+  --bg-card: #ffffff;
+
+  /* 面板 token（Epic 5）：excel 不使用；值同 ppt */
+  --bg-panel: #f3f2f1;
+  --bg-panel-hover: #edebe9;
+  --fg-on-panel: #252525;
+  --fg-on-panel-muted: #605e5c;
+  --border-panel: #d2d0ce;
+  --accent-panel: #0078d4;
+
+  /* 字型（§13：系統無襯線） */
+  --font-code: system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+}
+
+
+/*
+ * 首頁（DESIGN.md §14.2；plan/home-page.md 決策 1、6；Epic 10 plan/home-paper.md：紙張質感，2026-10-07 採用）：不偽裝，獨立命名空間 --home-*，不重用殼層 token。
+ * 首頁元件只用下方 @theme inline 映射出的 home-* class（bg-home-surface、text-home-fg、shadow-home、rounded-home…）與 home-paper utility。
  * 值以 DESIGN §14.2 為準（對比測試：test/homeTheme.test.ts）；卡片圖示色沿用 :root 的 --brand-*。
+ * --home-bg-shade 不直接上色：它是「暗角＋紙紋疊加後最暗的實際紙面」（截圖實量），承載資訊的文字對它仍須 ≥ 4.5:1。
  */
 [data-theme='home'] {
   color-scheme: light;
 
-  --home-bg: #F4F5FA;
-  --home-tint-1: #E4E8FA;
-  --home-tint-2: #E2F3EA;
-  --home-surface: #FFFFFF;
-  --home-surface-hover: #FAFBFF;
+  --home-bg: #F8F4EB;
+  --home-bg-shade: #EAE4D9;
+  --home-vignette: rgba(112, 84, 44, 0.025);
+  --home-surface: #FFFDF8;
+  --home-surface-hover: #FFFEFB;
   --home-fg: #2B2F3A;
   --home-fg-muted: #5F6673;
   --home-fg-dim: #9CA3AF;
-  --home-border: #E3E6EF;
+  --home-border: #E6DECF;
   --home-accent: #4F5FD9;
   --home-accent-hover: #4352C4;
   --home-accent-soft: #EEF0FC;
   --home-on-accent: #FFFFFF;
-  --home-error: #C93B3B;
+  --home-error: #B3302C;
   --home-ok: #1F7A4D;
-  --home-shadow: 0 1px 2px rgba(31, 41, 55, 0.04), 0 8px 24px rgba(31, 41, 55, 0.08);
-  --home-shadow-hover: 0 2px 4px rgba(31, 41, 55, 0.06), 0 12px 32px rgba(31, 41, 55, 0.12);
+  --home-shadow: 0 1px 1px rgba(84, 62, 32, 0.1), 0 2px 6px rgba(84, 62, 32, 0.06), 0 8px 20px rgba(84, 62, 32, 0.06);
+  --home-shadow-hover: 0 2px 2px rgba(84, 62, 32, 0.08), 0 6px 12px rgba(84, 62, 32, 0.08), 0 16px 32px rgba(84, 62, 32, 0.12);
   --home-radius: 16px;
   --font-home: system-ui, 'Segoe UI', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
 }
@@ -295,6 +382,7 @@
   --color-avatar-6: var(--avatar-6);
   --color-panel: var(--bg-panel);
   --color-panel-hover: var(--bg-panel-hover);
+  --color-grid-line: var(--grid-line);
 
   /* 邊框與前景 */
   --color-border: var(--border);
@@ -334,6 +422,7 @@
   --color-brand-editor: var(--brand-editor);
   --color-brand-slides: var(--brand-slides);
   --color-brand-meet: var(--brand-meet);
+  --color-brand-sheets: var(--brand-sheets);
 
   /* 首頁（DESIGN §14.2；只在 [data-theme='home'] 下有值） */
   --color-home-bg: var(--home-bg);
@@ -372,8 +461,11 @@ body {
 }
 
 /*
- * 首頁（DESIGN §14.3）：解除 overflow: hidden，整頁可捲動；淺色底加左上、右下兩處柔光（裝飾）。
- * 左上柔光的垂直半徑刻意小於暱稱錯誤文字的位置（窄螢幕由頂端排版時約 200px），錯誤字（--home-error）只落在純 --home-bg 上（4.6:1）。
+ * 首頁（DESIGN §14.3；Epic 10：紙張質感）：解除 overflow: hidden，整頁可捲動；紙色 --home-bg 上疊四層靜態背景（由上而下）：
+ *   暗角（中央略亮、四邊極淡的暖色 --home-vignette）、細顆粒、纖維（非等向）、紙漿斑駁（低頻大塊）。
+ * 紙紋是內嵌 SVG（feTurbulence fractalNoise → feColorMatrix 取 R 通道當 alpha：alpha = a·R + b，負值即 0），暖褐墨色壓暗、白色提亮；
+ * stitchTiles 讓圖塊無縫。參數見 DESIGN §14.3。不做動畫、不用 background-attachment: fixed、不用 mix-blend-mode（決策 7）。
+ * html 只放純紙色（第一次繪製、橡皮筋捲動時露出的底）。
  */
 html[data-theme='home'] {
   overflow: auto;
@@ -385,8 +477,10 @@ html[data-theme='home'] body {
   overflow: visible;
   min-height: 100dvh;
   background:
-    radial-gradient(ellipse 480px 180px at 0 0, var(--home-tint-1), transparent),
-    radial-gradient(ellipse 520px 360px at 100% 100%, var(--home-tint-2), transparent),
+    radial-gradient(ellipse farthest-corner at 50% 45%, transparent 60%, var(--home-vignette)),
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256'><filter id='a' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .36 0 0 0 0 .27 0 0 0 0 .15 .2 0 0 0 -.1'/></filter><filter id='b' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 -.2 0 0 0 .1'/></filter><rect width='100%' height='100%' filter='url(%23a)'/><rect width='100%' height='100%' filter='url(%23b)'/></svg>") 0 0 / 256px,
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='640'><filter id='a' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.025 .6' numOctaves='3' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .36 0 0 0 0 .27 0 0 0 0 .15 .4 0 0 0 -.25' result='f'/><feTurbulence type='fractalNoise' baseFrequency='.012' numOctaves='2' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 0 0 0 -1.2'/><feComposite in='f' operator='in'/></filter><filter id='b' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.6 .03' numOctaves='3' seed='5' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .36 0 0 0 0 .27 0 0 0 0 .15 .3 0 0 0 -.2' result='f'/><feTurbulence type='fractalNoise' baseFrequency='.012' numOctaves='2' seed='13' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 0 0 0 -1.3'/><feComposite in='f' operator='in'/></filter><rect width='100%' height='100%' filter='url(%23a)'/><rect width='100%' height='100%' filter='url(%23b)'/></svg>") 0 0 / 640px,
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'><filter id='a' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.005' numOctaves='3' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .36 0 0 0 0 .27 0 0 0 0 .15 .08 0 0 0 -.04'/></filter><filter id='b' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.005' numOctaves='3' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 -.25 0 0 0 .125'/></filter><rect width='100%' height='100%' filter='url(%23a)'/><rect width='100%' height='100%' filter='url(%23b)'/></svg>") 0 0 / 1024px,
     var(--home-bg);
   color: var(--home-fg);
   font-family: var(--font-home);
@@ -395,10 +489,39 @@ html[data-theme='home'] body {
 html[data-theme='home'] ::selection {
   background: var(--home-accent-soft);
 }
+/* 高對比偏好：拿掉紙紋與暗角，只留純紙色（決策 7） */
+@media (prefers-contrast: more) {
+  html[data-theme='home'] body {
+    background: var(--home-bg);
+  }
+}
 
 /* 首頁卡片圖示的圓形淡色底（DESIGN §14.2）：以圖示自己的品牌色（currentColor＝--brand-*）12% 混入 --home-surface，不另加色碼 */
 @utility home-icon-disc {
   background-color: color-mix(in srgb, currentColor 12%, var(--home-surface));
+}
+
+/* 紙卡紋理（Epic 10；DESIGN §14.3）：卡片、輸入框＝疊在紙上的另一張較厚的紙；同一套細顆粒＋纖維、更淡。
+   只設 background-image，底色仍由 bg-home-surface／bg-home-accent-soft 等 class 決定；高對比偏好時拿掉 */
+@utility home-paper {
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256'><filter id='a' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .36 0 0 0 0 .27 0 0 0 0 .15 .14 0 0 0 -.07'/></filter><filter id='b' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='.025 .6' numOctaves='3' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .36 0 0 0 0 .27 0 0 0 0 .15 .3 0 0 0 -.2' result='f'/><feTurbulence type='fractalNoise' baseFrequency='.012' numOctaves='2' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 0 0 0 -1.2'/><feComposite in='f' operator='in'/></filter><rect width='100%' height='100%' filter='url(%23a)'/><rect width='100%' height='100%' filter='url(%23b)'/></svg>");
+  background-size: 256px;
+  @media (prefers-contrast: more) {
+    background-image: none;
+  }
+}
+
+/* 試算表儲存格格線（Epic 13；DESIGN §17.2、plan/excel-theme.md 決策 5）：用 CSS 畫，不渲染幾千個儲存格。
+   每格右、下 1px --grid-line；列高 20px、欄寬 64px（sheet-grid）；A 欄 128px 只畫橫線（sheet-grid-rows，右緣由元素的 border 畫） */
+@utility sheet-grid {
+  background-image:
+    linear-gradient(to bottom, transparent 19px, var(--grid-line) 19px),
+    linear-gradient(to right, transparent 63px, var(--grid-line) 63px);
+  background-size: 64px 20px;
+}
+@utility sheet-grid-rows {
+  background-image: linear-gradient(to bottom, transparent 19px, var(--grid-line) 19px);
+  background-size: 100% 20px;
 }
 
 /* 文字選取（§3 --bg-selection） */

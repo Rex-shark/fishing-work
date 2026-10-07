@@ -8,6 +8,8 @@
 import { io } from 'socket.io-client';
 const PORT = process.env.TEST_PORT ?? '3179';
 const URL = `http://127.0.0.1:${PORT}/draw-guess`;
+/** 作畫時間（秒）＝ shared 的 ROUND_SECONDS（spec §4；Epic 12 改 120） */
+const ROUND_SECONDS = 120;
 const R = [];
 const check = (name, cond, extra = '') => R.push([cond ? 'PASS' : 'FAIL', name, extra]);
 const connect = () => io(URL, { path: '/socket.io', transports: ['websocket'], forceNew: true, reconnection: false });
@@ -56,7 +58,7 @@ const rt5 = await call(A.s, 'round:setTopic', { topic: ' 蘋果 ' });
 await sleep(200);
 check('setTopic ok', rt5.ok === true, JSON.stringify(rt5));
 const ad = aRounds.at(-1), bd = bRounds.at(-1);
-check('畫師的 round:update 含 topic「蘋果」、topicLength 2、endsAt≈now+90s', ad?.phase === 'drawing' && ad.topic === '蘋果' && ad.topicLength === 2 && Math.abs(ad.endsAt - (t1 + 90000)) < 2000, JSON.stringify(ad));
+check('畫師的 round:update 含 topic「蘋果」、topicLength 2、endsAt≈now+ROUND_SECONDS', ad?.phase === 'drawing' && ad.topic === '蘋果' && ad.topicLength === 2 && Math.abs(ad.endsAt - (t1 + ROUND_SECONDS * 1000)) < 2000, JSON.stringify(ad));
 check('猜題者的 round:update topic=null、topicLength 2', bd?.phase === 'drawing' && bd.topic === null && bd.topicLength === 2, JSON.stringify(bd));
 check('猜題者收到 draw:op clear', bOps.some((o) => o.type === 'clear'));
 check('system 訊息「Alice 開始作畫」', bChat.some((m) => m.kind === 'system' && m.text.includes('開始作畫')));

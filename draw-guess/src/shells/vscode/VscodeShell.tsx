@@ -4,7 +4,7 @@
 //   自動重連（screen 'resume'，Epic 4）：同一殼層，側欄與面板空白、編輯區為快捷鍵浮水印，視窗頂部的快速輸入框只放一行 notice。
 // 作畫中：分頁加 ●（仿未儲存）；視窗標題由註冊表的 titleFor 產生（App 同步）。
 // 功能元件的呈現：對話框＝快速輸入框（VscodeDialog）、玩家清單＝檔案樹（ExplorerPlayers）、聊天＝終端機輸出（TerminalChat）、
-// 工具列 < 1120px 收合、狀態列項目白字、「▷ 我來畫」（viewDefaults），以 ShellViewsContext 提供。
+// 工具列 < 810px 收合、狀態列項目白字、「▷ 我來畫」（viewDefaults），以 ShellViewsContext 提供。
 // 切換偽裝（決策 7）：遊戲中活動列設定齒輪 → 「切換偽裝…」→ 快速選單（ShellFrame／ManageMenu，資料為 props.themes）；「說明…」→ props.help.open()（Epic 6）。
 import type { ReactNode } from 'react'
 import { EllipsisIcon, SplitIcon } from '../../layout/icons'

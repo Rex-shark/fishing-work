@@ -14,9 +14,9 @@
 **fishing-work** 是一個**簡易互動遊戲平台**：部署在 Rex 本機，同事透過公司區網進來玩。
 第一款遊戲為**我畫你猜（draw-guess）**：首頁輸入暱稱即可加入，不需帳號；自願玩家當畫師、自訂題目後在畫布作畫，其他人即時看畫猜題。
 
-特殊需求：首頁為不偽裝的柔和 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）、PowerPoint 或 Google Meet 視訊會議，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布預設黑底白筆不隨主題，畫師可換背景色並同步給所有人。
+特殊需求：首頁為不偽裝的柔和紙張質感 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）、PowerPoint、Google Meet 視訊會議或 Excel 試算表，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布預設黑底白筆不隨主題，畫師可換背景色並同步給所有人。
 
-目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」工程完成、舵手驗收通過（`plan/meet-theme.md`），待 Rex 目視。Epic 6「遊戲說明」工程完成、舵手驗收通過（`plan/help-topics.md`），待 Rex 目視。Epic 7「畫布背景色與新色塊」工程完成、舵手驗收通過（`plan/canvas-background.md`），待 Rex 目視。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。進度見 [plan/backlog.md](plan/backlog.md)。
+目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」工程完成、舵手驗收通過（`plan/meet-theme.md`），待 Rex 目視。Epic 6「遊戲說明」工程完成、舵手驗收通過（`plan/help-topics.md`），待 Rex 目視。Epic 7「畫布背景色與新色塊」工程完成、舵手驗收通過（`plan/canvas-background.md`），待 Rex 目視。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。進度見 [plan/backlog.md](plan/backlog.md)。
 
 ---
 
@@ -110,6 +110,10 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | [plan/canvas-background.md](plan/canvas-background.md) | Epic 7 畫布背景色與新色塊（`background` op 同步底色；PALETTE 加黑與膚色） |
 | [plan/voice-input.md](plan/voice-input.md) | Epic 8 語音輸入（語音轉文字；whisper.cpp＋opencc 正體）——**⏸ 暫緩**：區網 http 下瀏覽器不開放麥克風 |
 | [plan/docker-deploy.md](plan/docker-deploy.md) | Epic 9 Docker 部署（多階段映像、compose、容器內分享網址） |
+| [plan/home-paper.md](plan/home-paper.md) | Epic 10 首頁紙張質感（暖白紙底＋CSS 紙紋，2026-10-07 採用） |
+| [plan/color-picker.md](plan/color-picker.md) | Epic 11 顏色面板（取代工具列色相條：HSV 方塊＋寬色相條，三殼層共用） |
+| [plan/round-time.md](plan/round-time.md) | Epic 12 作畫時間改 2 分鐘（`ROUND_SECONDS` 唯一來源；改時間只動它＋說明文字） |
+| [plan/excel-theme.md](plan/excel-theme.md) | Epic 13 試算表偽裝主題（Excel 風格的第四套殼層 `excel`；DESIGN §17） |
 
 ---
 
@@ -117,7 +121,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 - **所有實作必須由 `plan/` 驅動**：修改程式碼前後皆須同步對應 Epic 文件與 `backlog.md`。規範見 [plan/README.md](plan/README.md)。
 - **本專案無資料庫**，`spec/db/erd.mmd` 暫不維護；遊戲狀態模型寫在 `spec/architecture.md`（規劃中）。
-- **`DESIGN.md`**：已建立（共通原則 ＋ 各偽裝主題章節：vscode §3–§5、ppt §13、meet §15；首頁 §14 不偽裝、柔和 UI；說明 §16）。**產生任何畫面、元件、樣式前先讀 [DESIGN.md](DESIGN.md)**，色碼一律用 token，不得寫死；新主題只加 token 覆寫與殼層，不動功能元件。
+- **`DESIGN.md`**：已建立（共通原則 ＋ 各偽裝主題章節：vscode §3–§5、ppt §13、meet §15、excel §17；首頁 §14 不偽裝、柔和 UI；說明 §16）。**產生任何畫面、元件、樣式前先讀 [DESIGN.md](DESIGN.md)**，色碼一律用 token，不得寫死；新主題只加 token 覆寫與殼層，不動功能元件。
 
 ---
 

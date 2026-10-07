@@ -25,10 +25,12 @@ export const PPT_STATUS_VIEW: StatusView = {
 }
 
 /**
- * 功能區「繪圖」分頁：工具列獨占一整列（功能區與視窗同寬，不與分頁或其他群組共用）；實測完整工具列 576px、連同群組內距 591px（Epic 7）。
- * 視窗 < 640px 才把色相條與粗細滑桿收進「⋯」（640px 時仍有約 60px 餘裕給捲軸與字型差異）；以上都放得下完整工具列，不必像 vscode 在 1120px 就收合。
+ * 功能區「繪圖」分頁：工具列獨占一整列（功能區與視窗同寬，不與分頁或其他群組共用）；Epic 11 移除色相條後完整工具列約 469px、
+ * 連同群組內距 483px（Epic 7 為 576／591px，當時斷點 640px）。
+ * 實測功能區內容容器 483px 起 scrollWidth ≤ clientWidth（482px 溢出 1px）；取 500px，留約 17px 給字型差異（舵手 2026-10-03 定案）：
+ * 視窗 < 500px 才把粗細滑桿收進「⋯」
  */
-export const PPT_TOOLBAR_VIEW: ToolbarView = { compactBelowPx: 640 }
+export const PPT_TOOLBAR_VIEW: ToolbarView = { compactBelowPx: 500 }
 
 /** DESIGN §13.2 狀態列中央「▶ 從目前投影片開始」＝我來畫；人數不足時殼層以同一組文字與圖示顯示灰化版本 */
 export const PPT_VOLUNTEER_VIEW: VolunteerView = { label: START_SLIDESHOW_LABEL, icon: SlideshowIcon }

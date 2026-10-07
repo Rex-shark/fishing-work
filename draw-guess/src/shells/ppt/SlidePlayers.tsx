@@ -6,7 +6,7 @@
 import { playerRowLabel } from '../../features/players/playerRow'
 import { tip } from '../../layout/tooltipPlacement'
 import type { PlayerListViewProps } from '../views'
-import { CheckIcon, PenIcon } from './pptIcons'
+import { CheckIcon, PenIcon } from '../office/officeIcons'
 
 export function SlidePlayers({ rows }: PlayerListViewProps) {
   return (

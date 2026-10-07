@@ -16,8 +16,8 @@ import { vscodeShell } from '../src/shells/vscode/definition'
 const fs = (await import('node:fs' as string)) as { readFileSync(path: URL, encoding: 'utf8'): string }
 
 describe('註冊表', () => {
-  it('註冊 vscode、ppt、meet（Epic 3 Phase 3 ppt、Epic 5 meet；順序即首頁卡片順序），預設為 vscode', () => {
-    expect(SHELLS.map((s) => s.id)).toEqual(['vscode', 'ppt', 'meet'])
+  it('註冊 vscode、ppt、meet、excel（Epic 3 Phase 3 ppt、Epic 5 meet、Epic 13 excel；順序即首頁卡片順序），預設為 vscode', () => {
+    expect(SHELLS.map((s) => s.id)).toEqual(['vscode', 'ppt', 'meet', 'excel'])
     expect(DEFAULT_SHELL_ID).toBe('vscode')
   })
 

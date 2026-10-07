@@ -16,6 +16,8 @@ import { FakeClock } from './helpers/fakeClock';
 
 const ROUND_MS = ROUND_SECONDS * 1000;
 const ENDED_MS = ENDED_SECONDS * 1000;
+/** 猜對者得分（spec §5）：100 − floor(50 × 已用 ms / ROUND_MS)；由常數推導，不寫死 */
+const guessScore = (elapsedMs: number) => 100 - Math.floor((50 * elapsedMs) / ROUND_MS);
 const GAP = CHAT_MIN_INTERVAL_MS;
 
 let clock: FakeClock;
@@ -199,8 +201,8 @@ describe('§5 聊天訊息判定：未猜對的猜題者', () => {
     const msg = messages(r.effects)[0];
     expect(msg).toEqual({ id: expect.any(String), kind: 'correct', fromId: B, nickname: 'Bob', text: 'Bob 猜對了', at: clock.now() });
     expect(emits(r.effects)[1].to).toBe('all');
-    expect(playersPayload(r.effects).find((p) => p.id === B)).toMatchObject({ hasGuessed: true, score: 84 });
-    expect(player(B)).toMatchObject({ hasGuessed: true, score: 84 }); // 100 − floor(50 × 30 / 90)
+    expect(playersPayload(r.effects).find((p) => p.id === B)).toMatchObject({ hasGuessed: true, score: guessScore(30_000) });
+    expect(player(B)).toMatchObject({ hasGuessed: true, score: guessScore(30_000) }); // 120 秒制：88
     expect(room.projectRound(B).correctIds).toEqual([B]);
     expect(room.projectRound(B).phase).toBe('drawing'); // C 還沒猜對
     expect(bufferTexts()).toContain('Bob 猜對了');
@@ -329,7 +331,7 @@ describe('§5 全員猜對 → end(allGuessed)', () => {
     }
     expect(player(A).score).toBe(40);
     expect(player(B).score).toBe(100);
-    expect(player(C).score).toBe(75); // 100 − floor(50 × 45 / 90)
+    expect(player(C).score).toBe(guessScore(45_000)); // 120 秒制：82
     expect(playersPayload(r.effects.slice(3)).find((p) => p.id === A)?.score).toBe(40);
   });
 
@@ -385,7 +387,7 @@ describe('§5 猜對者計分（Room 內以回合開始時間計）', () => {
     ok(room.setTopic('s1', '香蕉'));
     clock.advance(9_000);
     ok(room.chat('s2', '香蕉'));
-    expect(player(B).score).toBe(100 + 95);
+    expect(player(B).score).toBe(100 + guessScore(9_000));
     expect(player(A).score).toBe(40);
   });
 });

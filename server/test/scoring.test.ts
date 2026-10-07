@@ -34,11 +34,13 @@ describe('猜對者分數（spec §5：100 − floor(50 × 已用 ms / (ROUND_SE
     expect(guesserScore(T0, T0 - 60_000)).toBe(100);
   });
   it('中間值依公式向下取整', () => {
-    expect(guesserScore(T0, T0 + 1)).toBe(100); // floor(50 × 1 / 90000) = 0
-    expect(guesserScore(T0, T0 + 1800)).toBe(99); // floor(1) = 1
-    expect(guesserScore(T0, T0 + 1799)).toBe(100);
-    expect(guesserScore(T0, T0 + 45_000)).toBe(75);
-    expect(guesserScore(T0, T0 + 30_000)).toBe(84); // floor(16.67) = 16
+    // 每過 ROUND_MS / 50 毫秒少 1 分（120 秒制為 2.4 秒）；期望值由常數推導，改 ROUND_SECONDS 不必改測試
+    const step = ROUND_MS / 50;
+    expect(guesserScore(T0, T0 + 1)).toBe(100); // floor(50 × 1 / ROUND_MS) = 0
+    expect(guesserScore(T0, T0 + step)).toBe(99); // floor(1) = 1
+    expect(guesserScore(T0, T0 + step - 1)).toBe(100);
+    expect(guesserScore(T0, T0 + ROUND_MS / 2)).toBe(75);
+    expect(guesserScore(T0, T0 + 30_000)).toBe(100 - Math.floor((50 * 30_000) / ROUND_MS)); // 120 秒制：88
     expect(guesserScore(T0, T0 + ROUND_MS - 1)).toBe(51); // floor(49.999…) = 49
   });
   it('每一毫秒都在 50..100 且單調不增', () => {

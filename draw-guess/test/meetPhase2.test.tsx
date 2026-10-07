@@ -126,6 +126,7 @@ describe('切換偽裝純邏輯（meetLayout）', () => {
       ['vscode', undefined, false, false],
       ['ppt', undefined, false, false],
       ['meet', THEME_CURRENT_NOTE, false, true],
+      ['excel', undefined, false, false],
     ])
     expect(meetThemeItems(switcher('meet', withUpcoming).themes)[1]).toMatchObject({ id: 'ppt', note: THEME_UPCOMING_NOTE, disabled: true })
     expect(meetThemeInitialIndex(switcher('meet').themes)).toBe(2)
@@ -133,11 +134,13 @@ describe('切換偽裝純邏輯（meetLayout）', () => {
 
   it('↑↓ 循環並略過不可選、Home／End；其他鍵 null', () => {
     const items = meetThemeItems(switcher('meet', withUpcoming).themes)
+    // Epic 13 起四個主題：vscode、ppt（此處設為未上線）、meet、excel
     expect(stepEnabledIndex(items, 0, 'ArrowDown')).toBe(2)
-    expect(stepEnabledIndex(items, 2, 'ArrowDown')).toBe(0)
-    expect(stepEnabledIndex(items, 0, 'ArrowUp')).toBe(2)
+    expect(stepEnabledIndex(items, 2, 'ArrowDown')).toBe(3)
+    expect(stepEnabledIndex(items, 3, 'ArrowDown')).toBe(0)
+    expect(stepEnabledIndex(items, 0, 'ArrowUp')).toBe(3)
     expect(stepEnabledIndex(items, 2, 'Home')).toBe(0)
-    expect(stepEnabledIndex(items, 0, 'End')).toBe(2)
+    expect(stepEnabledIndex(items, 0, 'End')).toBe(3)
     expect(stepEnabledIndex(items, 0, 'a')).toBeNull()
     expect(stepEnabledIndex([{ disabled: true }], 0, 'ArrowDown')).toBeNull()
   })
@@ -166,12 +169,12 @@ describe('「更多 ⋮」與切換偽裝對話框（靜態渲染）', () => {
     expect(MORE_MENU_DECOR).toEqual(['管理錄影', '變更版面配置', '全螢幕', '套用視覺效果', '設定'])
   })
 
-  it('對話框：白卡片、listbox 三個主題、目前主題選取並標「目前使用」、取消／切換', () => {
+  it('對話框：白卡片、listbox 四個主題（Epic 13 起）、目前主題選取並標「目前使用」、取消／切換', () => {
     const html = renderToStaticMarkup(<MeetThemeDialog themes={switcher('meet').themes} onClose={() => {}} />)
     expect(html).toMatch(/role="dialog" aria-label="切換偽裝"/)
     expect(html).toContain('bg-panel')
     expect(html).toContain('role="listbox"')
-    expect(html.match(/role="option"/g)).toHaveLength(3)
+    expect(html.match(/role="option"/g)).toHaveLength(4)
     expect(html).toMatch(/aria-selected="true"[^>]*>[\s\S]*?視訊會議[\s\S]*?目前使用/)
     expect(html).toContain('>取消<')
     expect(html).toContain('>切換<')
@@ -252,6 +255,6 @@ describe('響應式（DESIGN §15.3；決策 9）', () => {
 describe('首頁卡片描述：兩行平衡換行', () => {
   it('描述 13px／18px、text-wrap: balance', () => {
     const html = renderToStaticMarkup(<HomeThemeCards options={THEME_CATALOG} value="vscode" onSelect={() => {}} />)
-    expect(html.match(/text-\[13px\] leading-\[18px\] text-home-fg-muted \[text-wrap:balance\]/g)).toHaveLength(3)
+    expect(html.match(/text-\[13px\] leading-\[18px\] text-home-fg-muted \[text-wrap:balance\]/g)).toHaveLength(THEME_CATALOG.length)
   })
 })

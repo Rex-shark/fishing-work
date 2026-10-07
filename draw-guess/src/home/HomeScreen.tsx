@@ -1,6 +1,6 @@
 // 首頁（plan/home-page.md 決策 1–3、8、10；DESIGN §14；architecture §7 home/）：未加入且沒有重連憑證時顯示，不偽裝、不屬於任何殼層。
-// 柔和 UI（Soft UI Evolution）：整頁可捲動、淺色底加兩處柔光（theme.css 的 html[data-theme='home']）；置中欄 max 640px，側邊 24px（< 480px 為 16px）；
-// 內容垂直置中，高於視窗時從頂端排。只用 home-* class（DESIGN §14.2 token），不重用殼層 token。
+// 紙張質感（Epic 10 試做，plan/home-paper.md）：整頁可捲動、暖白紙底加紙紋與暗角（theme.css 的 html[data-theme='home'] body）、輸入框與卡片掛 home-paper（紙卡紋理）；置中欄 max 640px，側邊 24px（< 480px 為 16px）；
+// 內容垂直置中，高於視窗時從頂端排。只用 home-* class（DESIGN §14.2 token）與 home-paper utility，不重用殼層 token、不寫死色碼（紙紋 data URI 只放 theme.css）。
 // 內容：標題、暱稱輸入（join／rememberedNickname／nicknameDraft、字數、錯誤）、介面風格卡片（只選取＝寫 uiStore.shellId）、
 // 「進入遊戲」按鈕（Enter 亦可）、連線狀態一行、頁尾。加入成功後 App 以選取的殼層進遊戲畫面。
 // 相依規則：可 import shells/catalog、shells/types、layout/uiStore、layout/themeCardNav、socket/client、store/game；
@@ -93,7 +93,7 @@ export function HomeScreen() {
             autoComplete="off"
             spellCheck={false}
             enterKeyHint="go"
-            className="h-12 w-full rounded-xl border border-home-border bg-home-surface px-4 text-[16px] text-home-fg outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-home-fg-dim focus:border-home-accent focus:outline-2 focus:outline-offset-0 focus:outline-home-accent aria-[invalid=true]:border-home-error disabled:opacity-60"
+            className="home-paper h-12 w-full rounded-xl border border-home-border bg-home-surface px-4 text-[16px] text-home-fg outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-home-fg-dim focus:border-home-accent focus:outline-2 focus:outline-offset-0 focus:outline-home-accent aria-[invalid=true]:border-home-error disabled:opacity-60"
           />
           {joinError !== null && (
             <p id={ids.error} role="alert" className="text-[13px] leading-[18px] text-home-error">

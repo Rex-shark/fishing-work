@@ -6,6 +6,7 @@ import { applyCanvasBackground } from '../src/features/canvas/canvasBackground'
 import { CHAT_DROP_ZONE_ATTR } from '../src/features/chat/dropZone'
 import { SHELLS } from '../src/shells'
 import { PLANNED_THEMES } from '../src/shells/catalog'
+import { EXCEL_VIEWS } from '../src/shells/excel/excelViews'
 import { MEET_VIEWS } from '../src/shells/meet/meetViews'
 import { PPT_VIEWS } from '../src/shells/ppt/pptViews'
 import { resolveHelpView, resolveVolunteerView } from '../src/shells/views'
@@ -19,6 +20,7 @@ const fs = (await import('node:fs' as string)) as { readFileSync(path: URL, enco
 const themeCss = fs.readFileSync(new URL('../src/styles/theme.css', import.meta.url), 'utf8')
 const vscodeSources = import.meta.glob<string>('../src/shells/vscode/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 const meetSources = import.meta.glob<string>('../src/shells/meet/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
+const excelFolderSources = import.meta.glob<string>('../src/shells/excel/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 // 卡片鍵盤純邏輯（首頁使用；Epic 3 Phase 2 起共用）
 const themeCardSources = import.meta.glob<string>(['../src/layout/themeCardNav.ts'], {
   query: '?raw',
@@ -131,8 +133,9 @@ describe('功能元件不含 VS Code 字樣與版面假設', () => {
     expect(files.some((f) => f.endsWith('/help/helpTopics.ts'))).toBe(true)
     expect(files.some((f) => f.endsWith('/help/HelpDialog.tsx'))).toBe(true)
     for (const f of files) expect(entries.some(([file]) => file === f), f).toBe(true)
-    const names = [null, PPT_VIEWS, MEET_VIEWS].flatMap((v) => [resolveHelpView(v).switchHint, resolveVolunteerView(v).label])
-    expect(new Set(names).size).toBe(6)
+    const names = [null, PPT_VIEWS, MEET_VIEWS, EXCEL_VIEWS].flatMap((v) => [resolveHelpView(v).switchHint, resolveVolunteerView(v).label])
+    // excel 與 ppt 的切換路徑相同（「檔案 → 切換偽裝」，Epic 13）：8 個名稱、7 種
+    expect(new Set(names).size).toBe(7)
     for (const [file, src] of Object.entries(helpSources)) {
       expect(names.filter((n) => src.includes(n)), file).toEqual([])
       expect(importPaths(src).filter((p) => /\/shells\//.test(p) && !p.endsWith('/shells/views')), file).toEqual([])
@@ -220,6 +223,45 @@ describe('卡片鍵盤純邏輯（layout/themeCardNav）與殼層的相依方向
     expect(bad("import { HelpDialog } from '../features/help/HelpDialog'")).toHaveLength(1)
     expect(bad("import { useUiStore } from '../../layout/uiStore'")).toHaveLength(1)
     expect(bad("import { HELP_TOPICS } from '../../features/help/helpTopics'")).toEqual([])
+  })
+})
+
+/** 主題資料夾（shells/<主題>/）；office 是 ppt 與 excel 共用的 Office 元件（Epic 13 決策 4），不是主題 */
+const THEME_FOLDERS = ['vscode', 'ppt', 'meet', 'excel'] as const
+/** 原始碼路徑 → 所在資料夾（shells/<資料夾>/…） */
+const folderOf = (file: string) => /\/shells\/([^/]+)\//.exec(file)?.[1] ?? ''
+/** 引用了別的主題資料夾（../<主題>/…）的 import 路徑；shells/office/ 一律不得引用任何主題資料夾 */
+function crossShellImports(file: string, src: string): string[] {
+  const own = folderOf(file)
+  return importPaths(src).filter((p) => {
+    const m = /^\.\.\/([^/]+)\//.exec(p)
+    return m !== null && (THEME_FOLDERS as readonly string[]).includes(m[1] ?? '') && m[1] !== own
+  })
+}
+
+describe('shells/office/ 與殼層之間的相依（Epic 13 決策 4：ppt、excel 共用 Office 元件，殼層之間不互相 import）', () => {
+  it('shells/office/** 掃描得到，且納入殼層規則（不 import uiStore／catalog／首頁／store，見上下各組）', () => {
+    const office = Object.keys(shellFolderSources).filter((f) => folderOf(f) === 'office')
+    expect(office.length).toBeGreaterThanOrEqual(5)
+    for (const f of office) expect(Object.keys(allShellSources)).toContain(f)
+  })
+
+  it('主題資料夾之間不互相 import；office 不 import 任何主題資料夾', () => {
+    for (const [file, src] of Object.entries(shellFolderSources)) expect(crossShellImports(file, src), file).toEqual([])
+  })
+
+  it('規則抓得到違規寫法（正向對照）', () => {
+    expect(crossShellImports('../src/shells/excel/ExcelShell.tsx', "import { PptDialog } from '../ppt/PptDialog'")).toHaveLength(1)
+    expect(crossShellImports('../src/shells/office/FileMenu.tsx', "import { PPT_DIALOG_TITLE } from '../ppt/pptLayout'")).toHaveLength(1)
+    expect(crossShellImports('../src/shells/excel/ExcelShell.tsx', "import { OfficeDialog } from '../office/OfficeDialog'")).toEqual([])
+    expect(crossShellImports('../src/shells/ppt/PptShell.tsx', "import { tip } from '../../layout/tooltipPlacement'")).toEqual([])
+  })
+
+  it('功能元件不出現試算表偽裝字樣（Epic 13：活頁簿、工作表、替代文字、刪除／插入圖片只在殼層；「圖片格式或大小不符」是聊天錯誤訊息，不算）', () => {
+    const pattern = /活頁簿|工作表\d|替代文字|刪除圖片|插入圖片|- Excel/
+    for (const [file, src] of entries) expect(src, file).not.toMatch(pattern)
+    // 正向對照：excel 殼層抓得到
+    expect(pattern.test(Object.values(excelFolderSources).join('\n'))).toBe(true)
   })
 })
 

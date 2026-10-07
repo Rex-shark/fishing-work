@@ -1,5 +1,6 @@
-// 畫具純函式（spec/architecture.md §6「粗細」「顏色」、DESIGN.md §6「滑桿」「色相條」）：
-// 色相 → #RRGGBB、滑桿指標位置／鍵盤 → 數值、送出前的粗細與色碼正規化。不依賴 React，方便 Vitest 測試。
+// 畫具純函式（spec/architecture.md §6「粗細」「顏色」、DESIGN.md §6「滑桿」「色相條」「顏色面板」）：
+// 色相 → #RRGGBB、HSV ↔ #RRGGBB（Epic 11 顏色面板）、滑桿與飽和度／明度方塊的指標位置／鍵盤 → 數值、
+// 送出前的粗細與色碼正規化。不依賴 React，方便 Vitest 測試。
 import { BRUSH_DEFAULT, BRUSH_MAX, BRUSH_MIN, COLOR_PATTERN, PALETTE, type DrawOp } from '@fishing-work/shared'
 
 /** 色相條範圍（度）。360° 與 0° 同色，因此上限取 359 */
@@ -47,6 +48,127 @@ export function hueToHex(hue: number): string {
       .padStart(2, '0')
   }
   return `#${channel(0)}${channel(8)}${channel(4)}`.toUpperCase()
+}
+
+/** 飽和度、明度範圍（%） */
+export const SV_MIN = 0
+export const SV_MAX = 100
+
+/** HSV 三個值（hue 0..359°、sat／val 0..100%）；顏色面板的狀態（store brush 的 hue／sat／val） */
+export interface Hsv {
+  hue: number
+  sat: number
+  val: number
+}
+
+/**
+ * HSV → 大寫 `#RRGGBB`（Epic 11 決策 3；spec §6「顏色」）。
+ * hue 繞回 0..360、sat／val clamp 到 0..100；非有限數視為 0。允許小數（點色塊反推的值），輸出逐 channel 四捨五入
+ */
+export function hsvToHex(hue: number, sat: number, val: number): string {
+  const h = Number.isFinite(hue) ? wrapHue(hue) : 0
+  const s = (Number.isFinite(sat) ? clamp(sat, SV_MIN, SV_MAX) : 0) / 100
+  const v = (Number.isFinite(val) ? clamp(val, SV_MIN, SV_MAX) : 0) / 100
+  // CSS Color 4 的 hsvToRgb：f(n) = v − v·s·max(0, min(k, 4 − k, 1))，k = (n + h/60) mod 6
+  const channel = (n: number): string => {
+    const k = (n + h / 60) % 6
+    const f = v - v * s * Math.max(0, Math.min(k, 4 - k, 1))
+    return Math.round(f * 255)
+      .toString(16)
+      .padStart(2, '0')
+  }
+  return `#${channel(5)}${channel(3)}${channel(1)}`.toUpperCase()
+}
+
+/**
+ * `#RRGGBB`（大小寫皆可）→ HSV（點預設色塊時反推，把手擺到對應位置）。
+ * 回傳**不取整**的精確值，保證 `hsvToHex(hexToHsv(c))` 逐字等於 `c`（大寫）：整數 HSV 只有約 367 萬種組合，
+ * 像 #FFECEA、#F44747 這類色塊無法以整數 sat／val 精確表示（見 plan/color-picker.md 踩雷紀錄）。
+ * 灰階（含黑、白：R = G = B）沒有色相，保留傳入的 `hue`（決策 3）；黑的飽和度為 0。不合法色碼回傳白（PALETTE[0]）
+ */
+export function hexToHsv(hex: string, hue = 0): Hsv {
+  const c = COLOR_PATTERN.test(hex) ? hex : PALETTE[0]
+  const r = Number.parseInt(c.slice(1, 3), 16) / 255
+  const g = Number.parseInt(c.slice(3, 5), 16) / 255
+  const b = Number.parseInt(c.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  const keep = Number.isFinite(hue) ? clamp(hue, HUE_MIN, HUE_MAX) : HUE_MIN
+  let h: number
+  if (d === 0) h = keep
+  else if (max === r) h = 60 * (((g - b) / d + 6) % 6)
+  else if (max === g) h = 60 * ((b - r) / d + 2)
+  else h = 60 * ((r - g) / d + 4)
+  return { hue: h, sat: max === 0 ? 0 : (d / max) * 100, val: max * 100 }
+}
+
+/**
+ * 指標在飽和度／明度方塊上的位置 → 整數 { sat, val }（決策 2：x＝飽和度 0→100、y＝明度 100→0；
+ * 拖出方塊 clamp 到邊緣）。方塊尚未排版（寬或高為 0）時該軸回 0／100 端點，不產生 NaN
+ */
+export function svFromPointer(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+): { sat: number; val: number } {
+  const x = rect.width > 0 ? clamp((clientX - rect.left) / rect.width, 0, 1) : 0
+  const y = rect.height > 0 ? clamp((clientY - rect.top) / rect.height, 0, 1) : 0
+  return { sat: Math.round(x * SV_MAX), val: Math.round((1 - y) * SV_MAX) }
+}
+
+/** 方塊鍵盤步進（決策 4：方向鍵 ±2；Shift＋方向鍵、PageUp／PageDown ±10） */
+export const SV_STEP = 2
+export const SV_BIG_STEP = 10
+
+/**
+ * 飽和度／明度方塊的鍵盤操作（決策 4）：←/→ 飽和度、↑/↓ 明度（各 ±2，Shift ±10）；
+ * PageUp／PageDown 飽和度 ±10（方塊的 aria-valuenow 是飽和度，與 Home／End 同軸）；Home／End 飽和度 0／100。
+ * 結果取整並 clamp 到 0..100；不處理的按鍵回 null（呼叫端不要 preventDefault）
+ */
+export function svKeyValue(key: string, shift: boolean, sat: number, val: number): { sat: number; val: number } | null {
+  const step = shift ? SV_BIG_STEP : SV_STEP
+  let s = sat
+  let v = val
+  switch (key) {
+    case 'ArrowRight':
+      s += step
+      break
+    case 'ArrowLeft':
+      s -= step
+      break
+    case 'ArrowUp':
+      v += step
+      break
+    case 'ArrowDown':
+      v -= step
+      break
+    case 'PageUp':
+      s += SV_BIG_STEP
+      break
+    case 'PageDown':
+      s -= SV_BIG_STEP
+      break
+    case 'Home':
+      s = SV_MIN
+      break
+    case 'End':
+      s = SV_MAX
+      break
+    default:
+      return null
+  }
+  return { sat: clamp(Math.round(s), SV_MIN, SV_MAX), val: clamp(Math.round(v), SV_MIN, SV_MAX) }
+}
+
+/** 方塊的 aria-valuetext 與工具提示：「飽和度 80%、明度 60%」（DESIGN §6；小數四捨五入顯示） */
+export function svLabel(sat: number, val: number): string {
+  return `飽和度 ${Math.round(sat)}%、明度 ${Math.round(val)}%`
+}
+
+/** 工具列「目前顏色」按鈕的工具提示與 aria-label：「選擇顏色（目前 #XXXXXX）」（決策 1；色碼大寫） */
+export function colorButtonLabel(color: string): string {
+  return `選擇顏色（目前 ${normalizeColor(color)}）`
 }
 
 /** 指標在軌道上的位置 → 範圍內的整數值（點擊與拖曳共用；軌道外 clamp 到兩端） */

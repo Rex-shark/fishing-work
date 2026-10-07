@@ -210,7 +210,7 @@ export interface ServerToClientEvents {
 
 | 常數 | 值 | 說明 |
 |------|----|------|
-| `ROUND_SECONDS` | 90 | 作畫時間 |
+| `ROUND_SECONDS` | 120 | 作畫時間（2026-10-06 Rex：90 秒 → 10 分鐘 → 同日改 2 分鐘；**唯一改的地方就是這個常數**，倒數、逾時、計分公式都由它推導；說明文字與協定測試的檔內常數要跟著改） |
 | `CHOOSING_SECONDS` | 60 | 出題期限 |
 | `ENDED_SECONDS` | 5 | 揭曉停留 |
 | `MIN_PLAYERS` | 2 | 開始回合最少在線人數 |
@@ -394,7 +394,7 @@ phase ≠ drawing 時所有訊息都是一般聊天。
 - 本地 `ops[]` 達 `MAX_OPS_PER_ROUND` 時停止送 `begin`／`move`／`end` 並提示，`undo`／`clear` 仍可用。
 - 畫師的 `undo` 按鈕送目前歷史最後一筆 stroke 的 id；沒有筆畫時按鈕停用。
 - **粗細**：水平滑桿左右拖曳（或點擊），範圍 `BRUSH_MIN..BRUSH_MAX`，即時顯示數值與預覽圓點；送出的 `size` 取整數。
-- **顏色**：10 個預設色塊（`PALETTE`，含黑與膚色）＋**色相條**（0–360° 的彩虹漸層，拖曳或點擊選色，轉成 `hsl(h, 100%, 50%)` 再轉 `#RRGGBB` 大寫）；目前色顯示在工具列上。選色即切回畫筆。
+- **顏色**：10 個預設色塊（`PALETTE`，含黑與膚色）＋**顏色面板**（Epic 11，取代原本工具列上的 96px 色相條）：點工具列最左的「目前顏色」按鈕開啟，內有飽和度／明度方塊與色相條（HSV：`hue` 0–359、`sat`／`val` 0–100；面板拖曳與鍵盤只產生整數，顯示時四捨五入），每次變動立即轉成 `#RRGGBB` 大寫套到畫筆並切回畫筆；點預設色塊時 `color` 逐字＝色塊色，HSV 由 `hexToHsv` 反推、**不取整**（取整會差 1–2/255，色塊的選取外框會消失；灰階保留原色相）。Esc、點面板外、再點按鈕、視窗縮放時關閉。
 
 ---
 
@@ -405,7 +405,7 @@ main.tsx
 App.tsx                       # 三分支（Epic 4，純函式 pickScreen）：已加入 → 殼層 screen 'game'；未加入且 resuming（有重連憑證）→ 殼層 screen 'resume'（空白畫面＋「正在重新加入…」）；否則 → home/HomeScreen（不偽裝的首頁）。依畫面同步 <html data-theme>（home 或殼層 id）、title、favicon
 pickScreen.ts                 # 純函式 pickScreen({ joined, resuming }) → 'game' | 'resume' | 'home'（獨立成檔：App.tsx 只匯出元件，react-refresh 規則）
 socket/client.ts              # 型別化 socket、連線；connect 後以 sessionStorage 的 { nickname, token } 自動 join（接管）；被伺服器踢掉（其他分頁接管）→ 清憑證、回暱稱頁提示、重新連線
-store/game.ts                 # Zustand：me、players、round、ops、chat、connection、brush（{ tool, color, size, hue }，跨回合保留，reset 不清，重新整理才重設）
+store/game.ts                 # Zustand：me、players、round、ops、chat、connection、brush（{ tool, color, size, hue, sat, val }，color 永遠＝hsvToHex(hue, sat, val)，hue／sat／val 可帶小數（點色塊反推）；跨回合保留，reset 不清，重新整理才重設）
 features/
   lobby/ConnectionStatus.tsx  # 連線狀態（殼層插槽）；NicknameScreen 已於 Epic 4 退場（登入改在 home/）
   help/helpTopics.ts          # Epic 6：說明主題資料（id、標題、段落；佔位符 {volunteer}／{switch}）＋ renderTopic 純函式
@@ -413,7 +413,8 @@ features/
   help/helpOpen.ts            # Epic 6：開啟說明並記住開啟焦點、關閉後還回（vscode 齒輪、ppt 功能區按鈕／檔案選單、meet 資訊／更多選單）
   canvas/Canvas.tsx           # 渲染與指標事件
   canvas/render.ts            # 純函式：ops → canvas（可測）
-  canvas/ToolBar.tsx          # 畫師專用：顏色、粗細、橡皮擦、復原、清空、放棄；收合斷點由殼層 toolbar.compactBelowPx 提供（toolbarLayout.ts 純函式）
+  canvas/ToolBar.tsx          # 畫師專用：目前顏色（開顏色面板）、色塊、粗細、背景色、橡皮擦、復原、清空、放棄；收合斷點由殼層 toolbar.compactBelowPx 提供（toolbarLayout.ts 純函式）
+  canvas/ColorPanel.tsx       # 顏色面板（Epic 11）：飽和度／明度方塊＋色相條＋色碼；portal 到 body；HSV 純函式在 brush.ts
   chat/ChatPanel.tsx          # 訊息列表 + 輸入（猜題）；整個面板為圖片投放區（Epic 2）；渲染交給殼層 ChatView
   chat/chatLineData.ts        # 訊息 → ChatLineData（kind／nickname／fromId／text／at／time／isMine／reveal／image；parseReveal 拆「題目是 X（原因）」），各殼層自行渲染
   chat/imageUpload.ts         # 純函式：檔案 → 縮圖（長邊 ≤ IMAGE_MAX_EDGE）：PNG 先輸出 PNG（保留透明），超過上限才填白轉 JPEG 0.85；JPEG → JPEG 0.85；GIF／WebP 原樣 → { mime, width, height, data }。本機預檢與 server 同文字；來源檔 > 32 MB 直接拒（避免解碼卡死）；GIF／WebP 寬高 > 4096 本機先擋；投放區外放開不送。sendImage ack 逾時 60 秒（2 Mbps 下 10 MB 約 40 秒）
@@ -434,6 +435,8 @@ shells/vscode/                # VscodeShell（活動列｜側欄｜編輯區｜�
 shells/ppt/                   # definition、PptShell（橘紅標題列｜11 個功能區分頁｜左縮圖窗格｜灰工作區＋黑投影片｜備忘稿列｜右註解窗格｜淺灰狀態列；< 1024px 縮圖窗格改覆蓋層）、PptDialog（確定／取消、Enter／Esc；Epic 4 起無 footer）、PptResumeDialog（resume 畫面：標題「加入簡報」＋一行「正在重新加入…」，role=status）、SlidePlayers（玩家＝編號縮圖卡）、FileMenu（「檔案」分頁選單：切換偽裝…）、pptIcons、pptLayout；Epic 6：「說明」分頁可作用（Ribbon／RibbonContent／HelpRibbon／HelpButton 供測試匯出）、PPT_DIALOG_TITLE.help、「檔案」選單第二項「說明…」
 shells/ppt/PptShell.tsx       # 標題列｜功能區｜左縮圖窗格｜中央投影片｜右註解窗格｜備忘稿列｜狀態列（PowerPoint 偽裝）
 shells/meet/                  # Epic 5（DESIGN §15）：definition（'meet'、「視訊會議」、攝影機圖示、`Meet – kqw-mzdv-ptj`、favicon-meet.svg）、MeetShell（舞台：主畫面 tile＋浮動工具列＋字幕列｜右側影片條＝參加者 tile｜右側白色「通話中的訊息」面板｜底部控制列：時間／代碼、六個圓形按鈕（分享畫面＝volunteer、更多＝切換偽裝、其餘裝飾）、離開、右側資訊／使用者(N)／訊息（切換面板）／活動）、MeetDialog（白卡片 `--bg-panel`、藍字按鈕）、ParticipantTiles（PlayerList view）、MeetChat（ChatView：暱稱＋時間、同人合併、膠囊輸入列、白底覆蓋層）、meetViews（ShellViews 組裝：toolbar compactBelowPx 1280、status、volunteer）、meetIcons、meetLayout（標題、會議代碼常數、斷點）；shellRound.ts 的 drawerNameOf 供 App 推導 round.drawerName；shells/avatar.ts 為 ppt／meet 共用的頭像色函式；Epic 6：「資訊」按鈕開說明清單、「更多 ⋮」選單第二項「說明…」、meetDialogHeading
+shells/office/                # Epic 13：ppt 與 excel 共用的 Office 元件（CommentChat 註解卡片與輸入列、OfficeDialog 對話框、FileMenu「檔案」選單、officeIcons、officeLayout）；ppt 的 PptDialog／CommentChat 改為薄包裝、FileMenu 刪除；抽出時 ppt 外觀位元組不變
+shells/excel/                 # Epic 13（DESIGN §17）：definition（'excel'、「試算表」、表格圖示、`活頁簿1 - Excel`、favicon-excel.svg）、ExcelShell（綠標題列｜功能區：固定分頁＋關聯式「圖片格式」＝畫師工具列、「常用」最右「插入圖片」＝volunteer、「說明」、「校閱」顯示註解｜資料編輯列｜工作表區：欄名列、列號欄、CSS 格線、A–C 欄人員表格＝PlayerList、E 欄起浮動「圖片 1」＝畫布（畫師時控點）｜右「註解」窗格＝聊天｜工作表分頁列｜狀態列：左「就緒」＋roundStatus、右 計數: N；< 1024px 圖片移到人員表格下方）、ExcelDialog（OfficeDialog 的 excel 文案：替代文字／刪除圖片？／開啟活頁簿）、ExcelComments（註解窗格）、SheetPlayers（PlayerList＝A–C 欄表格）、excelViews（compactBelowPx 500）、excelIcons、excelLayout
 layout/uiStore.ts             # 含 shellId（localStorage、try/catch，本機偏好，不進 server；setShellId 對未註冊或相同 id 不動作、不寫入，預存的未註冊 id 不覆寫；分頁之間不同步、不監聽 storage 事件）、nicknameDraft（換主題時保留暱稱草稿）；import 註冊表（layout 依賴 shells，無循環）；helpTopic: 'list' | HelpTopicId | null（Epic 6 說明對話框）
 layout/themeCardNav.ts        # 風格卡片鍵盤導覽純函式（roving tabindex、←/→ 跳過不可選、Home/End）；layout/ThemeCards.tsx（IDE 樣式卡片）已於 Epic 4 退場
 home/HomeScreen.tsx           # 首頁（Epic 4，不偽裝、柔和 UI，DESIGN §14）：標題、暱稱（join／rememberedNickname／nicknameDraft、字數、錯誤）、風格卡片、「進入遊戲」、連線狀態一行、頁尾。可 import shells/catalog、shells/types、layout/uiStore、layout/themeCardNav、socket/client、store/game；不得 import shells/vscode、shells/ppt、shells/views（首頁在殼層之外）。連線狀態文字：connected「已連線」、connecting「正在連線到伺服器…」、disconnected「連線中斷，重新連線中…」（DESIGN §14.3）

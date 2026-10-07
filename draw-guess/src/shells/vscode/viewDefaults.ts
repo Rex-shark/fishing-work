@@ -14,11 +14,12 @@ export const VSCODE_CHAT_VIEW: ChatView = {
 }
 
 /**
- * DESIGN §5：分頁列右側的工具列寬度不足（視窗 < 1120px）時色相條與滑桿收進「⋯」。
- * Epic 7 完整工具列加寬到約 576px（10 色塊＋背景色按鈕）：原 1100px 時分頁列右側容器溢出 1px（會出現橫向捲動），
- * 實測 1101px 起不溢出（1101–1104px 剛好貼齊），取 1120px 留約 15px 給字型差異
+ * DESIGN §5：分頁列右側的工具列寬度不足（視窗 < 810px）時粗細滑桿收進「⋯」。
+ * Epic 11 移除色相條、目前顏色改 22px 按鈕，完整工具列約 468px（Epic 7 為 576px，當時斷點 1120px）：
+ * 實測分頁列右側容器 790px 起 scrollWidth ≤ clientWidth（790px 時 481／481 剛好貼齊、789px 溢出 1px；
+ * < 1024px 側欄收成覆蓋層，編輯區反而變寬，790px 以上全部放得下）；取 810px，留約 20px 給字型差異（舵手 2026-10-03 定案）
  */
-export const VSCODE_TOOLBAR_VIEW: ToolbarView = { compactBelowPx: 1120 }
+export const VSCODE_TOOLBAR_VIEW: ToolbarView = { compactBelowPx: 810 }
 
 /** 藍／橘狀態列上的可點項目：白字、hover 白色 20% 疊底、focus 白色外框（--border-focus 在彩色底上看不見） */
 export const VSCODE_STATUS_VIEW: StatusView = {

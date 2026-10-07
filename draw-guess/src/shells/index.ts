@@ -1,5 +1,6 @@
 // 偽裝主題註冊表（plan/camouflage-themes.md 決策 2；architecture §7）：{ id, name, description, icon, Shell, titleFor, faviconHref }。
-// 首頁風格卡片（Epic 4，description 為卡片描述）與切換入口都從 SHELLS 產生（經 catalog.ts 加上「即將推出」項目）；ppt 於 Epic 3 Phase 3、meet 於 Epic 5 註冊。畫布底色與預設筆色不屬於主題（決策 6）。
+// 首頁風格卡片（Epic 4，description 為卡片描述）與切換入口都從 SHELLS 產生（經 catalog.ts 加上「即將推出」項目）；ppt 於 Epic 3 Phase 3、meet 於 Epic 5、excel 於 Epic 13 註冊。畫布底色與預設筆色不屬於主題（決策 6）。
+import { excelShell } from './excel/definition'
 import { meetShell } from './meet/definition'
 import { pptShell } from './ppt/definition'
 import type { ShellDefinition, ShellId } from './types'
@@ -18,7 +19,7 @@ export type {
 } from './types'
 
 /** 已註冊的主題（順序即首頁卡片順序） */
-export const SHELLS: readonly ShellDefinition[] = [vscodeShell, pptShell, meetShell]
+export const SHELLS: readonly ShellDefinition[] = [vscodeShell, pptShell, meetShell, excelShell]
 
 /** 預設主題；未知或尚未註冊的 id 一律回退到這裡 */
 export const DEFAULT_SHELL_ID: ShellId = 'vscode'

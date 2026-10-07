@@ -1,5 +1,5 @@
 // 主題卡片圖示（plan/camouflage-themes.md 決策 8；plan/meet-theme.md 決策 7；DESIGN.md §13.4）：自繪通用版，不使用 VS Code／Microsoft／Google 商標。
-// 顏色固定為跨主題 token（text-brand-editor、text-brand-slides、text-brand-meet → theme.css 的 --brand-*），
+// 顏色固定為跨主題 token（text-brand-editor、text-brand-slides、text-brand-meet、text-brand-sheets → theme.css 的 --brand-*），
 // 不隨 data-theme 改變：卡片列在任何主題下都顯示同一組圖示。本檔不含色碼。
 // 由註冊表（各主題的 definition.icon）與 catalog 的「即將推出」項目共用，因此放在 shells/ 根層、不屬於任一主題資料夾。
 import type { ReactNode } from 'react'
@@ -60,6 +60,17 @@ export function VideoCallIcon({ className, ...p }: ThemeIconProps) {
     <ThemeSvg {...p} className={`text-brand-meet ${className ?? ''}`}>
       <rect x="2.5" y="6" width="13" height="12" rx="2.5" fill="currentColor" stroke="none" />
       <path d="M17.5 10.2 21.5 7.5v9l-4-2.7Z" fill="currentColor" stroke="none" />
+    </ThemeSvg>
+  )
+}
+
+/** 試算表：綠色表格方塊（外框＋實心表頭列＋線條格線；plan/excel-theme.md 決策 8、DESIGN §17.1 --brand-sheets） */
+export function SheetsIcon({ className, ...p }: ThemeIconProps) {
+  return (
+    <ThemeSvg {...p} className={`text-brand-sheets ${className ?? ''}`}>
+      <rect x="3" y="3.5" width="18" height="17" rx="1.5" />
+      <path d="M3 5a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 5v4H3Z" fill="currentColor" stroke="none" />
+      <path d="M3 14.75h18M9 9v11.5M15 9v11.5" strokeWidth={1.5} />
     </ThemeSvg>
   )
 }

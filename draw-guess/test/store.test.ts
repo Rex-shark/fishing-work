@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { BRUSH_DEFAULT, PALETTE, type ChatMessage, type DrawOp, type PlayerPublic, type RoomSnapshot, type RoundPublic } from '@fishing-work/shared'
+import { hsvToHex } from '../src/features/canvas/brush'
 import { CHAT_LOCAL_LIMIT } from '../src/features/chat/chatFormat'
 import {
+  initialBrush,
   initialGameState,
   initialRound,
   selectHasGuessed,
@@ -195,20 +197,21 @@ describe('store：本回合得分基準與猜對選擇器', () => {
   })
 })
 
-describe('store：畫筆狀態（Phase 6：任意色、1–64 粗細、色相）', () => {
-  it('預設：畫筆、PALETTE[0]、粗細 BRUSH_DEFAULT、色相 0', () => {
-    expect(get().brush).toEqual({ tool: 'pen', color: PALETTE[0], size: BRUSH_DEFAULT, hue: 0 })
+describe('store：畫筆狀態（Phase 6：任意色、1–64 粗細；Epic 11：HSV）', () => {
+  it('預設：畫筆、白（PALETTE[0]＝HSV 0/0/100）、粗細 BRUSH_DEFAULT', () => {
+    expect(get().brush).toEqual({ tool: 'pen', color: PALETTE[0], size: BRUSH_DEFAULT, hue: 0, sat: 0, val: 100 })
+    expect(hsvToHex(initialBrush.hue, initialBrush.sat, initialBrush.val)).toBe(initialBrush.color)
   })
 
   it('setBrush 只改傳入的欄位', () => {
     get().setBrush({ size: 64 })
-    get().setBrush({ hue: 120, color: '#00FF00', tool: 'pen' })
+    get().setBrush({ hue: 120, sat: 100, val: 100, color: '#00FF00', tool: 'pen' })
     get().setBrush({ tool: 'eraser' })
-    expect(get().brush).toEqual({ tool: 'eraser', color: '#00FF00', size: 64, hue: 120 })
+    expect(get().brush).toEqual({ tool: 'eraser', color: '#00FF00', size: 64, hue: 120, sat: 100, val: 100 })
   })
 
   it('跨回合保留：新回合進入 drawing、回合結束、reset 都不重設畫筆', () => {
-    get().setBrush({ color: '#FF8000', size: 33, hue: 30 })
+    get().setBrush({ color: '#FF8000', size: 33, hue: 30, sat: 100, val: 100 })
     const brush = get().brush
     get().setRound(round({ phase: 'drawing', drawerId: 'me' }))
     get().setRound(round({ phase: 'ended', drawerId: 'me' }))

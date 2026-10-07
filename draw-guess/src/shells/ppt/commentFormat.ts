@@ -5,5 +5,5 @@ export { AVATAR_COLOR_COUNT, AVATAR_FALLBACK, avatarColorIndex, avatarInitial, t
 /** 底部輸入框的 placeholder（DESIGN §13.2「新增註解…」）；取代功能元件依角色給的提示文字 */
 export const COMMENT_PLACEHOLDER = '新增註解…'
 
-/** 送出鈕的名稱與提示 */
-export const COMMENT_SEND_LABEL = '送出註解'
+/** 送出鈕的名稱與提示（Epic 13 起在 office/officeLayout，ppt 與 excel 共用） */
+export { COMMENT_SEND_LABEL } from '../office/officeLayout'

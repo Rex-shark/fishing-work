@@ -1,7 +1,7 @@
 // 常數來源：spec/architecture.md §4「常數」表
 
 /** 作畫時間（秒） */
-export const ROUND_SECONDS = 90;
+export const ROUND_SECONDS = 120;
 /** 出題期限（秒） */
 export const CHOOSING_SECONDS = 60;
 /** 揭曉停留（秒） */

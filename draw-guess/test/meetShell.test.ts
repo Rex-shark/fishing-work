@@ -37,8 +37,8 @@ const meetSources = import.meta.glob<string>('../src/shells/meet/**/*.{ts,tsx}',
 const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 
 describe('註冊表：meet', () => {
-  it('SHELLS 順序 vscode、ppt、meet；meet 可解析', () => {
-    expect(SHELLS.map((s) => s.id)).toEqual(['vscode', 'ppt', 'meet'])
+  it('SHELLS 順序 vscode、ppt、meet、excel（Epic 13 起 excel 接在後面）；meet 可解析', () => {
+    expect(SHELLS.map((s) => s.id)).toEqual(['vscode', 'ppt', 'meet', 'excel'])
     expect(isRegisteredShellId('meet')).toBe(true)
     expect(resolveShellId('meet')).toBe('meet')
     expect(getShell('meet')).toBe(meetShell)
@@ -57,7 +57,7 @@ describe('註冊表：meet', () => {
   })
 
   it('catalog：第三張卡片「視訊會議」可選，名稱、描述、圖示取自註冊表', () => {
-    expect(THEME_CATALOG).toHaveLength(3)
+    expect(THEME_CATALOG).toHaveLength(4)
     const meet = THEME_CATALOG[2]
     expect(meet).toMatchObject({ id: 'meet', name: '視訊會議', description: '深色視訊會議，像在開會分享畫面', available: true })
     expect(meet?.icon).toBe(VideoCallIcon)
@@ -189,8 +189,8 @@ describe('meet 的 ShellViews', () => {
     expect(MEET_VIEWS.volunteer).toBe(MEET_VOLUNTEER_VIEW)
   })
 
-  it('工具列收合斷點 1280px（決策 13(4)；vscode 1120、ppt 640）；「分享畫面」＋分享圖示', () => {
-    expect(MEET_TOOLBAR_VIEW).toEqual({ compactBelowPx: 1280 })
+  it('工具列收合斷點 1100px（決策 13(4)；Epic 11 實測 1085 起放得下，留約 15px；vscode 810、ppt 500）；「分享畫面」＋分享圖示', () => {
+    expect(MEET_TOOLBAR_VIEW).toEqual({ compactBelowPx: 1100 })
     expect(MEET_VOLUNTEER_VIEW).toEqual({ label: '分享畫面', icon: ShareScreenIcon })
   })
 

@@ -167,7 +167,7 @@ export interface ChatView {
 // ─── 畫師工具列 ─────────────────────────────────────────────────
 
 export interface ToolbarView {
-  /** 視窗寬度小於此值（px）時，色相條與粗細滑桿收進「⋯」彈出面板；0 = 永不收合 */
+  /** 視窗寬度小於此值（px）時，粗細滑桿收進「⋯」彈出面板；0 = 永不收合 */
   compactBelowPx: number
 }
 
@@ -201,7 +201,7 @@ export interface ShellViews {
   PlayerList: ComponentType<PlayerListViewProps>
   /** 聊天室外觀；省略 = DEFAULT_CHAT_VIEW（vscode 終端機樣式） */
   chat?: ChatView
-  /** 畫師工具列；省略 = DEFAULT_TOOLBAR_VIEW（< 1120px 收合） */
+  /** 畫師工具列；省略 = DEFAULT_TOOLBAR_VIEW（< 810px 收合） */
   toolbar?: ToolbarView
   /** 狀態列式項目；省略 = DEFAULT_STATUS_VIEW（彩色狀態列上的白字） */
   status?: StatusView

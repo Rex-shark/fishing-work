@@ -30,14 +30,16 @@ describe('themePickItems：與登入卡片同一份 catalog', () => {
       { id: 'vscode', label: '程式編輯器', detail: THEME_CURRENT_DETAIL, disabled: false },
       { id: 'ppt', label: '簡報', detail: THEME_UPCOMING_DETAIL, disabled: true },
       { id: 'meet', label: '視訊會議', detail: undefined, disabled: false },
+      { id: 'excel', label: '試算表', detail: undefined, disabled: false },
     ])
   })
 
-  it('全部上線時（Epic 5 起三個主題）：只有目前主題有說明', () => {
+  it('全部上線時（Epic 13 起四個主題）：只有目前主題有說明', () => {
     expect(themePickItems(switcher('ppt', bothAvailable).themes).map((i) => [i.id, i.detail, i.disabled])).toEqual([
       ['vscode', undefined, false],
       ['ppt', THEME_CURRENT_DETAIL, false],
       ['meet', undefined, false],
+      ['excel', undefined, false],
     ])
   })
 

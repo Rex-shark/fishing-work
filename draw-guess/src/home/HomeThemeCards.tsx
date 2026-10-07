@@ -1,5 +1,5 @@
 // 首頁的介面風格卡片（plan/home-page.md 決策 2、7、8；DESIGN §14.3、§14.4）。
-//   卡片：底 --home-surface、圓角 --home-radius、內距 20px、1px --home-border、--home-shadow；左上 64px 圓形淡色底（home-icon-disc）放 48px 圖示；
+//   卡片：底 --home-surface 加紙卡紋理（home-paper，Epic 10 試做）、圓角 --home-radius、內距 20px、1px --home-border、--home-shadow；左上 64px 圓形淡色底（home-icon-disc）放 48px 圖示；
 //   名稱 16px／600、描述（註冊表 description）13px／18px --home-fg-muted，允許兩行、text-wrap: balance（Epic 5 決策 13(6)）；卡片等高（grid stretch）。
 //   選取：2px --home-accent 邊框（1px border ＋ 1px inset ring，不改尺寸）＋底 --home-accent-soft ＋右上 20px 打勾徽章。
 //   hover（可選者）：底 --home-surface-hover、--home-shadow-hover、上移 2px；200ms；prefers-reduced-motion 時不位移。
@@ -23,9 +23,9 @@ export interface HomeThemeCardsProps {
   labelledBy?: string
 }
 
-/** 卡片共通：200ms 只轉場底色、邊框色、陰影；位移（hover 上移 2px）與其轉場只在 motion-safe（未要求減少動態）時啟用（DESIGN §14.4） */
+/** 卡片共通：home-paper 紙卡紋理（只設 background-image，底色仍由 bg-home-* 決定）；200ms 只轉場底色、邊框色、陰影；位移（hover 上移 2px）與其轉場只在 motion-safe（未要求減少動態）時啟用（DESIGN §14.4） */
 const CARD_BASE =
-  'relative flex flex-col items-start gap-3 rounded-home border p-5 text-left shadow-home transition-[background-color,border-color,box-shadow] duration-200 motion-safe:transition-[background-color,border-color,box-shadow,translate] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-home-accent'
+  'home-paper relative flex flex-col items-start gap-3 rounded-home border p-5 text-left shadow-home transition-[background-color,border-color,box-shadow] duration-200 motion-safe:transition-[background-color,border-color,box-shadow,translate] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-home-accent'
 const CARD_CHECKED = 'border-home-accent bg-home-accent-soft ring-1 ring-inset ring-home-accent'
 const CARD_UNCHECKED = 'border-home-border bg-home-surface'
 const CARD_AVAILABLE = 'cursor-pointer hover:shadow-home-hover motion-safe:hover:-translate-y-0.5'
@@ -62,7 +62,7 @@ export function HomeThemeCards({ options, value, onSelect, onEnter, labelledBy }
       aria-label={labelledBy === undefined ? '介面風格' : undefined}
       aria-labelledby={labelledBy}
       onKeyDown={handleKeyDown}
-      className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-4"
+      className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4"
     >
       {options.map((option, i) => {
         const checked = option.id === value
