@@ -10,4 +10,13 @@ services:
     environment:
       # 可選：給同事的分享網址，例如 http://192.168.1.50/draw-guess/（沒設時為空字串，程式視為未設）
       PUBLIC_URL: ${PUBLIC_URL:-}
+      # 繪圖比賽的評分器（spec/draw-contest/architecture.md §3）：ollama（預設；連不上時每回合自動退回隨機）或 random（沒有 Ollama 的機器）
+      JUDGE: ${JUDGE:-ollama}
+      # 容器內連主機的 Ollama；Linux 主機的 Ollama 需以 OLLAMA_HOST=0.0.0.0 啟動
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Ollama 裡的模型 tag（ollama list 可查）；換 clef-flash 時改此值
+      JUDGE_MODEL: ${JUDGE_MODEL:-clef:27b-q4_k_m}
+    # Linux 需要此對應才解析得到 host.docker.internal；macOS／Windows 的 Docker Desktop 本來就有
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

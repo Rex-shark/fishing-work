@@ -16,7 +16,7 @@
 
 特殊需求：首頁為不偽裝的柔和紙張質感 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）、PowerPoint、Google Meet 視訊會議或 Excel 試算表，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布預設黑底白筆不隨主題，畫師可換背景色並同步給所有人。
 
-目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」工程完成、舵手驗收通過（`plan/meet-theme.md`），待 Rex 目視。Epic 6「遊戲說明」工程完成、舵手驗收通過（`plan/help-topics.md`），待 Rex 目視。Epic 7「畫布背景色與新色塊」工程完成、舵手驗收通過（`plan/canvas-background.md`），待 Rex 目視。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。進度見 [plan/backlog.md](plan/backlog.md)。
+目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」工程完成、舵手驗收通過（`plan/meet-theme.md`），待 Rex 目視。Epic 6「遊戲說明」工程完成、舵手驗收通過（`plan/help-topics.md`），待 Rex 目視。Epic 7「畫布背景色與新色塊」工程完成、舵手驗收通過（`plan/canvas-background.md`），待 Rex 目視。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。**Epic 14「繪圖比賽 MVP」**（第二款遊戲 `draw-contest/`，羅盤 × 帆；`plan/draw-contest-mvp.md`、`spec/draw-contest/`）**完成**（2026-10-09）：驗收子代理三次驗收通過、Rex 真模型目視與區網實機通過；評分器預設 `JUDGE=ollama`（Clef 決策模型，本機 Ollama；連不上自動退回隨機）。進度見 [plan/backlog.md](plan/backlog.md)。
 
 ---
 
@@ -27,6 +27,7 @@ fishing-work/
 ├── CLAUDE.md
 ├── DESIGN.md               # 視覺設計指南：Dark+ 色彩 token、IDE 殼層尺寸、元件規範（做畫面前必讀）
 ├── draw-guess/             # 我畫你猜客戶端：React 19 + Vite + TypeScript + Tailwind v4
+├── draw-contest/           # 繪圖比賽客戶端（Epic 14，獨立前端、簡報偽裝）：React 19 + Vite + TypeScript + Tailwind v4
 ├── server/                 # Node + TypeScript + Socket.IO：房間、回合、筆跡中繼、猜題裁判，並提供各遊戲靜態檔
 ├── shared/                 # 前後端共用的事件契約、常數、純函式（answer / text / nickname）
 ├── tsconfig.base.json      # 三模組共用 TS 設定
@@ -101,6 +102,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 |------|------|
 | [spec/overview.md](spec/overview.md) | 產品定位、v1 遊戲規則、範圍內外 |
 | [spec/architecture.md](spec/architecture.md) | 模組佈局、Socket 事件契約（型別放 `shared/`）、回合狀態機、驗證指令。**實作唯一契約，改動需舵手定案** |
+| [spec/draw-contest/](spec/draw-contest/) | **繪圖比賽**（Epic 14）：`overview.md` 規則、`architecture.md` 契約／狀態機／評分器／部署（改動需羅盤定案；共用層需舵手）、`design.md` 簡報偽裝的畫面對照 |
 | [plan/draw-guess-mvp.md](plan/draw-guess-mvp.md) | Epic 1 任務拆解與派工規範 |
 | [plan/chat-image.md](plan/chat-image.md) | Epic 2 聊天室圖片（拖曳上傳、即時中繼、不保留） |
 | [plan/camouflage-themes.md](plan/camouflage-themes.md) | Epic 3 多偽裝主題（vscode／ppt 殼層、遊戲內切換） |
@@ -114,6 +116,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | [plan/color-picker.md](plan/color-picker.md) | Epic 11 顏色面板（取代工具列色相條：HSV 方塊＋寬色相條，三殼層共用） |
 | [plan/round-time.md](plan/round-time.md) | Epic 12 作畫時間改 2 分鐘（`ROUND_SECONDS` 唯一來源；改時間只動它＋說明文字） |
 | [plan/excel-theme.md](plan/excel-theme.md) | Epic 13 試算表偽裝主題（Excel 風格的第四套殼層 `excel`；DESIGN §17） |
+| [plan/draw-contest-mvp.md](plan/draw-contest-mvp.md) | Epic 14 繪圖比賽 MVP（第二款遊戲：出題→同時畫→評分器打分→投影片瀏覽揭曉；MVP 隨機評分，Phase 3 接 Clef／Ollama） |
 
 ---
 

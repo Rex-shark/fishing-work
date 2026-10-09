@@ -1,4 +1,5 @@
 import { DRAW_GUESS_NAMESPACE } from '@fishing-work/shared';
+import { DRAW_CONTEST_NAMESPACE } from '@fishing-work/shared/draw-contest';
 import { createApp } from './app';
 import { log } from './lib/log';
 import { listenErrorHint } from './lib/network';
@@ -25,10 +26,11 @@ try {
   });
   process.exit(1);
 }
-log.info('server.listen', { host: HOST, port, games: [DRAW_GUESS_NAMESPACE] });
+log.info('server.listen', { host: HOST, port, games: [DRAW_GUESS_NAMESPACE, DRAW_CONTEST_NAMESPACE] });
 
 // 分享網址：PUBLIC_URL 優先；容器內（IN_CONTAINER=1）不印 172.x 而改印提示（spec §3「Docker 部署」）
-const share = shareLog({ host: HOST, port, path: '/draw-guess/', env: process.env });
+// Epic 14：PUBLIC_URL 仍是我畫你猜的完整網址；繪圖比賽的網址由 origin 推出（shareContest）
+const share = shareLog({ host: HOST, port, path: '/draw-guess/', contestPath: '/draw-contest/', env: process.env });
 log[share.level](share.event, share.fields);
 
 let closing = false;

@@ -111,6 +111,48 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 - **外網分享**：Cloudflare Tunnel 仍在主機上跑（不放進容器）：`cloudflared tunnel --url http://localhost:80`（主機埠改過就改成對應埠）。
 - 只想用 Dockerfile 不用 compose 也可以：`docker build -t fishing-work .` → `docker run -d --name fishing-work -p 80:80 --restart unless-stopped fishing-work`。要讓 log 印出正確的分享網址，`docker run` 再加 `-e PUBLIC_URL=http://<新電腦 IP>/draw-guess/`。
 
+## 繪圖比賽
+
+平台的第二款遊戲（Epic 14），與我畫你猜由**同一個 server 程序**提供，偽裝成簡報（PowerPoint）。規則見 [spec/draw-contest/overview.md](spec/draw-contest/overview.md)，契約與部署見 [spec/draw-contest/architecture.md](spec/draw-contest/architecture.md)。
+
+**怎麼玩**（給同事）：
+
+1. 瀏覽器開 `http://<IP>/draw-contest/`（`http://<IP>/` 遊戲清單也有入口），輸入暱稱（規則同我畫你猜），選「簡報」進入。
+2. 沒有回合進行時，任何人可按「我出題」成為出題者（至少 2 人在線），60 秒內輸入題目（1～20 字，例如「蘋果」）。
+3. 題目送出時在線的所有人（**含出題者**）同時作畫 2 分鐘；題目對所有人公開，每人只看得到自己的畫布。
+4. 畫完按「完成」交卷（交卷後不能改）；時間到會自動交卷。中途加入的人本回合旁觀。
+5. 評分器逐張打分（0～100），全部評完後以投影片瀏覽揭曉每人的畫、分數與名次，前三名高亮；隨機評分時畫面會標示「隨機評分」。揭曉停到有人按「我出題」開始下一回合。
+
+**網址**：正式（`npm start` 或 Docker）為 `http://<IP>/draw-contest/`；Docker 的 `PUBLIC_URL` 仍填我畫你猜的網址，啟動 log `server.lan` 的 `shareContest` 會由同一個 origin 推出繪圖比賽的網址。
+
+**開發**：
+
+```bash
+npm run dev:contest  # 同時啟動 server（:3000）與繪圖比賽的 Vite（綁 :3001）
+```
+
+瀏覽器開 <http://localhost:3001/draw-contest/>（Vite 開發版，HMR；`/socket.io` proxy 到 `localhost:3000`）。`npm run dev`（我畫你猜，:80）不受影響，兩者可同時跑、共用同一個 server（:3000）。開發版只在本機用，3001 不給區網同事連。
+
+## Ollama 連線
+
+繪圖比賽的評分器以環境變數切換（server 讀取；Docker 由 `docker-compose.yml` 帶入，可寫在 `.env`）：
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `JUDGE` | `ollama` | `ollama`：Clef 決策模型（**預設**）；`random`：隨機評分器（不需要 AI）。**沒有 Ollama 的機器設 `JUDGE=random`** |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama 位址；Docker 內預設 `http://host.docker.internal:11434`（compose 已設） |
+| `JUDGE_MODEL` | `clef:27b-q4_k_m` | Ollama 裡的模型 tag（27B Q4_K_M，約 17 GB；`ollama list` 可查）；換 `clef-flash` 時改此值 |
+| `JUDGE_IMAGE_WIDTH` | `640` | 送模型前把交卷圖等比縮到此寬度（1280×720 → 640×360，評分快約 3 倍、分數幾乎不變）；畫廊仍顯示原圖 |
+| `JUDGE_TIMEOUT_MS` | `30000` | 單張評分逾時；逾時或失敗的那張退回隨機，且本回合剩下的一律改用隨機 |
+| `JUDGE_FAKE_DELAY_MS` | `1500` | 隨機評分器每張的假延遲（讓「評分中 n/m」看得到；測試設 0） |
+
+- **預設 `ollama`**：連不上 Ollama 或沒有該模型時，啟動 log 警告 `draw-contest.judge.ollamaUnavailable`（附原因），**遊戲照常可玩**：每回合仍先試 Ollama，連不上就該回合自動退回隨機，畫面備忘稿標「（隨機評分）」。Ollama 之後才開也**不用重啟** server，下一回合就會改用 AI 評分。確定沒有 Ollama 的機器直接設 `JUDGE=random`，省掉每回合的連線嘗試與 log。`/healthz` 不檢查 Ollama。
+- **模型不進映像**：Ollama 跑在主機上，容器只以 HTTP 呼叫它。
+- **macOS（Docker Desktop）**：容器經 `host.docker.internal` 可直接連到主機 `127.0.0.1` 上的 Ollama，**預設設定即可**，不必改 Ollama 的綁定。
+- **Linux 主機**：compose 以 `extra_hosts: host.docker.internal:host-gateway` 讓容器解析得到主機，但連線會從 Docker bridge 網段進來，Ollama 必須以 `OLLAMA_HOST=0.0.0.0` 啟動（例如 `OLLAMA_HOST=0.0.0.0 ollama serve`，或在 systemd 服務設定此環境變數）才收得到。
+- 不用 Docker、直接 `npm start` 時，預設的 `http://127.0.0.1:11434` 就是本機 Ollama，不必另設；沒有 Ollama 時用 `JUDGE=random npm start`。
+- 模型未就緒時可用假 Ollama 測接線：`node user/mock/systemone.mjs`（預設 `127.0.0.1:11435`），再以 `OLLAMA_URL=http://127.0.0.1:11435 npm start` 指向它。
+
 ## 開發
 
 ```bash

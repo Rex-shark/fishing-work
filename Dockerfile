@@ -10,11 +10,12 @@ COPY package.json package-lock.json ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 COPY draw-guess/package.json draw-guess/
+COPY draw-contest/package.json draw-contest/
 RUN npm ci --no-audit --no-fund
 COPY . .
-# 產出 draw-guess/dist 與 server/dist/index.js（shared 由 tsup 打包進 server）
+# 產出 draw-guess/dist、draw-contest/dist 與 server/dist/index.js（shared 由 tsup 打包進 server）
 RUN npm run build \
- && find server/dist draw-guess/dist -name '*.map' -delete
+ && find server/dist draw-guess/dist draw-contest/dist -name '*.map' -delete
 
 # ---------- deps：只裝 server 的正式相依（express、socket.io） ----------
 # 不用 `npm ci --omit=dev -w @fishing-work/server`：server 的 devDependency socket.io-client
@@ -42,6 +43,7 @@ COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/public ./server/public
 COPY --from=build /app/draw-guess/dist ./draw-guess/dist
+COPY --from=build /app/draw-contest/dist ./draw-contest/dist
 # 非 root 執行；Docker 20.10 起容器預設允許非 root 綁 1024 以下的埠
 USER node
 EXPOSE 80

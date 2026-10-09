@@ -4,13 +4,12 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { Server } from 'socket.io';
-import {
-  DRAW_GUESS_NAMESPACE,
-  MAX_IMAGE_BYTES,
-  type ClientToServerEvents,
-  type ServerToClientEvents,
-} from '@fishing-work/shared';
-import { registerDrawGuess, type PendingBytesOf } from './games/draw-guess/register';
+import { DRAW_GUESS_NAMESPACE, MAX_IMAGE_BYTES } from '@fishing-work/shared';
+import { DRAW_CONTEST_NAMESPACE } from '@fishing-work/shared/draw-contest';
+import type { JudgeSetup } from './games/draw-contest/judge/index';
+import { registerDrawContest, type DrawContestNamespace } from './games/draw-contest/register';
+import type { Room as DrawContestRoom, RoomDurations as DrawContestDurations } from './games/draw-contest/room';
+import { registerDrawGuess, type DrawGuessNamespace, type PendingBytesOf } from './games/draw-guess/register';
 import type { Clock, Room, RoomDurations } from './games/draw-guess/room';
 import { mountStatic } from './static';
 
@@ -27,6 +26,10 @@ export interface AppOptions {
   ping?: { interval?: number; timeout?: number };
   /** 覆寫 chat:image 慢連線保護的待送量查詢（e2e 模擬慢連線用；預設讀 engine.io／ws 的待送佇列） */
   pendingBytesOf?: PendingBytesOf;
+  /** 繪圖比賽：覆寫回合／寬限期長度（測試用；正式環境一律用 shared/draw-contest 常數） */
+  contestDurations?: Partial<DrawContestDurations>;
+  /** 繪圖比賽：注入評分器（測試用；預設依環境變數 JUDGE 等建立） */
+  judge?: JudgeSetup;
 }
 
 /** spec §3：Socket.IO 心跳間隔 */
@@ -41,8 +44,10 @@ export const PING_TIMEOUT_MS = 30_000;
 
 export interface App {
   httpServer: HttpServer;
-  io: Server<ClientToServerEvents, ServerToClientEvents>;
+  /** 不帶遊戲事件泛型：各遊戲 namespace 的事件型別不同，於 createApp 內各自轉型 */
+  io: Server;
   drawGuessRoom: Room;
+  drawContestRoom: DrawContestRoom;
   /** 開始監聽，回傳實際綁定的位址與埠 */
   listen(): Promise<{ host: string; port: number }>;
   /** 斷開所有連線、關閉 http server、清掉房間計時器 */
@@ -61,22 +66,31 @@ export function createApp(options: AppOptions = {}): App {
   const httpServer = createServer(app);
   // spec §3：死連線最慢 pingInterval + pingTimeout（40 秒）判定斷線（pingTimeout 放寬的原因見 PING_TIMEOUT_MS）；
   // 聊天圖片最大 MAX_IMAGE_BYTES，另留 64 KiB 給封包其餘部分（預設 1 MB 會讓傳圖直接斷線，Epic 2）
-  const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
+  // io 不帶遊戲事件泛型；各遊戲 namespace 各自單次轉型成自己的事件型別
+  const io = new Server(httpServer, {
     maxHttpBufferSize: MAX_IMAGE_BYTES + 65_536,
     pingInterval: options.ping?.interval ?? PING_INTERVAL_MS,
     pingTimeout: options.ping?.timeout ?? PING_TIMEOUT_MS,
   });
 
-  const drawGuessRoom = registerDrawGuess(io.of(DRAW_GUESS_NAMESPACE), {
+  const drawGuessRoom = registerDrawGuess(io.of(DRAW_GUESS_NAMESPACE) as DrawGuessNamespace, {
     clock: options.clock,
     durations: options.durations,
     pendingBytesOf: options.pendingBytesOf,
+  });
+
+  // 繪圖比賽（Epic 14）：交卷 PNG 上限 MAX_SUBMISSION_BYTES（2 MiB）+ 64 KiB 小於上方 maxHttpBufferSize，不需調整
+  const drawContestRoom = registerDrawContest(io.of(DRAW_CONTEST_NAMESPACE) as DrawContestNamespace, {
+    clock: options.clock,
+    durations: options.contestDurations,
+    judge: options.judge,
   });
 
   return {
     httpServer,
     io,
     drawGuessRoom,
+    drawContestRoom,
     listen: () =>
       new Promise((resolve, reject) => {
         httpServer.once('error', reject);
@@ -89,6 +103,7 @@ export function createApp(options: AppOptions = {}): App {
     close: () =>
       new Promise((resolve) => {
         drawGuessRoom.dispose();
+        drawContestRoom.dispose();
         // io.close() 會斷開所有 socket 並關閉底層 http server
         io.close(() => resolve());
       }),

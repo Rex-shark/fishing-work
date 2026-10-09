@@ -8,7 +8,28 @@ import { log } from './lib/log';
 // 兩者都在 server/ 下一層，因此往上一層即為 server 套件根目錄。
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = resolve(serverRoot, 'public');
-const drawGuessDist = resolve(serverRoot, '..', 'draw-guess', 'dist');
+
+/** 一款遊戲的客戶端靜態檔：URL 前綴、建置產物目錄（server/.. 下的 <workspace>/dist）、缺檔提示 */
+interface GameStatic {
+  /** URL 前綴，例如 /draw-guess */
+  base: string;
+  dist: string;
+  /** dist 不存在時 static.missing 的 hint */
+  missingHint: string;
+}
+
+const games: GameStatic[] = [
+  {
+    base: '/draw-guess',
+    dist: resolve(serverRoot, '..', 'draw-guess', 'dist'),
+    missingHint: '先執行 npm run build（開發時請走 Vite：http://localhost/draw-guess/）',
+  },
+  {
+    base: '/draw-contest',
+    dist: resolve(serverRoot, '..', 'draw-contest', 'dist'),
+    missingHint: '先執行 npm run build（開發時請走 Vite：npm run dev:contest → http://localhost:3001/draw-contest/）',
+  },
+];
 
 export function mountStatic(app: Express): void {
   app.get('/healthz', (_req, res) => {
@@ -19,19 +40,23 @@ export function mountStatic(app: Express): void {
     res.sendFile(resolve(publicDir, 'index.html'));
   });
 
-  if (!existsSync(resolve(drawGuessDist, 'index.html'))) {
-    log.warn('static.missing', { dir: drawGuessDist, hint: '先執行 npm run build（開發時請走 Vite：http://localhost/draw-guess/）' });
+  for (const game of games) mountGame(app, game);
+}
+
+function mountGame(app: Express, { base, dist, missingHint }: GameStatic): void {
+  if (!existsSync(resolve(dist, 'index.html'))) {
+    log.warn('static.missing', { dir: dist, hint: missingHint });
   }
 
-  app.use('/draw-guess', express.static(drawGuessDist));
+  app.use(base, express.static(dist));
 
   // SPA fallback：無副檔名的路徑回 index.html；帶副檔名（找不到的資源檔）回 404
-  app.get('/draw-guess/{*splat}', (req, res) => {
+  app.get(`${base}/{*splat}`, (req, res) => {
     if (extname(req.path) !== '') {
       res.sendStatus(404);
       return;
     }
-    res.sendFile(resolve(drawGuessDist, 'index.html'), (err) => {
+    res.sendFile(resolve(dist, 'index.html'), (err) => {
       if (err && !res.headersSent) res.sendStatus(404);
     });
   });

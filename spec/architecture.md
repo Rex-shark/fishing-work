@@ -13,7 +13,8 @@ fishing-work/
 ├── tsconfig.base.json      # 三個模組共用的 TS 設定（strict、moduleResolution: bundler、verbatimModuleSyntax）
 ├── shared/                 # @fishing-work/shared：事件契約 events.ts、constants.ts、純函式 answer.ts / text.ts / nickname.ts
 ├── server/                 # @fishing-work/server：Node + TypeScript + Socket.IO；提供各遊戲靜態檔
-└── draw-guess/             # @fishing-work/draw-guess：React 19 + Vite + TypeScript 客戶端
+├── draw-guess/             # @fishing-work/draw-guess：React 19 + Vite + TypeScript 客戶端
+└── draw-contest/           # @fishing-work/draw-contest：第二款遊戲「繪圖比賽」的獨立客戶端（Epic 14；規格在 spec/draw-contest/，不引用 draw-guess/）
 ```
 
 | 模組 | 職責 | 不做什麼 |
@@ -22,7 +23,7 @@ fishing-work/
 | `server` | 房間與回合狀態機、筆跡中繼與歷史、猜題裁判、計分、靜態檔服務 | 不存資料庫、不渲染畫面 |
 | `draw-guess` | 畫面、輸入、Canvas 渲染、與 server 的 Socket 連線 | 不做遊戲判定（誰猜對、幾分，一律以 server 為準） |
 
-**多款遊戲的預留**：server 以 Socket.IO **namespace** 區分遊戲（`/draw-guess`、日後 `/xxx`），以 URL 路徑提供各客戶端（`/draw-guess/`、`/xxx/`），首頁 `/` 列出遊戲清單。每款遊戲一個客戶端模組。
+**多款遊戲的預留**：server 以 Socket.IO **namespace** 區分遊戲（`/draw-guess`、日後 `/xxx`），以 URL 路徑提供各客戶端（`/draw-guess/`、`/xxx/`），首頁 `/` 列出遊戲清單。每款遊戲一個客戶端模組。**Epic 14 起實際有兩款**：`/draw-guess`（本檔）、`/draw-contest`（`spec/draw-contest/architecture.md`）；`shared/` 以子路徑 `@fishing-work/shared/draw-contest` 匯出第二款的契約，根匯出不變；server 的房間／重連／暱稱邏輯在 `server/src/games/draw-contest/` **獨立複製**、不重構 draw-guess（舵手 2026-10-07 定案：共用部分僅約 150 行，重構的風險大於重複；第三款遊戲再評估抽共用）。
 
 ---
 
@@ -103,6 +104,7 @@ fishing-work/
 - **分享網址 log**：新增可選環境變數 `PUBLIC_URL`。有設就印它（事件 `server.lan`，`share=[PUBLIC_URL]`、`source: "PUBLIC_URL"`）；沒設且 `IN_CONTAINER=1` 時不列出容器內的 172.x 位址、也不印 localhost（容器埠不一定等於主機對外埠），改印事件 `server.lan.container`：「請用主機的區網 IP：http://<主機 IP>:<對外埠>/draw-guess/，或設定 PUBLIC_URL」。非容器、未設 `PUBLIC_URL` 時與舊版完全相同（事件 `server.lan`，欄位 `{ share, local }`，不帶 `source`）。
 - 映像實作（2026-09-29 龍骨）：runtime 以 `server/package.json` 產生只含 `express`、`socket.io` 的 package.json 搭配 repo lockfile 安裝（`socket.io-client` 是 draw-guess 的正式相依，`npm ci --omit=dev -w` 會多裝）；build 階段刪除專案自己的 `*.map`（內含 TS 原始碼）；`HEALTHCHECK --start-interval=2s` 需 Docker Engine 25 以上，舊版忽略該參數。`PUBLIC_URL`、`HOST_PORT` 可寫在根目錄 `.env`（compose 自動讀取；`.env` 不進 git、不進映像）。
 - 不含 HTTPS、不推 registry（在目標電腦上 build，避開 CPU 架構差異）；Cloudflare Tunnel 仍在主機上跑、指向主機的對外埠。
+- **Epic 14 繪圖比賽（舵手 2026-10-07 定案）**：映像多複製 `draw-contest/package.json`（build）與 `draw-contest/dist`（runtime），路徑規則不變；compose 加評分器環境變數 `JUDGE`（MVP 預設 `random`，Phase 3 起 Rex 定案預設 `ollama`；以 `spec/draw-contest/architecture.md` §3 的表為準）、`OLLAMA_URL`（容器內預設 `http://host.docker.internal:11434`）、`JUDGE_MODEL`、`extra_hosts: ["host.docker.internal:host-gateway"]`；**模型不進映像**，容器以 HTTP 呼叫主機的 Ollama，Ollama 掛掉退回 random、`/healthz` 不含 Ollama。變數說明以 `spec/draw-contest/architecture.md` §3 為準。server 的 `vitest.config.ts` 把測試環境固定為 `JUDGE=random`、`OLLAMA_URL=http://127.0.0.1:1`，draw-guess 的 e2e 測試不會探測本機 Ollama（Phase 3）。**分享網址 log**：`PUBLIC_URL` 語意不變（仍是我畫你猜的完整網址，Rex 既有 `.env` 不必改）；`shareLog` 由它的 origin 推出第二款網址，`server.lan` 事件加 `games: ["/draw-guess/", "/draw-contest/"]`，`share` 欄位不變、另加 `shareContest`；容器提示文案加一句「繪圖比賽為 /draw-contest/」；既有 `shareLog.test.ts` 9 例不得改動。
 
 ## 4. Socket 事件契約（namespace `/draw-guess`）
 
@@ -533,6 +535,7 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 | 日期 | 變更 | 原因 |
 |------|------|------|
+| 2026-10-07 | **Epic 14 繪圖比賽的共用層定案**（羅盤提案、舵手定案）：§1 加 `draw-contest/` 與兩款遊戲的分工（契約走 shared 子路徑、server 房間邏輯獨立複製）；§3「Docker 部署」加映像路徑、評分器環境變數、`PUBLIC_URL` 語意不變與 `shareLog` 的 `games`／`shareContest` | Rex 2026-10-07 放行繪圖比賽（羅盤 session） |
 | 2026-09-29 | **Epic 9 Docker 部署**：§3 新增「Docker 部署」（多階段映像、compose、`PUBLIC_URL`／`IN_CONTAINER` 分享網址 log）；Epic 8 語音輸入暫緩，契約未寫入 | Rex 2026-09-29：「撰寫 DOCKERFILE，我要換電腦部署」；麥克風暫緩 |
 | 2026-09-28 | **Epic 7 畫布背景色**：§4 `PALETTE` 加黑與膚色（10 色）、`DrawOp` 加 `background`；§5 驗證表與歷史正規化（只留最後一個、`clear` 保留、`undo` 不影響）；§6 畫布底色可換、工具列「背景色」按鈕 | Rex 2026-09-28：色塊加黑色與膚色 #FFECEA；改背景色按鈕把背景設成目前顏色 |
 | 2026-09-26 | **Epic 6 遊戲說明**：§7 `features/help/`、`ShellProps.help`、`DialogProps.body`／`'help'`、`ShellViews.help`、`uiStore.helpTopic`；契約與 server 不變 | Rex 2026-09-26：ppt「說明」分頁改成真的說明（如何切換偽裝、如何當畫師） |

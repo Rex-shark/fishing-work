@@ -6,19 +6,21 @@
   "workspaces": [
     "shared",
     "server",
-    "draw-guess"
+    "draw-guess",
+    "draw-contest"
   ],
   "engines": {
     "node": ">=22.12"
   },
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-guess\"",
-    "build": "npm run build -w @fishing-work/draw-guess && npm run build -w @fishing-work/server",
+    "dev:contest": "concurrently -k -n server,contest -c blue,green \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-contest\"",
+    "build": "npm run build -w @fishing-work/draw-guess && npm run build -w @fishing-work/draw-contest && npm run build -w @fishing-work/server",
     "start": "node server/dist/index.js",
     "tunnel": "cloudflared tunnel --url http://localhost:80",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces",
-    "lint": "npm run lint -w @fishing-work/draw-guess"
+    "lint": "npm run lint -w @fishing-work/draw-guess && npm run lint -w @fishing-work/draw-contest"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"
