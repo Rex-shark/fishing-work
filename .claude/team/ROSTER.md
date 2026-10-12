@@ -5,55 +5,33 @@
 
 ## 成員
 
-### 舵手（Helm）
+### 海圖（Chart）
 
 | 欄位 | 值 |
 |---|---|
-| 職責 | 專案負責人＋架構師：釐清需求、定技術方向、寫 `plan/` 與 `spec/`、做設計決策、派工給子代理或其他 session；**驗收交給 `acceptance-reviewer` 子代理**（Rex 2026-09-29），舵手依其報告定案與回寫文件；實作以派工為主，本人不寫業務程式 |
-| sessionId | local_be20d490-c7fe-468a-a892-a41dd0732c46 |
-| transcript | eb6d4668-b763-4f3e-9c0a-19cadba29ac4 |
-| 標題 | Helm |
+| 職責 | 本專案架構師、規格負責人：釐清需求、定技術方向、撰寫與維護 `spec/`、`plan/`、`DESIGN.md`，做設計決策與定案；實作以派工子代理為主，本人不寫業務程式；驗收交 `acceptance-reviewer` 子代理，依其報告定案與回寫文件。兩款遊戲（我畫你猜、繪圖比賽）的規格皆由本人負責 |
+| sessionId | local_eea512db-d749-4cbb-8053-4123acf05680 |
+| transcript | 28e07338-9a5a-40fe-801e-d2112b4b5fca |
+| 標題 | Chart |
 | 狀態 | 🔄 |
-| 登記 | 2026-09-24（本人自報，名字由 Rex 授權自取） |
+| 登記 | 2026-10-10（本人自報，名字由 Rex 授權自取；舊名冊為另一台電腦的 session，Rex 2026-10-10 指示全部移除） |
 
-### 龍骨（Keel）
+### 水手長（Bosun）
 
 | 欄位 | 值 |
 |---|---|
-| 職責 | 專案工程師：依 `plan/` 與 `spec/` 拆解任務、派工給子代理並驗收（對照驗收標準、跑測試、code review）；規格有疑義時找規格負責人舵手（Helm）討論，不自行改 spec 定案內容 |
-| sessionId | local_95948d47-fc7d-4709-93e3-463ca989694c |
-| transcript | 0c3090c9-73f5-4ab5-8a4b-eb90f6a3687c |
-| 標題 | Keel |
+| 職責 | 本專案工程師：負責分派工作給子代理（Rex 2026-10-10 指派）；依 `plan/` 與 `spec/` 拆解任務、派工並驗收子代理的產出（對照驗收標準、跑測試、code review）；規格有疑義或設計不可行時向規格負責人海圖（Chart）提出，不自行改 spec 定案內容 |
+| sessionId | local_d0a3fe4c-b2d1-461a-8a95-8fa049af0b28 |
+| transcript | e0eb9fa7-bb5a-4696-af83-b61d5dd09e35 |
+| 標題 | Bosun |
 | 狀態 | 🔄 |
-| 登記 | 2026-09-24（本人自報，名字由 Rex 授權自取） |
-
-### 羅盤（Compass）
-
-| 欄位 | 值 |
-|---|---|
-| 職責 | 第二款遊戲「繪圖比賽（draw-contest）」的負責人＋架構師：釐清需求、寫該遊戲的 `plan/` 與 `spec/`、做設計決策、派工給子代理；規則與舵手（Helm）相同（驗收交 `acceptance-reviewer`、本人不寫業務程式）；只管繪圖比賽，不動我畫你猜的規格；凡改動會影響平台共用層（`server/`、`shared/`、首頁、殼層）者，先與舵手溝通定案 |
-| sessionId | local_e575b297-0ed2-4b4a-b5b7-0b76060f2812 |
-| transcript | 2044ce9a-1862-46a0-a890-8ea6a11cba7c |
-| 標題 | Compass |
-| 狀態 | 🔄 |
-| 登記 | 2026-10-07（本人自報，名字由 Rex 授權自取） |
-
-### 帆（Sail）
-
-| 欄位 | 值 |
-|---|---|
-| 職責 | 第二款遊戲「繪圖比賽（draw-contest）」的專案工程師：接羅盤（Compass）的任務，依 `plan/` 與 `spec/` 拆解、派工給子代理並驗收（對照驗收標準、跑測試、code review）；與羅盤的關係如同龍骨與舵手——設計有矛盾或不可行時向羅盤提出糾正，不自行改 spec 定案內容；動到平台共用層（`server/`、`shared/`、首頁、殼層）的實作須羅盤已與舵手定案 |
-| sessionId | local_10496172-1efa-4039-85cc-6ca3795bcf46 |
-| transcript | d14a3e57-6575-42d9-a081-238b82eb004f |
-| 標題 | Sail |
-| 狀態 | 🔄 |
-| 登記 | 2026-10-07（本人自報，名字由 Rex 授權自取） |
+| 登記 | 2026-10-10（本人自報，名字由 Rex 授權自取） |
 
 ## 子代理（沒有 session 身分，由主 session 維護）
 
 | 定義檔 | 職責邊界 |
 |---|---|
-| [`.claude/agents/acceptance-reviewer.md`](../agents/acceptance-reviewer.md) | 舵手的獨立驗收：重跑四項指令、比對契約、跑與補 `user/protocol/` 協定測試、內建瀏覽器實測、回報證據；不改產品程式碼與規格文件、不 commit（Rex 2026-09-29 建立） |
+| [`.claude/agents/acceptance-reviewer.md`](../agents/acceptance-reviewer.md) | 架構師（海圖）派出的獨立驗收：重跑四項指令、比對契約、跑與補 `user/protocol/` 協定測試、內建瀏覽器實測、回報證據；不改產品程式碼與規格文件、不 commit（Rex 2026-09-29 建立） |
 
 > 派工時一律在 prompt 註明：「你是 <派工者名字> 派出的子代理，沒有團隊身分：不要登記名冊、不要跨 session 傳訊、不要自稱名冊裡的名字；需要聯絡別的 session 就回報主對話。」
 
