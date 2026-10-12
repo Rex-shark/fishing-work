@@ -13,10 +13,10 @@
 //
 // 用法（專案根目錄）：
 //   node user/mock/systemone.mjs                                   # 預設 127.0.0.1:11435
-//   MOCK_PORT=11435 MOCK_DELAY_MS=800 MOCK_MODEL=clef:27b-q4_k_m node user/mock/systemone.mjs
+//   MOCK_PORT=11435 MOCK_DELAY_MS=800 MOCK_MODEL=clef:27b-nvfp4 node user/mock/systemone.mjs
 //   JUDGE=ollama OLLAMA_URL=http://127.0.0.1:11435 PORT=3211 node server/dist/index.js   # server 指向假 Ollama
 // 環境變數：MOCK_PORT（預設 11435）、MOCK_HOST（預設 127.0.0.1）、MOCK_DELAY_MS（每次 systemone 回應前的延遲，預設 0）、
-//           MOCK_MODEL（預設 clef:27b-q4_k_m）。
+//           MOCK_MODEL（預設 clef:27b-nvfp4）。
 // 也可在程式內 import { startMockOllama } 啟動（測試用，回傳 { url, close, requests }）。
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
@@ -108,7 +108,7 @@ function send(res, status, obj) {
  * @returns {Promise<{ url: string, port: number, close: () => Promise<void>, requests: Array<{ method: string, path: string, body?: unknown }> }>}
  */
 export function startMockOllama(options = {}) {
-  const model = options.model ?? 'clef:27b-q4_k_m';
+  const model = options.model ?? 'clef:27b-nvfp4';
   const delayMs = options.delayMs ?? 0;
   const host = options.host ?? '127.0.0.1';
   const requests = [];
@@ -195,7 +195,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     port,
     host: process.env.MOCK_HOST ?? '127.0.0.1',
     delayMs,
-    model: process.env.MOCK_MODEL ?? 'clef:27b-q4_k_m',
+    model: process.env.MOCK_MODEL ?? 'clef:27b-nvfp4',
   });
   console.log(`假 Ollama 已啟動：${mock.url}（delay ${delayMs} ms）`);
   const stop = () => mock.close().then(() => process.exit(0));

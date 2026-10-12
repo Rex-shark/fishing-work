@@ -196,7 +196,7 @@ describe('§3 評分器環境變數', () => {
     expect(readJudgeConfig({}, () => {})).toEqual({
       judge: 'ollama',
       ollamaUrl: 'http://127.0.0.1:11434',
-      model: 'clef:27b-q4_k_m',
+      model: 'clef:27b-nvfp4',
       imageWidth: 640,
       timeoutMs: 30_000,
       fakeDelayMs: 1500,
