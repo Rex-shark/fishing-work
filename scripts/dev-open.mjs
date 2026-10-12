@@ -1,4 +1,4 @@
-// npm run dev 的第四個程序（spec/architecture.md §3「開發」）：
+// npm run dev 的最後一個程序（排在 server 與各遊戲的 Vite 之後；spec/architecture.md §3「開發」、spec/song-guess/architecture.md §3）：
 // 等 http://localhost/healthz（經 draw-guess 的 Vite 轉到 server :5173）回 200，才開瀏覽器到遊戲清單 http://localhost/。
 // 原因：Vite 不到 0.1 秒就就緒，server（tsx）要約 1 秒；若用 Vite 的 server.open，瀏覽器會先開到 proxy error（2026-10-12 實測）。
 // 環境變數：DEV_OPEN_URL 覆寫要開的網址；BROWSER=none 不開（測試用）；BROWSER 以 .js 結尾時改為 node <該檔> <網址>（與 Vite 相同慣例）。

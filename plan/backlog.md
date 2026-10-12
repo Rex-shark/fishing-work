@@ -18,6 +18,7 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
+| ✅ | Epic 16：猜歌 MVP（song-guess） | 2026-10-12 ~ 2026-10-12 | [song-guess-mvp.md](song-guess-mvp.md)：第三款遊戲、獨立前端 `song-guess/`（Meet 偽裝）；出題者填歌手（必填、畫面顯示），server 從 Apple iTunes Search API（免金鑰）抽 5 首 30 秒試聽，各客戶端同步播、聊天室打字猜歌名，每首播到底、猜對不提早結束，第 5 首後本局排名；規格 `spec/song-guess/`。Phase 1–3 水手長實作、acceptance-reviewer 驗收通過（含真 iTunes 兩局、開發模式五程序）、Rex 實機通過；預設音量 15 |
 | ✅ | Epic 15：繪圖比賽 AI 評語（メスガキ） | 2026-10-12 ~ 2026-10-12 | [contest-commentary.md](contest-commentary.md)：揭曉卡片每張一句評語，本機 Ollama `gemma4:26b-mlx-bf16`、雌小鬼人格自由發揮（只限繁中台灣用語、一句 40 字內）、`think: false`、預設開（`COMMENT=off` 可關）；評語不擋揭曉、`contest:comment` 補送；順帶移除評分前縮圖與 `pngjs`（Clef nvfp4 MLX 原圖 2.4 秒）。Phase 1–4 水手長實作、acceptance-reviewer 兩次驗收通過、Rex 實戰目視通過；順帶揭曉列帶題目、評語不截斷、兩款送出中焦點修正 |
 | ✅ | Epic 10：首頁紙張質感（需求測試） | 2026-09-29 ~ 2026-10-07 | [home-paper.md](home-paper.md)：首頁改成暖白紙底＋紙紋（顆粒、纖維、紙漿斑駁，CSS＋內嵌 SVG）＋紙卡；只動首頁；試做給 Rex 看效果再決定採用或還原；2026-10-07 Rex 採用、acceptance-reviewer 驗收通過 |
 | ✅ | Epic 13：試算表偽裝主題（Excel 風格） | 2026-10-06 ~ 2026-10-07 | [excel-theme.md](excel-theme.md)：第四套殼層 `excel`——A–C 欄人員分數表＝玩家、E 欄起浮動「圖片 1」＝畫布、「圖片格式」分頁＝工具列、右「註解」窗格＝聊天、「插入圖片」＝我來畫、出題＝「替代文字」；ppt／excel 共用 `shells/office/`。Phase 1、2 ✅（2026-10-06：工具列斷點 500px、三殼層截圖位元組不變、四主題混玩通過），待驗收；舵手定案（窄版圖片移到表格下、斷線字 `--fg-muted`、首頁卡片 2×2）已收尾；2026-10-06 acceptance-reviewer 驗收通過；2026-10-07 Rex 目視通過 |

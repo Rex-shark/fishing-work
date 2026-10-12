@@ -16,7 +16,7 @@
 
 特殊需求：首頁為不偽裝的柔和紙張質感 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）、PowerPoint、Google Meet 視訊會議或 Excel 試算表，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布預設黑底白筆不隨主題，畫師可換背景色並同步給所有人。
 
-目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」（`plan/meet-theme.md`）、Epic 6「遊戲說明」（`plan/help-topics.md`）、Epic 7「畫布背景色與新色塊」（`plan/canvas-background.md`）**全部完成**（舵手驗收、Rex 目視 2026-09-29 通過）。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。**Epic 14「繪圖比賽 MVP」**（第二款遊戲 `draw-contest/`，羅盤 × 帆；`plan/draw-contest-mvp.md`、`spec/draw-contest/`）**完成**（2026-10-09）：驗收子代理三次驗收通過、Rex 真模型目視與區網實機通過；評分器預設 `JUDGE=ollama`（Clef 決策模型，本機 Ollama；連不上自動退回隨機）。**Epic 15「繪圖比賽 AI 評語（メスガキ）」**（`plan/contest-commentary.md`）**完成**（2026-10-12）：gemma4 經 Ollama 產一句評語放揭曉卡片、第一名稱讚版、Clef 原圖直送不縮圖；兩次驗收通過、Rex 實戰目視通過。進度見 [plan/backlog.md](plan/backlog.md)。
+目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」（`plan/meet-theme.md`）、Epic 6「遊戲說明」（`plan/help-topics.md`）、Epic 7「畫布背景色與新色塊」（`plan/canvas-background.md`）**全部完成**（舵手驗收、Rex 目視 2026-09-29 通過）。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。**Epic 14「繪圖比賽 MVP」**（第二款遊戲 `draw-contest/`，羅盤 × 帆；`plan/draw-contest-mvp.md`、`spec/draw-contest/`）**完成**（2026-10-09）：驗收子代理三次驗收通過、Rex 真模型目視與區網實機通過；評分器預設 `JUDGE=ollama`（Clef 決策模型，本機 Ollama；連不上自動退回隨機）。**Epic 15「繪圖比賽 AI 評語（メスガキ）」**（`plan/contest-commentary.md`）**完成**（2026-10-12）：gemma4 經 Ollama 產一句評語放揭曉卡片、第一名稱讚版、Clef 原圖直送不縮圖；兩次驗收通過、Rex 實戰目視通過。**Epic 16「猜歌 MVP」**（第三款遊戲 `song-guess/`，Meet 偽裝；`plan/song-guess-mvp.md`、`spec/song-guess/`）**完成**（2026-10-12）：出題者填歌手、server 從 Apple iTunes Search API（免金鑰）抽 5 首 30 秒試聽、各客戶端同步播、聊天室打字猜歌名；驗收通過、Rex 實機通過。進度見 [plan/backlog.md](plan/backlog.md)。
 
 ---
 
@@ -28,15 +28,18 @@ fishing-work/
 ├── DESIGN.md               # 視覺設計指南：Dark+ 色彩 token、IDE 殼層尺寸、元件規範（做畫面前必讀）
 ├── draw-guess/             # 我畫你猜客戶端：React 19 + Vite + TypeScript + Tailwind v4
 ├── draw-contest/           # 繪圖比賽客戶端（Epic 14，獨立前端、簡報偽裝）：React 19 + Vite + TypeScript + Tailwind v4
+├── song-guess/             # 猜歌客戶端（Epic 16，獨立前端、Meet 偽裝）：React 19 + Vite + TypeScript + Tailwind v4；iTunes 試聽、聊天室猜歌名
 ├── server/                 # Node + TypeScript + Socket.IO：房間、回合、筆跡中繼、猜題裁判，並提供各遊戲靜態檔
 ├── shared/                 # 前後端共用的事件契約、常數、純函式（answer / text / nickname）
-├── tsconfig.base.json      # 三模組共用 TS 設定
+├── tsconfig.base.json      # 五個 workspace 共用 TS 設定
 ├── Dockerfile              # 多階段映像（node:24-slim、非 root、healthcheck），Epic 9
 ├── docker-compose.yml      # 換電腦部署：docker compose up -d --build（HOST_PORT、PUBLIC_URL 可寫在 .env）
 ├── .dockerignore
 ├── plan/                   # 開發計畫（動態）：backlog 索引、各 Epic 詳細計畫、踩雷紀錄
 ├── spec/                   # 規範文件（穩定）：overview.md 產品與規則、architecture.md 架構與事件契約
 ├── user/
+│   ├── mock/               # 假 Ollama（systemone.mjs）、假 iTunes（itunes.mjs）：協定測試與離線開發用
+│   ├── protocol/           # 協定測試（只依 spec 打 Socket；每檔用全新 server、隔離埠）
 │   ├── http/               # IDEA HTTP Client 測試集合（本專案以 WebSocket 為主，視需要使用）
 │   └── sql/                # 手動 SQL（本專案無資料庫，暫不使用）
 └── .claude/
@@ -65,13 +68,13 @@ fishing-work/
 一律在**專案根目錄**執行（npm workspaces）：
 
 ```bash
-npm install                 # 安裝三個 workspace 的相依
-npm run dev                 # 一次啟動 server（:5173，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:5174），並自動開瀏覽器到 http://localhost/（遊戲清單；兩款遊戲都是 HMR）
+npm install                 # 安裝五個 workspace 的相依（shared、server、draw-guess、draw-contest、song-guess）
+npm run dev                 # 一次啟動 server（:5173，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:5174）、猜歌 Vite（:5175），並自動開瀏覽器到 http://localhost/（遊戲清單；三款遊戲都是 HMR）
 npm run build               # 建置 draw-guess/dist/ 與 server/dist/index.js
 npm start                   # 正式：node server/dist/index.js（PORT 預設 80、HOST 預設 0.0.0.0；公司區網只放行標準埠）
-npm run typecheck           # 三個 workspace 的 tsc --noEmit
+npm run typecheck           # 五個 workspace 的 tsc --noEmit
 npm test                    # Vitest（shared、server）
-npm run lint                # ESLint（目前只涵蓋 draw-guess）
+npm run lint                # ESLint（三個客戶端：draw-guess、draw-contest、song-guess；server／shared 無 lint，見 improvements）
 npm run tunnel              # Cloudflare 快速通道（需先 brew install cloudflared），指向 :80，印出 https://xxx.trycloudflare.com
 docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建置映像並在背景啟動，:80；停止用 docker compose down
 ```
@@ -80,7 +83,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 ### 區網分享（同事連線）
 
-`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列兩款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3100 npm start` 避開 80（5173／5174 是開發模式的內部埠，也避開）。詳見 `spec/architecture.md` §3。
+`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列三款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3100 npm start` 避開 80（5173／5174／5175 是開發模式的內部埠，也避開）。詳見 `spec/architecture.md` §3。
 
 ### 外網分享（Cloudflare Tunnel，備用）
 
@@ -92,6 +95,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 |------|------|
 | `http://localhost/` | 遊戲清單（正式建置，:80） |
 | `http://localhost/draw-guess/` | 我畫你猜（正式建置）；`npm run dev` 時同一網址是 Vite 開發版（HMR，`/socket.io` proxy 到 :5173） |
+| `http://localhost/draw-contest/`、`http://localhost/song-guess/` | 繪圖比賽、猜歌（正式建置）；`npm run dev` 時同樣是各自 Vite 的開發版（經 :80 轉發） |
 | `http://localhost/healthz` | 健康檢查 |
 
 ---
@@ -102,6 +106,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 |------|------|
 | [spec/overview.md](spec/overview.md) | 產品定位、v1 遊戲規則、範圍內外 |
 | [spec/architecture.md](spec/architecture.md) | 模組佈局、Socket 事件契約（型別放 `shared/`）、回合狀態機、驗證指令。**實作唯一契約，改動需架構師（海圖）定案** |
+| [spec/song-guess/](spec/song-guess/) | **猜歌**（Epic 16）：`overview.md` 規則、`architecture.md` 契約／狀態機／iTunes 題庫／答案判定（改動需架構師定案）、`design.md` Meet 偽裝對照 |
 | [spec/draw-contest/](spec/draw-contest/) | **繪圖比賽**（Epic 14）：`overview.md` 規則、`architecture.md` 契約／狀態機／評分器／部署（改動需架構師（海圖）定案）、`design.md` 簡報偽裝的畫面對照 |
 | [plan/draw-guess-mvp.md](plan/draw-guess-mvp.md) | Epic 1 任務拆解與派工規範 |
 | [plan/chat-image.md](plan/chat-image.md) | Epic 2 聊天室圖片（拖曳上傳、即時中繼、不保留） |
@@ -117,6 +122,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | [plan/round-time.md](plan/round-time.md) | Epic 12 作畫時間改 2 分鐘（`ROUND_SECONDS` 唯一來源；改時間只動它＋說明文字） |
 | [plan/excel-theme.md](plan/excel-theme.md) | Epic 13 試算表偽裝主題（Excel 風格的第四套殼層 `excel`；DESIGN §17） |
 | [plan/draw-contest-mvp.md](plan/draw-contest-mvp.md) | Epic 14 繪圖比賽 MVP（第二款遊戲：出題→同時畫→評分器打分→投影片瀏覽揭曉；MVP 隨機評分，Phase 3 接 Clef／Ollama） |
+| [plan/song-guess-mvp.md](plan/song-guess-mvp.md) | Epic 16 猜歌 MVP（第三款遊戲：出題者填歌手 → server 從 iTunes 抽 5 首試聽 → 同步播、打字猜 → 逐首揭曉 → 本局排名；Meet 偽裝） |
 | [plan/contest-commentary.md](plan/contest-commentary.md) | Epic 15 繪圖比賽 AI 評語（揭曉卡片每張一句メスガキ評語：gemma4 經 Ollama `/api/chat`、`think: false`、自由發揮；評語不擋揭曉；順帶移除評分前縮圖） |
 
 ---

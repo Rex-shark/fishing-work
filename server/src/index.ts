@@ -1,5 +1,6 @@
 import { DRAW_GUESS_NAMESPACE } from '@fishing-work/shared';
 import { DRAW_CONTEST_NAMESPACE } from '@fishing-work/shared/draw-contest';
+import { SONG_GUESS_NAMESPACE } from '@fishing-work/shared/song-guess';
 import { createApp } from './app';
 import { log } from './lib/log';
 import { listenErrorHint } from './lib/network';
@@ -26,7 +27,7 @@ try {
   });
   process.exit(1);
 }
-log.info('server.listen', { host: HOST, port, games: [DRAW_GUESS_NAMESPACE, DRAW_CONTEST_NAMESPACE] });
+log.info('server.listen', { host: HOST, port, games: [DRAW_GUESS_NAMESPACE, DRAW_CONTEST_NAMESPACE, SONG_GUESS_NAMESPACE] });
 
 // 分享網址（spec §3，2026-10-12 海圖定案）：share 先印站台根網址（遊戲清單），games 再列每款遊戲的完整網址；
 // PUBLIC_URL（站台根網址，只取 origin，舊的 /draw-guess/ 值相容）優先；容器內（IN_CONTAINER=1）不印 172.x 而改印提示（§3「Docker 部署」）
@@ -36,6 +37,7 @@ const share = shareLog({
   games: [
     { key: 'draw-guess', path: '/draw-guess/' },
     { key: 'draw-contest', path: '/draw-contest/' },
+    { key: 'song-guess', path: '/song-guess/' },
   ],
   env: process.env,
 });

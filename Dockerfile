@@ -2,7 +2,7 @@
 # fishing-work 部署映像（plan/docker-deploy.md、spec/architecture.md §3「Docker 部署」）
 # 建置：docker build -t fishing-work .   執行：docker run -d -p 80:80 fishing-work
 
-# ---------- build：安裝全部相依並建置三個 workspace ----------
+# ---------- build：安裝全部相依並建置所有 workspace ----------
 FROM node:24-slim AS build
 WORKDIR /app
 # 先只複製 package*.json，原始碼變動時可沿用 npm ci 這層快取
@@ -11,11 +11,12 @@ COPY shared/package.json shared/
 COPY server/package.json server/
 COPY draw-guess/package.json draw-guess/
 COPY draw-contest/package.json draw-contest/
+COPY song-guess/package.json song-guess/
 RUN npm ci --no-audit --no-fund
 COPY . .
-# 產出 draw-guess/dist、draw-contest/dist 與 server/dist/index.js（shared 由 tsup 打包進 server）
+# 產出 draw-guess/dist、draw-contest/dist、song-guess/dist 與 server/dist/index.js（shared 由 tsup 打包進 server）
 RUN npm run build \
- && find server/dist draw-guess/dist draw-contest/dist -name '*.map' -delete
+ && find server/dist draw-guess/dist draw-contest/dist song-guess/dist -name '*.map' -delete
 
 # ---------- deps：只裝 server 的正式相依（express、socket.io） ----------
 # 不用 `npm ci --omit=dev -w @fishing-work/server`：server 的 devDependency socket.io-client
@@ -37,13 +38,14 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     IN_CONTAINER=1
 WORKDIR /app
-# 目錄結構與 repo 相同：server/src/static.ts 以 server/.. 找 draw-guess/dist
+# 目錄結構與 repo 相同：server/src/static.ts 以 server/.. 找各遊戲的 <workspace>/dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/public ./server/public
 COPY --from=build /app/draw-guess/dist ./draw-guess/dist
 COPY --from=build /app/draw-contest/dist ./draw-contest/dist
+COPY --from=build /app/song-guess/dist ./song-guess/dist
 # 非 root 執行；Docker 20.10 起容器預設允許非 root 綁 1024 以下的埠
 USER node
 EXPOSE 80

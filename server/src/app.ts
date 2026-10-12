@@ -6,12 +6,16 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { DRAW_GUESS_NAMESPACE, MAX_IMAGE_BYTES } from '@fishing-work/shared';
 import { DRAW_CONTEST_NAMESPACE } from '@fishing-work/shared/draw-contest';
+import { SONG_GUESS_NAMESPACE } from '@fishing-work/shared/song-guess';
 import type { CommentSetup } from './games/draw-contest/commentary/index';
 import type { JudgeSetup } from './games/draw-contest/judge/index';
 import { registerDrawContest, type DrawContestNamespace } from './games/draw-contest/register';
 import type { Room as DrawContestRoom, RoomDurations as DrawContestDurations } from './games/draw-contest/room';
 import { registerDrawGuess, type DrawGuessNamespace, type PendingBytesOf } from './games/draw-guess/register';
 import type { Clock, Room, RoomDurations } from './games/draw-guess/room';
+import type { SongSearcher } from './games/song-guess/itunes';
+import { registerSongGuess, type SongGuessNamespace } from './games/song-guess/register';
+import type { Room as SongGuessRoom, RoomDurations as SongGuessDurations } from './games/song-guess/room';
 import { mountStatic } from './static';
 
 export interface AppOptions {
@@ -33,6 +37,12 @@ export interface AppOptions {
   judge?: JudgeSetup;
   /** 繪圖比賽：注入評語器（測試用；預設依環境變數 COMMENT 等建立） */
   comment?: CommentSetup;
+  /** 猜歌：覆寫計時長度（測試用；正式環境用 shared/song-guess 常數，播放上限另可由 SONG_PREVIEW_CAP_MS 覆寫） */
+  songDurations?: Partial<SongGuessDurations>;
+  /** 猜歌：注入歌手搜尋器（測試用；預設依環境變數 ITUNES_URL 等建立帶快取的 iTunes 客戶端） */
+  songSearch?: SongSearcher;
+  /** 猜歌：注入抽歌用的亂數（測試用；預設 Math.random） */
+  songRandom?: () => number;
 }
 
 /** spec §3：Socket.IO 心跳間隔 */
@@ -51,6 +61,7 @@ export interface App {
   io: Server;
   drawGuessRoom: Room;
   drawContestRoom: DrawContestRoom;
+  songGuessRoom: SongGuessRoom;
   /** 開始監聽，回傳實際綁定的位址與埠 */
   listen(): Promise<{ host: string; port: number }>;
   /** 斷開所有連線、關閉 http server、清掉房間計時器 */
@@ -90,11 +101,20 @@ export function createApp(options: AppOptions = {}): App {
     comment: options.comment,
   });
 
+  // 猜歌（Epic 16）：只有文字事件，不需調整 maxHttpBufferSize；試聽音訊由各客戶端直接向 Apple 取，server 不轉送
+  const songGuessRoom = registerSongGuess(io.of(SONG_GUESS_NAMESPACE) as SongGuessNamespace, {
+    clock: options.clock,
+    durations: options.songDurations,
+    search: options.songSearch,
+    random: options.songRandom,
+  });
+
   return {
     httpServer,
     io,
     drawGuessRoom,
     drawContestRoom,
+    songGuessRoom,
     listen: () =>
       new Promise((resolve, reject) => {
         httpServer.once('error', reject);
@@ -108,6 +128,7 @@ export function createApp(options: AppOptions = {}): App {
       new Promise((resolve) => {
         drawGuessRoom.dispose();
         drawContestRoom.dispose();
+        songGuessRoom.dispose();
         // io.close() 會斷開所有 socket 並關閉底層 http server
         io.close(() => resolve());
       }),

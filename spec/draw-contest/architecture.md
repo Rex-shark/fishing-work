@@ -38,7 +38,7 @@ fishing-work/
 
 ## 2. 技術棧
 
-與平台相同（[../architecture.md](../architecture.md) §2）。客戶端 `draw-contest/` 的 `package.json`、`tsconfig`、`eslint.config.js`、`vite.config.ts` 以 `draw-guess/` 為範本；Vite `base: '/draw-contest/'`，**dev server 綁 5174**（80 已被 draw-guess 的 dev server 占用；開發只在 Rex 本機，不需區網；2026-10-12 Rex：內部埠改 5173／5174，不用 3000／3001），`/socket.io` proxy 到 `:5173`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:5173`、**`/draw-guess`** proxy（含 ws）到 draw-guess 的 Vite `:80`（Vite 對 base 以外的根路徑會 302 到 `/draw-contest/`；加了之後直接開 `http://localhost:5174/` 也是遊戲清單；與 draw-guess 的 Vite 對稱，Rex 2026-10-12 要求、海圖定案）。
+與平台相同（[../architecture.md](../architecture.md) §2）。客戶端 `draw-contest/` 的 `package.json`、`tsconfig`、`eslint.config.js`、`vite.config.ts` 以 `draw-guess/` 為範本；Vite `base: '/draw-contest/'`，**dev server 綁 5174**（80 已被 draw-guess 的 dev server 占用；開發只在 Rex 本機，不需區網；2026-10-12 Rex：內部埠改 5173／5174，不用 3000／3001），`/socket.io` proxy 到 `:5173`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:5173`、**`/draw-guess`** proxy（含 ws）到 draw-guess 的 Vite `:80`、**`/song-guess`** → `:5175`（Epic 16 起）（Vite 對 base 以外的根路徑會 302 到 `/draw-contest/`；加了之後直接開 `http://localhost:5174/` 也是遊戲清單；與 draw-guess 的 Vite 對稱，Rex 2026-10-12 要求、海圖定案）。
 
 ## 3. 執行拓樸與部署
 

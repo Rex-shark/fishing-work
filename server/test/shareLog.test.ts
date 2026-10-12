@@ -32,6 +32,12 @@ const base = { host: '0.0.0.0', port: 80, games };
 const CONTAINER_HINT =
   '請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；我畫你猜 /draw-guess/、繪圖比賽 /draw-contest/），或設定 PUBLIC_URL';
 
+// Epic 16：index.ts 實際傳入的三款（順序＝遊戲清單頁的順序）。上面的 games／base 維持兩款，既有案例的期望值不動
+const games3 = [...games, { key: 'song-guess', path: '/song-guess/' }];
+const base3 = { host: '0.0.0.0', port: 80, games: games3 };
+const CONTAINER_HINT_3 =
+  '請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；我畫你猜 /draw-guess/、繪圖比賽 /draw-contest/、猜歌 /song-guess/），或設定 PUBLIC_URL';
+
 describe('分享網址 log（spec §3 區網可達、Docker 部署；2026-10-12 改印遊戲清單）', () => {
   it('非容器、沒設 PUBLIC_URL：share 為每個區網 IP 的根網址，local 為 localhost 根網址，games 列兩款完整網址', () => {
     const out = shareLog({ ...base, env: {}, ifaces: lan });
@@ -177,10 +183,11 @@ describe('分享網址 log 的純函式', () => {
     expect(gamesField(['http://192.168.1.23/'], [])).toEqual({});
   });
 
-  it('遊戲名稱對照：draw-guess → 我畫你猜、draw-contest → 繪圖比賽；未知 key 退回 key', () => {
-    expect(GAME_LABELS).toEqual({ 'draw-guess': '我畫你猜', 'draw-contest': '繪圖比賽' });
+  it('遊戲名稱對照：draw-guess → 我畫你猜、draw-contest → 繪圖比賽、song-guess → 猜歌；未知 key 退回 key', () => {
+    expect(GAME_LABELS).toEqual({ 'draw-guess': '我畫你猜', 'draw-contest': '繪圖比賽', 'song-guess': '猜歌' });
     expect(gameLabel('draw-guess')).toBe('我畫你猜');
     expect(gameLabel('draw-contest')).toBe('繪圖比賽');
+    expect(gameLabel('song-guess')).toBe('猜歌');
     expect(gameLabel('new-game')).toBe('new-game');
   });
 
@@ -190,5 +197,71 @@ describe('分享網址 log 的純函式', () => {
       '請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；繪圖比賽 /draw-contest/、我畫你猜 /draw-guess/），或設定 PUBLIC_URL',
     );
     expect(containerHint([])).toBe('請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單），或設定 PUBLIC_URL');
+  });
+});
+
+describe('分享網址 log：三款遊戲（Epic 16 猜歌，index.ts 傳入的清單）', () => {
+  it('非容器、沒設 PUBLIC_URL：games 依序列三款完整網址，share／local 仍是根網址', () => {
+    const out = shareLog({ ...base3, env: {}, ifaces: lan });
+    expect(out).toEqual({
+      level: 'info',
+      event: 'server.lan',
+      fields: {
+        share: ['http://192.168.1.23/'],
+        local: 'http://localhost/',
+        games: {
+          'draw-guess': ['http://192.168.1.23/draw-guess/'],
+          'draw-contest': ['http://192.168.1.23/draw-contest/'],
+          'song-guess': ['http://192.168.1.23/song-guess/'],
+        },
+      },
+    });
+    expect(Object.keys(out.fields)).toEqual(['share', 'local', 'games']);
+    expect(Object.keys(out.fields.games as object)).toEqual(['draw-guess', 'draw-contest', 'song-guess']);
+  });
+
+  it('非 80 埠、多個區網 IP：song-guess 逐一對應每個 origin、保留埠號', () => {
+    const two = { ...lan, en1: [v4('10.0.0.8')] };
+    const out = shareLog({ ...base3, port: 8080, env: {}, ifaces: two });
+    expect((out.fields.games as Record<string, string[]>)['song-guess']).toEqual([
+      'http://192.168.1.23:8080/song-guess/',
+      'http://10.0.0.8:8080/song-guess/',
+    ]);
+  });
+
+  it('容器內沒設 PUBLIC_URL：提示文案多一款「猜歌 /song-guess/」，仍不印 172.x', () => {
+    const out = shareLog({ ...base3, env: { IN_CONTAINER: '1' }, ifaces: docker });
+    expect(out).toEqual({ level: 'info', event: 'server.lan.container', fields: { hint: CONTAINER_HINT_3 } });
+    expect(containerHint(games3)).toBe(CONTAINER_HINT_3);
+    expect(JSON.stringify(out)).not.toContain('172.');
+  });
+
+  it('容器內有設 PUBLIC_URL：三款網址由同一 origin 推出，不印 local', () => {
+    const out = shareLog({
+      ...base3,
+      env: { IN_CONTAINER: '1', PUBLIC_URL: 'http://192.168.1.50:8080/' },
+      ifaces: docker,
+    });
+    expect(out.fields).toEqual({
+      share: ['http://192.168.1.50:8080/'],
+      games: {
+        'draw-guess': ['http://192.168.1.50:8080/draw-guess/'],
+        'draw-contest': ['http://192.168.1.50:8080/draw-contest/'],
+        'song-guess': ['http://192.168.1.50:8080/song-guess/'],
+      },
+      source: 'PUBLIC_URL',
+    });
+    expect(Object.keys(out.fields)).toEqual(['share', 'games', 'source']);
+  });
+
+  it('PUBLIC_URL 不是合法網址：三個鍵都在、各為空陣列', () => {
+    const out = shareLog({ ...base3, env: { PUBLIC_URL: '192.168.1.50/' }, ifaces: lan });
+    expect(out.fields.games).toEqual({ 'draw-guess': [], 'draw-contest': [], 'song-guess': [] });
+  });
+
+  it('找不到區網 IP：server.lan.none 不帶 games（與兩款時相同）', () => {
+    const out = shareLog({ ...base3, env: {}, ifaces: { lo0: [v4('127.0.0.1', true)] } });
+    expect(out.event).toBe('server.lan.none');
+    expect(out.fields).not.toHaveProperty('games');
   });
 });

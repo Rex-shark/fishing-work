@@ -10,11 +10,12 @@
 ```
 fishing-work/
 ├── package.json            # npm workspaces 根：dev / build / start / typecheck / test / lint 一鍵指令
-├── tsconfig.base.json      # 三個模組共用的 TS 設定（strict、moduleResolution: bundler、verbatimModuleSyntax）
+├── tsconfig.base.json      # 五個 workspace 共用的 TS 設定（strict、moduleResolution: bundler、verbatimModuleSyntax）
 ├── shared/                 # @fishing-work/shared：事件契約 events.ts、constants.ts、純函式 answer.ts / text.ts / nickname.ts
 ├── server/                 # @fishing-work/server：Node + TypeScript + Socket.IO；提供各遊戲靜態檔
 ├── draw-guess/             # @fishing-work/draw-guess：React 19 + Vite + TypeScript 客戶端
-└── draw-contest/           # @fishing-work/draw-contest：第二款遊戲「繪圖比賽」的獨立客戶端（Epic 14；規格在 spec/draw-contest/，不引用 draw-guess/）
+├── draw-contest/           # @fishing-work/draw-contest：第二款遊戲「繪圖比賽」的獨立客戶端（Epic 14；規格在 spec/draw-contest/，不引用 draw-guess/）
+└── song-guess/             # @fishing-work/song-guess：第三款遊戲「猜歌」的獨立客戶端（Epic 16；規格在 spec/song-guess/；server 房間邏輯 server/src/games/song-guess/、契約 shared/src/song-guess/）
 ```
 
 | 模組 | 職責 | 不做什麼 |
@@ -33,7 +34,7 @@ fishing-work/
 |----|------|------------|
 | 執行環境 | Node.js | ≥ 22.12（Rex 本機 25.8） |
 | 套件管理 | npm workspaces | 根目錄一個 lockfile |
-| 語言 | TypeScript **`~6.0.3`** | 三個模組皆 `strict: true`，繼承 `tsconfig.base.json`。**不可升 7.x**：typescript-eslint 8.70 要求 `<6.1.0`（2026-09-24 Phase 0 踩雷） |
+| 語言 | TypeScript **`~6.0.3`** | 五個 workspace 皆 `strict: true`，繼承 `tsconfig.base.json`。**不可升 7.x**：typescript-eslint 8.70 要求 `<6.1.0`（2026-09-24 Phase 0 踩雷） |
 | 後端 HTTP | Express 5 | 只用來提供靜態檔與 `/healthz` |
 | 即時通訊 | Socket.IO 4（server）/ socket.io-client 4（client） | 使用型別化事件（`Server<ClientToServerEvents, ServerToClientEvents>`） |
 | 後端開發 / 建置 | `tsx watch`（開發）、`tsup`（建置成單一 `dist/index.js`） | tsup 以 esbuild 打包；`shared` 的 `exports` 指向 `.ts` 原始碼，因此 tsup 必須設 `noExternal: ['@fishing-work/shared']` |
@@ -57,13 +58,14 @@ fishing-work/
                                       ├─ /              proxy → server :5173（遊戲清單 server/public/index.html）
                                       ├─ /draw-guess/*  本 Vite（HMR）
                                       ├─ /draw-contest  proxy → Vite dev server（draw-contest，綁 :5174，HMR）
+                                      ├─ /song-guess    proxy → Vite dev server（song-guess，綁 :5175，HMR）
                                       ├─ /socket.io     proxy（ws）→ server :5173
                                       └─ /healthz       proxy → server :5173
                                  server（tsx watch，dev script 明確帶 PORT=5173；只當 proxy 目標，同事不直連）
 ```
 
 - `draw-guess/vite.config.ts`：`base: '/draw-guess/'`、**`server.port: 80`、`server.strictPort: true`**（公司區網只放行標準埠，5173 會被擋；Rex 2026-09-24 實測）、`server.host: true`（區網同事也能連 dev server）、**`server.allowedHosts: ['.trycloudflare.com', '.local']`**（Vite 預設只接受 localhost 與 IP 的 Host 標頭，經 tunnel 或 mDNS 名稱連 dev 會被「Blocked request」擋下；前綴點＝含子網域；具名通道用自有網域時要再加該網域；2026-09-24 Rex 實測發現、龍骨修正）、`server.proxy['/socket.io'] = { target: 'http://localhost:5173', ws: true }`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:5173`、**`/draw-contest`** proxy（含 ws）到繪圖比賽的 Vite `:5174`（內部埠 2026-10-12 由 3000／3001 改為 5173／5174，Rex 不想用 3000 系列；80 仍是入口）——Vite 對 base 以外的根路徑會 302 到 `/draw-guess/`，加了這三條後開發時 `http://localhost/` 與正式一樣是遊戲清單，從清單點進兩款遊戲都是 HMR 開發版（Rex 2026-10-12 要求：IDEA 啟動後直接看到遊戲選擇頁；海圖定案）。
-- 根目錄 `npm run dev` 以 `concurrently --kill-others-on-fail` **一次啟動四個程序**：server（:5173）、draw-guess Vite（:80）、draw-contest Vite（:5174）、`scripts/dev-open.mjs`。最後者輪詢 `http://localhost/healthz` 到回 200（最多 30 秒）才開瀏覽器到 `http://localhost/`（遊戲清單）然後結束；不用 Vite 的 `server.open` 是因為 Vite 不到 0.1 秒就緒、server 約 1 秒，瀏覽器會先開到 proxy error（2026-10-12 實測）。`BROWSER=none` 不開瀏覽器（測試用）。原本的 `dev:contest` 已移除（2026-10-12）。
+- 根目錄 `npm run dev` 以 `concurrently --kill-others-on-fail` **一次啟動五個程序**（Epic 16 起）：server（:5173）、draw-guess Vite（:80）、draw-contest Vite（:5174）、song-guess Vite（:5175）、`scripts/dev-open.mjs`。三個 Vite 互相 proxy 另外兩款的路徑（draw-contest 與 song-guess 的 vite.config 都有 `/draw-guess` → `:80` 與另一款 → 其埠），任一入口的根路徑都是遊戲清單。最後者輪詢 `http://localhost/healthz` 到回 200（最多 30 秒）才開瀏覽器到 `http://localhost/`（遊戲清單）然後結束；不用 Vite 的 `server.open` 是因為 Vite 不到 0.1 秒就緒、server 約 1 秒，瀏覽器會先開到 proxy error（2026-10-12 實測）。`BROWSER=none` 不開瀏覽器（測試用）。原本的 `dev:contest` 已移除（2026-10-12）。
 
 ### 正式（Rex 本機，區網）
 
@@ -79,7 +81,7 @@ fishing-work/
 - **區網可達（Rex 2026-09-24 明確需求；同日 Rex 以 Phase 1 建置實測區網 IP 可連，server 預設已綁所有介面）**：
   - server 以 `HOST` 環境變數綁定，預設 **`0.0.0.0`**（所有介面），不得綁 `localhost`／`127.0.0.1`。
   - 啟動時列舉本機所有非內部 IPv4（`os.networkInterfaces()`），log 印出可分享的網址；找不到任何區網 IP 時 log warn。
-  - **分享網址 log 的內容（2026-10-12 Rex 定案：先印遊戲清單，再列每款遊戲）**：事件 `server.lan`，欄位依序為 `share`（**站台根網址**＝遊戲清單，每個區網 IP 一個，例如 `http://192.168.1.23/`；80 埠不顯示埠號）、`local`（`http://localhost/`；容器模式不印）、`games`（物件，鍵為遊戲 key、值為該遊戲在每個 share origin 下的完整網址陣列，例如 `{ "draw-guess": ["http://192.168.1.23/draw-guess/"], "draw-contest": ["http://192.168.1.23/draw-contest/"] }`）、`source`（只在用 `PUBLIC_URL` 時為 `"PUBLIC_URL"`）。`shareLog()` 的輸入改為 `games: { key, path }[]`（由 `index.ts` 傳 `[{ key: 'draw-guess', path: '/draw-guess/' }, { key: 'draw-contest', path: '/draw-contest/' }]`），不再有 `path`／`contestPath`，輸出不再有 `shareContest` 與字串陣列形式的 `games`。`server.lan.none` 的 `local` 同樣是根網址，**不帶 `games`**（找不到 IP 就沒有 origin 可推）；容器內有 `PUBLIC_URL` 時省略 `local`，順序為 `share → games → source`。
+  - **分享網址 log 的內容（2026-10-12 Rex 定案：先印遊戲清單，再列每款遊戲）**：事件 `server.lan`，欄位依序為 `share`（**站台根網址**＝遊戲清單，每個區網 IP 一個，例如 `http://192.168.1.23/`；80 埠不顯示埠號）、`local`（`http://localhost/`；容器模式不印）、`games`（物件，鍵為遊戲 key、值為該遊戲在每個 share origin 下的完整網址陣列，例如 `{ "draw-guess": ["http://192.168.1.23/draw-guess/"], "draw-contest": ["http://192.168.1.23/draw-contest/"], "song-guess": ["http://192.168.1.23/song-guess/"] }`（Epic 16 起三鍵））、`source`（只在用 `PUBLIC_URL` 時為 `"PUBLIC_URL"`）。`shareLog()` 的輸入改為 `games: { key, path }[]`（由 `index.ts` 傳 `[{ key: 'draw-guess', path: '/draw-guess/' }, { key: 'draw-contest', path: '/draw-contest/' }, { key: 'song-guess', path: '/song-guess/' }]`（Epic 16 起三款）），不再有 `path`／`contestPath`，輸出不再有 `shareContest` 與字串陣列形式的 `games`。`server.lan.none` 的 `local` 同樣是根網址，**不帶 `games`**（找不到 IP 就沒有 origin 可推）；容器內有 `PUBLIC_URL` 時省略 `local`，順序為 `share → games → source`。
   - 客戶端**不設定任何伺服器位址**：正式環境同源，開發環境走 Vite proxy；同事只需要 Rex 分享的網址。
   - Socket.IO 不設 CORS（同源）；Vite dev 綁 80 且 `server.host: true`，同事開 `http://<Rex IP>/draw-guess/` 就是開發版（HMR）；正式與開發不能同時跑（都占 80）。
   - macOS 防火牆：首次啟動會跳「是否允許 node 接受連入連線」→ 允許；若防火牆設為「封鎖所有連入連線」需改掉。驗證方式：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。
@@ -105,9 +107,10 @@ fishing-work/
 
 - 根目錄 `Dockerfile` 多階段：`build`（`npm ci`＋`npm run build`）→ `runtime`（`node:24-slim`，只含 server 正式相依與 `server/dist`、`server/public`、`draw-guess/dist`，相對路徑與 repo 相同）。容器內以 `node` 使用者執行，`PORT=80`、`HOST=0.0.0.0`、`IN_CONTAINER=1`，`HEALTHCHECK` 打 `/healthz`。
 - 根目錄 `docker-compose.yml`：`ports: "${HOST_PORT:-80}:80"`、`restart: unless-stopped`。新電腦：`git clone` 後 `docker compose up -d --build`；同事連 `http://<新電腦區網 IP>/draw-guess/`。
-- **分享網址 log**：可選環境變數 `PUBLIC_URL` ＝ **站台根網址**（例如 `http://192.168.1.50:8080/`；2026-10-12 起語意由「我畫你猜的完整網址」改為根網址，程式只取其 origin 再補 `/`，所以舊值 `http://192.168.1.50:8080/draw-guess/` 仍可用、印出來一樣是根網址）。有設就印它（事件 `server.lan`，`share=[origin + '/']`、`games` 由同一 origin 推出、`source: "PUBLIC_URL"`；`PUBLIC_URL` 不是合法網址時 `share` 原樣印出、`games` 各鍵為空陣列，不拋錯）；沒設且 `IN_CONTAINER=1` 時不列出容器內的 172.x 位址、也不印 localhost（容器埠不一定等於主機對外埠），改印事件 `server.lan.container`：「請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；我畫你猜 /draw-guess/、繪圖比賽 /draw-contest/），或設定 PUBLIC_URL」。非容器、未設 `PUBLIC_URL` 時欄位為 `{ share, local, games }`，不帶 `source`。
+- **分享網址 log**：可選環境變數 `PUBLIC_URL` ＝ **站台根網址**（例如 `http://192.168.1.50:8080/`；2026-10-12 起語意由「我畫你猜的完整網址」改為根網址，程式只取其 origin 再補 `/`，所以舊值 `http://192.168.1.50:8080/draw-guess/` 仍可用、印出來一樣是根網址）。有設就印它（事件 `server.lan`，`share=[origin + '/']`、`games` 由同一 origin 推出、`source: "PUBLIC_URL"`；`PUBLIC_URL` 不是合法網址時 `share` 原樣印出、`games` 各鍵為空陣列，不拋錯）；沒設且 `IN_CONTAINER=1` 時不列出容器內的 172.x 位址、也不印 localhost（容器埠不一定等於主機對外埠），改印事件 `server.lan.container`：「請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；我畫你猜 /draw-guess/、繪圖比賽 /draw-contest/、猜歌 /song-guess/），或設定 PUBLIC_URL」。非容器、未設 `PUBLIC_URL` 時欄位為 `{ share, local, games }`，不帶 `source`。
 - 映像實作（2026-09-29 龍骨）：runtime 以 `server/package.json` 產生只含 `express`、`socket.io` 的 package.json 搭配 repo lockfile 安裝（`socket.io-client` 是 draw-guess 的正式相依，`npm ci --omit=dev -w` 會多裝）；build 階段刪除專案自己的 `*.map`（內含 TS 原始碼）；`HEALTHCHECK --start-interval=2s` 需 Docker Engine 25 以上，舊版忽略該參數。`PUBLIC_URL`、`HOST_PORT` 可寫在根目錄 `.env`（compose 自動讀取；`.env` 不進 git、不進映像）。
 - 不含 HTTPS、不推 registry（在目標電腦上 build，避開 CPU 架構差異）；Cloudflare Tunnel 仍在主機上跑、指向主機的對外埠。
+- **Epic 16 猜歌（海圖 2026-10-12 定案）**：映像多複製 `song-guess/package.json`（build）與 `song-guess/dist`（runtime）；compose 可設 `ITUNES_URL`／`ITUNES_COUNTRY`／`ITUNES_TIMEOUT_MS`／`ITUNES_CACHE_MS`／`SONG_PREVIEW_CAP_MS`（見 spec/song-guess §3）；**容器要能連 `itunes.apple.com`**（出題時搜尋），玩家瀏覽器要能連 `audio-ssl.itunes.apple.com` 與 `is1-ssl.mzstatic.com`（試聽與封面）。靜態檔規則同另兩款（`/song-guess` 301 → `/song-guess/`、SPA fallback、缺檔 404）。
 - **Epic 14 繪圖比賽（舵手 2026-10-07 定案）**：映像多複製 `draw-contest/package.json`（build）與 `draw-contest/dist`（runtime），路徑規則不變；compose 加評分器環境變數 `JUDGE`（MVP 預設 `random`，Phase 3 起 Rex 定案預設 `ollama`；以 `spec/draw-contest/architecture.md` §3 的表為準）、`OLLAMA_URL`（容器內預設 `http://host.docker.internal:11434`）、`JUDGE_MODEL`、`extra_hosts: ["host.docker.internal:host-gateway"]`；**模型不進映像**，容器以 HTTP 呼叫主機的 Ollama，Ollama 掛掉退回 random、`/healthz` 不含 Ollama。變數說明以 `spec/draw-contest/architecture.md` §3 為準。server 的 `vitest.config.ts` 把測試環境固定為 `JUDGE=random`、`OLLAMA_URL=http://127.0.0.1:1`，draw-guess 的 e2e 測試不會探測本機 Ollama（Phase 3）。**分享網址 log**：`PUBLIC_URL` 語意不變（仍是我畫你猜的完整網址，Rex 既有 `.env` 不必改）；`shareLog` 由它的 origin 推出第二款網址，`server.lan` 事件加 `games: ["/draw-guess/", "/draw-contest/"]`，`share` 欄位不變、另加 `shareContest`；容器提示文案加一句「繪圖比賽為 /draw-contest/」；既有 `shareLog.test.ts` 9 例不得改動。
 
 ## 4. Socket 事件契約（namespace `/draw-guess`）
@@ -517,10 +520,10 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 | 指令（根目錄） | 通過條件 |
 |---------------|---------|
-| `npm run typecheck` | 三個 workspace 皆 `tsc --noEmit` 為 0 |
-| `npm run lint` | ESLint 為 0（目前只涵蓋 `draw-guess`；server / shared 加 ESLint 列在 improvements） |
+| `npm run typecheck` | 五個 workspace 皆 `tsc --noEmit` 為 0 |
+| `npm run lint` | ESLint 為 0（三個客戶端 `draw-guess`、`draw-contest`、`song-guess`；server / shared 加 ESLint 列在 improvements） |
 | `npm test` | Vitest 全綠（shared、server 至少涵蓋 room 狀態機、answer、scoring） |
-| `npm run build` | 產出 `draw-guess/dist/` 與 `server/dist/index.js` |
+| `npm run build` | 產出 `draw-guess/dist/`、`draw-contest/dist/`、`song-guess/dist/` 與 `server/dist/index.js` |
 | `HOST=127.0.0.1 PORT=3190 npm start` + `curl -s 127.0.0.1:3190/healthz` | 驗證時用**隔離埠且只綁本機**（避開 80，也避免桌面 app 的瀏覽器窗格自動重連 3000 把舊分頁帶進來）；回 `{"ok":true}`；`curl -sI 127.0.0.1:3190/draw-guess/` 回 200 |
 | `user/protocol/draw-guess-phase*.mjs`、`draw-guess-load.mjs` | 協定測試全 PASS；30 人壓測不掉訊息、快照與本地 ops 一致、op 延遲 p95 < 100 ms（loopback 數字僅供回歸，真實區網以 `user/lan-test-checklist.md` 實機為準）、50 人可入、第 51 人 `ROOM_FULL` |
 | 瀏覽器 | 兩個分頁以不同暱稱加入，一方畫、另一方即時看到；猜對顯示「猜對了」；中途開第三個分頁能看到現有筆跡 |
@@ -539,6 +542,7 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 | 日期 | 變更 | 原因 |
 |------|------|------|
+| 2026-10-12 | **Epic 16 猜歌的共用層定案**（海圖）：§1 加 `song-guess/`；§3 dev 五個程序、song-guess Vite :5175、三個 Vite 互 proxy、分享網址 `games` 三鍵、容器提示加「猜歌 /song-guess/」、Docker 多一份 dist 與 `ITUNES_*`、對外網域需求 | Rex 2026-10-12 新遊戲「猜歌」（iTunes 題庫） |
 | 2026-10-12 | §3 開發拓樸內部埠：server 3000 → **5173**、draw-contest Vite 3001 → **5174**；80 仍是入口，正式 `npm start` 不變 | Rex 2026-10-12：不要 3000／3001，改用 5173／5174 |
 | 2026-10-12 | §3 分享網址 log 改印**站台根網址（遊戲清單）**：`server.lan` 欄位改為 `share`（根網址）、`local`（`http://localhost/`）、`games`（各遊戲完整網址物件）；移除 `shareContest`；`PUBLIC_URL` 語意改為根網址（只取 origin，舊值相容）；容器提示文案同步 | Rex 2026-10-12：`npm start` 的 log 連結點進去是我畫你猜而非選擇頁，要「印遊戲清單，順便把兩個遊戲的網址也印」（海圖定案） |
 | 2026-10-12 | §3 開發拓樸：`npm run dev` 改為一次啟動 server（:3000）＋兩個 Vite（:80、:3001），移除 `dev:contest`；draw-guess Vite 加 proxy（`^/$`、`/healthz` → `:3000`，`/draw-contest` → `:3001`）；新增 `scripts/dev-open.mjs` 等 healthz 通過後自動開瀏覽器到遊戲清單 | Rex 2026-10-12：IDEA 啟動後首頁被預設成 draw-guess，要「dev 寫成一個版本、啟動後直接看到遊戲選擇頁」（海圖定案） |

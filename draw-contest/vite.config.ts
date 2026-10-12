@@ -12,10 +12,12 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/socket.io': { target: 'http://localhost:5173', ws: true },
-      // Vite 會把 / 302 到 base（/draw-contest/）；以下三條轉出去，
+      // Vite 會把 / 302 到 base（/draw-contest/）；以下四條轉出去，
       // 讓 http://localhost:5174/ 跟正式一樣是遊戲清單（server :5173）、/draw-guess/ 是我畫你猜的 Vite（:80）、/healthz 可用（Rex 2026-10-12）
       '^/$': { target: 'http://localhost:5173' },
       '/draw-guess': { target: 'http://localhost:80', ws: true },
+      // 猜歌的 Vite（:5175，HMR；Epic 16，spec/song-guess/architecture.md §3）
+      '/song-guess': { target: 'http://localhost:5175', ws: true },
       '/healthz': { target: 'http://localhost:5173' },
     },
   },

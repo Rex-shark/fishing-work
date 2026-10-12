@@ -1,11 +1,19 @@
 # fishing-work
 
-部署在本機、同事透過公司區網（或 Cloudflare Tunnel）進來玩的簡易互動遊戲平台；第一款遊戲是偽裝成程式編輯器的「我畫你猜」。
+部署在本機、同事透過公司區網（或 Cloudflare Tunnel）進來玩的簡易互動遊戲平台；目前有三款遊戲（我畫你猜、繪圖比賽、猜歌，見下方遊戲清單），畫面都偽裝成上班會開的軟體，第一款是偽裝成程式編輯器的「我畫你猜」。
 
 - 產品範圍與遊戲規則：[spec/overview.md](spec/overview.md)
 - 架構與事件契約：[spec/architecture.md](spec/architecture.md)（部署細節見 §3）
 - 開發計畫：[plan/](plan/)
 - 區網實機實測清單：[user/lan-test-checklist.md](user/lan-test-checklist.md)
+
+遊戲清單（同一個 server 程序提供，`http://<IP>/` 是清單頁）：
+
+| 遊戲 | 網址 | 一句玩法 |
+|------|------|----------|
+| 我畫你猜 | `http://<IP>/draw-guess/` | 畫師自訂題目作畫，其他人看畫在聊天室猜題（見下方「玩法」） |
+| 繪圖比賽 | `http://<IP>/draw-contest/` | 出題後所有人同時畫，評分器逐張打分、投影片揭曉（見「繪圖比賽」） |
+| 猜歌 | `http://<IP>/song-guess/` | 出題者指定歌手，所有人同時聽 30 秒試聽、打字猜歌名（見「猜歌」；**要戴耳機**） |
 
 ## 玩法（給同事）
 
@@ -29,18 +37,18 @@
 
 ```bash
 npm install          # 第一次或相依性有變動時
-npm run build        # 產出 draw-guess/dist/ 與 server/dist/index.js
+npm run build        # 產出 draw-guess/dist/、draw-contest/dist/、song-guess/dist/ 與 server/dist/index.js
 npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面）、PORT=80
 ```
 
-1. **看啟動 log**：`server.lan` 那一行的 `share` 會列出站台根網址（遊戲清單，每個區網 IP 一個），例如 `http://192.168.1.23/`（80 埠不帶埠號）；`games` 另列兩款遊戲的完整網址（`draw-guess` → `http://192.168.1.23/draw-guess/`、`draw-contest` → `http://192.168.1.23/draw-contest/`）；找不到區網 IP 時會印 `server.lan.none` 警告（確認已連上 Wi-Fi／有線網路）。
+1. **看啟動 log**：`server.lan` 那一行的 `share` 會列出站台根網址（遊戲清單，每個區網 IP 一個），例如 `http://192.168.1.23/`（80 埠不帶埠號）；`games` 另列三款遊戲的完整網址（`draw-guess` → `http://192.168.1.23/draw-guess/`、`draw-contest` → `http://192.168.1.23/draw-contest/`、`song-guess` → `http://192.168.1.23/song-guess/`）；找不到區網 IP 時會印 `server.lan.none` 警告（確認已連上 Wi-Fi／有線網路）。
 2. **查 IP**（也可直接看 log）：`ipconfig getifaddr en0`（有線網路可能是 `en1` 等其他介面）。
 3. **macOS 防火牆**：第一次啟動會跳出「是否允許 node 接受連入連線」→ 選「允許」。若「系統設定 → 網路 → 防火牆 → 選項」設成「封鎖所有連入連線」，需取消。
 4. **用另一台裝置驗證**：同事的電腦或手機開 `http://<IP>/healthz`，應回 `{"ok":true}`。
 5. **分享** `http://<IP>/draw-guess/` 給同事即可（`http://<IP>/` 是遊戲清單頁）。客戶端不需要設定任何伺服器位址。
 6. **IP 會隨 DHCP 變動**：請在路由器為這台電腦保留 IP，或改用 `http://<電腦名稱>.local/draw-guess/`（mDNS，macOS 與多數 Windows 10+ 可解析）。電腦名稱見「系統設定 → 一般 → 共享」底部的「本機主機名稱」，或在終端機執行 `scutil --get LocalHostName`。
 
-環境變數：`PORT`（預設 80）、`HOST`（預設 `0.0.0.0`）。例如 `PORT=8080 npm start`（非 80 埠時網址會帶埠號 `http://<IP>:8080/`）；`HOST=127.0.0.1` 只允許本機連線，區網同事會連不上。選用 `PUBLIC_URL`（站台根網址，例如 `http://192.168.1.50/`）：有設時 `server.lan` 的 `share` 只印這個網址、`games` 由同一 origin 推出兩款遊戲的網址（`source: "PUBLIC_URL"`），主要給 Docker 部署用。
+環境變數：`PORT`（預設 80）、`HOST`（預設 `0.0.0.0`）。例如 `PORT=8080 npm start`（非 80 埠時網址會帶埠號 `http://<IP>:8080/`）；`HOST=127.0.0.1` 只允許本機連線，區網同事會連不上。選用 `PUBLIC_URL`（站台根網址，例如 `http://192.168.1.50/`）：有設時 `server.lan` 的 `share` 只印這個網址、`games` 由同一 origin 推出三款遊戲的網址（`source: "PUBLIC_URL"`），主要給 Docker 部署用。
 
 - 為什麼是 80：公司區網只放行標準埠，5173 之類的埠會被擋。macOS 10.14 起一般使用者即可綁 80，不需 sudo；Linux 需 `sudo` 或 `setcap`。
 - 伺服器重啟後分數歸零（只存在記憶體）。
@@ -108,6 +116,7 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 - **重開機自動恢復**：compose 設了 `restart: unless-stopped`，只要 Docker Desktop 有開機自動啟動（設定 → General →「Start Docker Desktop when you sign in」）就會自己起來；用 `docker compose down` 停掉的則不會。
 - **Windows 的 80 埠被占用**（常見是 IIS 或 `http.sys`，啟動時報埠已被使用）：改用其他主機埠，例如 PowerShell `$env:HOST_PORT=8080; docker compose up -d --build`（或寫進 `.env`：`HOST_PORT=8080`），分享網址要帶埠號 `http://<IP>:8080/`（我畫你猜為 `http://<IP>:8080/draw-guess/`）；也可以停掉占用 80 的服務。注意公司區網可能只放行標準埠。
 - **防火牆**：第一次啟動時系統若詢問是否允許 Docker 接受連入連線 → 允許，否則同事連不上。
+- **猜歌要連外網**：容器需要能連到 `itunes.apple.com`（https，server 搜尋歌手用），見下方「猜歌」；`ITUNES_*`、`SONG_PREVIEW_CAP_MS` 已列在 `docker-compose.yml`，可寫在 `.env` 覆寫。
 - **外網分享**：Cloudflare Tunnel 仍在主機上跑（不放進容器）：`cloudflared tunnel --url http://localhost:80`（主機埠改過就改成對應埠）。
 - 只想用 Dockerfile 不用 compose 也可以：`docker build -t fishing-work .` → `docker run -d --name fishing-work -p 80:80 --restart unless-stopped fishing-work`。要讓 log 印出正確的分享網址，`docker run` 再加 `-e PUBLIC_URL=http://<新電腦 IP>/`（站台根網址）。
 
@@ -123,15 +132,15 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 4. 畫完按「完成」交卷（交卷後不能改）；時間到會自動交卷。中途加入的人本回合旁觀。
 5. 評分器逐張打分（0～100），全部評完後以投影片瀏覽揭曉每人的畫、分數與名次，前三名高亮；隨機評分時畫面會標示「隨機評分」。揭曉停到有人按「我出題」開始下一回合。
 
-**網址**：正式（`npm start` 或 Docker）為 `http://<IP>/draw-contest/`；`PUBLIC_URL` 填站台根網址（例如 `http://<IP>/`），啟動 log `server.lan` 的 `games` 會列兩款遊戲的完整網址（2026-10-12 起；舊的 `/draw-guess/` 值仍相容）。
+**網址**：正式（`npm start` 或 Docker）為 `http://<IP>/draw-contest/`；`PUBLIC_URL` 填站台根網址（例如 `http://<IP>/`），啟動 log `server.lan` 的 `games` 會列每款遊戲的完整網址（2026-10-12 起；舊的 `/draw-guess/` 值仍相容）。
 
 **開發**：
 
 ```bash
-npm run dev  # 一次啟動 server（:5173）、我畫你猜的 Vite（:80）與繪圖比賽的 Vite（:5174），並自動開瀏覽器到 http://localhost/（遊戲清單）
+npm run dev  # 一次啟動 server（:5173）、我畫你猜的 Vite（:80）、繪圖比賽的 Vite（:5174）與猜歌的 Vite（:5175），並自動開瀏覽器到 http://localhost/（遊戲清單）
 ```
 
-從遊戲清單點進 <http://localhost/draw-contest/> 就是 Vite 開發版（HMR；:80 的 Vite 把 `/draw-contest` 轉給 :5174，`/socket.io` 轉給 server :5173）。5173／5174 只是內部轉發目標，不需要直接開，也不給區網同事連。
+從遊戲清單點進 <http://localhost/draw-contest/> 就是 Vite 開發版（HMR；:80 的 Vite 把 `/draw-contest` 轉給 :5174，`/socket.io` 轉給 server :5173）。5173／5174／5175 只是內部轉發目標，不需要直接開，也不給區網同事連。
 
 ## Ollama 連線
 
@@ -159,24 +168,55 @@ npm run dev  # 一次啟動 server（:5173）、我畫你猜的 Vite（:80）與
 - 不用 Docker、直接 `npm start` 時，預設的 `http://127.0.0.1:11434` 就是本機 Ollama，不必另設；沒有 Ollama 時用 `JUDGE=random COMMENT=off npm start`。
 - 模型未就緒時可用假 Ollama 測接線：`node user/mock/systemone.mjs`（預設 `127.0.0.1:11435`，評分的 `/v1/systemone` 與評語的 `/api/chat` 都有），再以 `OLLAMA_URL=http://127.0.0.1:11435 npm start` 指向它。
 
+## 猜歌
+
+平台的第三款遊戲（Epic 16），與另兩款由**同一個 server 程序**提供，偽裝成視訊會議（Google Meet 的「有人正在分享音訊」）。規則見 [spec/song-guess/overview.md](spec/song-guess/overview.md)，契約與部署見 [spec/song-guess/architecture.md](spec/song-guess/architecture.md)。
+
+**怎麼玩**（給同事）：
+
+1. **先戴耳機**——聲音是這款遊戲唯一的破綻。瀏覽器開 `http://<IP>/song-guess/`（`http://<IP>/` 遊戲清單也有入口），輸入暱稱（規則同我畫你猜）進入。
+2. 沒有局進行時，任何人可按「分享音訊」成為出題者（至少 2 人在線），60 秒內輸入**歌手名稱**（1～30 字）。
+3. server 從 Apple iTunes 抽該歌手的 5 首歌，逐首播放 30 秒試聽；所有人同時聽（**出題者也一起猜**），畫面全程顯示歌手與「第 n / 5 首」。
+4. 在聊天室打歌名，正規化後相同就算猜對（不分大小寫、全形半形、空白與標點；副標如 `(Live)`、`feat.` 可省略）。越快猜對分數越高（50～100）；有人猜對歌照播，其他人可以繼續猜。
+5. 試聽播完才揭曉歌名、歌手、封面與本首得分，停 5 秒進下一首；第 5 首揭曉後顯示本局排名，停到有人再按「分享音訊」。
+
+**網址**：正式（`npm start` 或 Docker）為 `http://<IP>/song-guess/`；啟動 log `server.lan` 的 `games` 有 `song-guess` 一鍵。
+
+**網路需求**（兩邊都要通）：
+
+- **server（Rex 的電腦或容器）要能連到 `itunes.apple.com`**（https）：歌手搜尋由 server 統一呼叫 iTunes Search API（免金鑰；每 IP 約 20 次／分鐘，所以同一歌手的結果快取 10 分鐘）。連不上時出題者會看到「搜尋失敗，請再試一次」，另兩款遊戲不受影響；`/healthz` 不檢查 iTunes。
+- **每位同事的電腦要能連到 Apple 的試聽檔網域**：試聽檔（每首約 1 MB）與封面由各自的瀏覽器直接向 Apple 取，不經 Rex 的電腦——試聽檔在 `audio-ssl.itunes.apple.com`、封面在 `is1-ssl.mzstatic.com` 之類的 `*.mzstatic.com`（2026-10-12 實測的網域，以 Apple 實際回傳為準）。公司網路擋了這些網域的人會聽不到聲音。
+
+環境變數（server 讀取；Docker 由 `docker-compose.yml` 帶入，可寫在 `.env`）：
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `ITUNES_URL` | `https://itunes.apple.com` | iTunes Search API 根網址；協定測試指到假 iTunes（`user/mock/itunes.mjs`） |
+| `ITUNES_COUNTRY` | `TW` | 商店區域 |
+| `ITUNES_TIMEOUT_MS` | `8000` | 搜尋逾時（毫秒）；逾時回「搜尋失敗」，出題者可重試 |
+| `ITUNES_CACHE_MS` | `600000` | 歌手搜尋結果快取（10 分鐘）；同一歌手再出題不重打 iTunes |
+| `SONG_PREVIEW_CAP_MS` | `30000` | 單首最長播放毫秒；一般歌曲恆為 30 秒，全長不到 30 秒的曲子才更短 |
+
+**開發**：`npm run dev` 會一併啟動猜歌的 Vite（:5175）；從遊戲清單點進 <http://localhost/song-guess/> 就是 HMR 開發版（:80 的 Vite 把 `/song-guess` 轉給 :5175）。
+
 ## 開發
 
 ```bash
 npm install
-npm run dev          # 同時啟動 Vite（綁 :80）與 server（:5173，只當 proxy 目標）
+npm run dev          # 一次啟動五個程序：server（:5173，只當 proxy 目標）、我畫你猜 Vite（綁 :80，入口）、繪圖比賽 Vite（:5174）、猜歌 Vite（:5175）、scripts/dev-open.mjs（等 /healthz 通了自動開 http://localhost/）
 ```
 
-瀏覽器開 <http://localhost/draw-guess/>（Vite 開發版，HMR）。Vite 綁 80 並把 `/socket.io` proxy 到 `localhost:5173` 的 server；區網同事開 `http://<IP>/draw-guess/` 看到的也是開發版。
+啟動後會自動開瀏覽器到 <http://localhost/>（遊戲清單），從清單點進三款遊戲都是 Vite 開發版（HMR），例如 <http://localhost/draw-guess/>。:80 的 Vite（我畫你猜）把 `/socket.io`、`/`（遊戲清單）、`/healthz` proxy 到 `localhost:5173` 的 server，`/draw-contest` 轉給 :5174、`/song-guess` 轉給 :5175；區網同事開 `http://<IP>/draw-guess/` 看到的也是開發版。
 
-**正式與開發不能同時跑**：`npm run dev`（Vite）與 `npm start` 都占 80。要在開發時驗證建置結果，改用其他埠，例如 `PORT=3100 npm start`（dev 的 server 已占 5173、繪圖比賽 Vite 占 5174）。
+**正式與開發不能同時跑**：`npm run dev`（Vite）與 `npm start` 都占 80。要在開發時驗證建置結果，改用其他埠，例如 `PORT=3100 npm start`（dev 的 server 已占 5173、繪圖比賽 Vite 占 5174、猜歌 Vite 占 5175）。
 
 ## 驗證指令（根目錄，每條分開跑）
 
 ```bash
-npm run typecheck    # 三個 workspace 的 tsc --noEmit
-npm test             # Vitest：shared、server（含 e2e 協定測試）、draw-guess
-npm run build        # 建置 client 與 server
-npm run lint         # ESLint（目前涵蓋 draw-guess）
+npm run typecheck    # 五個 workspace（shared、server、draw-guess、draw-contest、song-guess）的 tsc --noEmit
+npm test             # Vitest：五個 workspace 都有（shared、server（含 e2e 協定測試）、draw-guess、draw-contest、song-guess）
+npm run build        # 依序建置三款遊戲的客戶端（draw-guess、draw-contest、song-guess）與 server
+npm run lint         # ESLint（涵蓋三個客戶端 draw-guess、draw-contest、song-guess；server、shared 沒有 ESLint）
 ```
 
 協定測試與壓測（選用，需先 `npm run build`；用隔離埠與 `HOST=127.0.0.1`，不要占 80）：
@@ -187,4 +227,4 @@ TEST_PORT=3180 SERVER_PID=<pid> node user/protocol/draw-guess-load.mjs   # 30 �
 kill <pid>
 ```
 
-壓測內容與結果判讀見腳本檔頭；`user/protocol/` 下的 `draw-guess-phase*.mjs` 是各 Phase 的協定測試。
+壓測內容與結果判讀見腳本檔頭；`user/protocol/` 下的 `draw-guess-phase*.mjs` 是各 Phase 的協定測試。另兩款的協定測試也在同一個目錄：`draw-contest-*.mjs`、`song-guess-phase1.mjs`（猜歌要先啟動假 iTunes `user/mock/itunes.mjs`，並以 `ITUNES_URL` 讓 server 指向它），用法與埠號見各檔檔頭。

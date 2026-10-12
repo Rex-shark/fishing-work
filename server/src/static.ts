@@ -29,6 +29,11 @@ const games: GameStatic[] = [
     dist: resolve(serverRoot, '..', 'draw-contest', 'dist'),
     missingHint: '先執行 npm run build（開發時請走 Vite：npm run dev → http://localhost/draw-contest/）',
   },
+  {
+    base: '/song-guess',
+    dist: resolve(serverRoot, '..', 'song-guess', 'dist'),
+    missingHint: '先執行 npm run build（開發時請走 Vite：npm run dev → http://localhost/song-guess/）',
+  },
 ];
 
 export function mountStatic(app: Express): void {

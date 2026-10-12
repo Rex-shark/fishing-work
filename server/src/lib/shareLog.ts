@@ -15,7 +15,7 @@ export interface ShareGame {
 export interface ShareLogInput {
   host: string;
   port: number;
-  /** 要列在 `games` 的遊戲，依序印出（index.ts 傳我畫你猜、繪圖比賽） */
+  /** 要列在 `games` 的遊戲，依序印出（index.ts 傳我畫你猜、繪圖比賽、猜歌） */
   games: ShareGame[];
   /** 只讀 PUBLIC_URL 與 IN_CONTAINER 兩個鍵 */
   env: Record<string, string | undefined>;
@@ -36,6 +36,7 @@ const ROOT = '/';
 export const GAME_LABELS: Readonly<Record<string, string>> = {
   'draw-guess': '我畫你猜',
   'draw-contest': '繪圖比賽',
+  'song-guess': '猜歌',
 };
 
 export function gameLabel(key: string): string {
@@ -43,8 +44,8 @@ export function gameLabel(key: string): string {
 }
 
 /**
- * 容器內沒設 PUBLIC_URL 時的提示（文案逐字依 spec §3「Docker 部署」）：
- * 「請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；我畫你猜 /draw-guess/、繪圖比賽 /draw-contest/），或設定 PUBLIC_URL」
+ * 容器內沒設 PUBLIC_URL 時的提示（文案依 spec §3「Docker 部署」的句型，遊戲依傳入順序以「、」串接；Epic 16 起多一款猜歌）：
+ * 「請用主機的區網 IP：http://<主機 IP>:<對外埠>/（遊戲清單；我畫你猜 /draw-guess/、繪圖比賽 /draw-contest/、猜歌 /song-guess/），或設定 PUBLIC_URL」
  */
 export function containerHint(games: ShareGame[]): string {
   const list = games.map((g) => `${gameLabel(g.key)} ${g.path}`).join('、');

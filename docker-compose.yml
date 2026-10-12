@@ -23,6 +23,19 @@ services:
       COMMENT_MODEL: ${COMMENT_MODEL:-gemma4:26b-mlx-bf16}
       # 單張評語逾時（毫秒）；逾時那張沒有評語，本回合剩餘各張跳過
       COMMENT_TIMEOUT_MS: ${COMMENT_TIMEOUT_MS:-20000}
+      # 猜歌的題庫（Epic 16，spec/song-guess/architecture.md §3）：server 向 Apple iTunes Search API 搜尋歌手（免金鑰）
+      # 容器必須能連外網到 itunes.apple.com（https）；連不上時出題回「搜尋失敗」，其他兩款遊戲不受影響
+      # 試聽檔由每位玩家的瀏覽器直接向 Apple 取，不經容器：同事的電腦也要能連到 Apple 的試聽檔網域
+      # iTunes Search API 根網址；協定測試才會指到假 iTunes（user/mock/itunes.mjs）
+      ITUNES_URL: ${ITUNES_URL:-https://itunes.apple.com}
+      # 商店區域（決定搜得到哪些歌與歌名語言）
+      ITUNES_COUNTRY: ${ITUNES_COUNTRY:-TW}
+      # 搜尋逾時（毫秒）；逾時回「搜尋失敗」，出題者可重試
+      ITUNES_TIMEOUT_MS: ${ITUNES_TIMEOUT_MS:-8000}
+      # 歌手搜尋結果快取（毫秒，預設 10 分鐘）；iTunes 每 IP 約 20 次／分鐘，同一歌手再出題不重打
+      ITUNES_CACHE_MS: ${ITUNES_CACHE_MS:-600000}
+      # 單首最長播放毫秒（試聽約 30 秒；全長不到 30 秒的曲子才更短）
+      SONG_PREVIEW_CAP_MS: ${SONG_PREVIEW_CAP_MS:-30000}
     # Linux 需要此對應才解析得到 host.docker.internal；macOS／Windows 的 Docker Desktop 本來就有
     extra_hosts:
       - "host.docker.internal:host-gateway"

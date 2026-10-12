@@ -7,19 +7,20 @@
     "shared",
     "server",
     "draw-guess",
-    "draw-contest"
+    "draw-contest",
+    "song-guess"
   ],
   "engines": {
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail -n server,guess,contest,open -c blue,magenta,green,gray \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-guess\" \"npm run dev -w @fishing-work/draw-contest\" \"node scripts/dev-open.mjs\"",
-    "build": "npm run build -w @fishing-work/draw-guess && npm run build -w @fishing-work/draw-contest && npm run build -w @fishing-work/server",
+    "dev": "concurrently --kill-others-on-fail -n server,guess,contest,song,open -c blue,magenta,green,yellow,gray \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-guess\" \"npm run dev -w @fishing-work/draw-contest\" \"npm run dev -w @fishing-work/song-guess\" \"node scripts/dev-open.mjs\"",
+    "build": "npm run build -w @fishing-work/draw-guess && npm run build -w @fishing-work/draw-contest && npm run build -w @fishing-work/song-guess && npm run build -w @fishing-work/server",
     "start": "node server/dist/index.js",
     "tunnel": "cloudflared tunnel --url http://localhost:80",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces",
-    "lint": "npm run lint -w @fishing-work/draw-guess && npm run lint -w @fishing-work/draw-contest"
+    "lint": "npm run lint -w @fishing-work/draw-guess && npm run lint -w @fishing-work/draw-contest && npm run lint -w @fishing-work/song-guess"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

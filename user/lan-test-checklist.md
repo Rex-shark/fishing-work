@@ -1,8 +1,9 @@
-# 區網實機實測清單（我畫你猜）
+# 區網實機實測清單（我畫你猜、猜歌）
 
 > 給 Rex 照著做：用兩台以上**實體裝置**經公司區網玩完一回合，對應 [plan/draw-guess-mvp.md](../plan/draw-guess-mvp.md)「驗收標準」的區網那條（出題、畫、猜對、揭曉、計分）與「中途加入者能看到既有筆跡與最近聊天」。
 > 部署步驟以根目錄 [README.md](../README.md)「正式部署（區網）」為準，本檔只列實測步驟與勾選項。
 > 自動化的 30／50 人壓測已由 `user/protocol/draw-guess-load.mjs` 在本機跑過；本清單驗的是**真實網路與真實瀏覽器**。
+> 第 1～4 節是我畫你猜；**猜歌**（[plan/song-guess-mvp.md](../plan/song-guess-mvp.md) Phase 4「Rex 區網實機」）在第 5 節，可以單獨做（先做完第 1 節「啟動與連線」即可）。
 
 ## 準備
 
@@ -19,7 +20,7 @@
 
 - [ ] 主機：`npm run build` 成功（exit 0）
 - [ ] 主機：`caffeinate -i npm start`（或在 tmux 裡跑），log 出現 `server.listen`（`port` 為 80）
-- [ ] log 的 `server.lan` 的 `share` 列出區網根網址（遊戲清單），記下：`http://______________/`（`games` 另列 `/draw-guess/`、`/draw-contest/` 的完整網址）
+- [ ] log 的 `server.lan` 的 `share` 列出區網根網址（遊戲清單），記下：`http://______________/`（`games` 另列 `/draw-guess/`、`/draw-contest/`、`/song-guess/` 的完整網址）
 - [ ] 若 macOS 跳出「是否允許 node 接受連入連線」→ 允許
 - [ ] 玩家 B 裝置開 `http://<IP>/healthz` → 顯示 `{"ok":true}`
 - [ ] 玩家 B 裝置開 `http://<IP>/` → 看到遊戲清單「我畫你猜」
@@ -68,6 +69,95 @@
 - [ ] 主機終端機按 `Ctrl+C` → log 出現 `server.shutdown`，各裝置顯示重新連線中
 - [ ] `lsof -nP -iTCP:80` 沒有殘留程序
 
+## 5. 猜歌（兩台電腦、都戴耳機）
+
+> 對應 [plan/song-guess-mvp.md](../plan/song-guess-mvp.md) Phase 4：兩台電腦戴耳機玩一局，確認**聲音同步**與**同事電腦連得到 Apple 的網域**。規則見 [spec/song-guess/overview.md](../spec/song-guess/overview.md)，畫面文案見 [spec/song-guess/design.md](../spec/song-guess/design.md)。
+> server 要開著：接在第 3 節之後做的話，第 4 節「收尾」留到本節做完；單獨做則先完成第 1 節。
+
+### 準備
+
+| 角色 | 裝置 | 用途 |
+|------|------|------|
+| 主機 | Rex 的 Mac | 跑 `npm start`（或 Docker）；同時開一個瀏覽器分頁當玩家 A |
+| 玩家 B | 同事的電腦（**不是** Rex 的第二個分頁：要驗的是同事電腦的網路） | 出題、猜歌、F5 重連 |
+| 玩家 C（選做） | 第三台裝置 | 中途加入 |
+
+- [ ] A、B **都戴耳機**（聲音是這款遊戲唯一的破綻），音量先調小
+- [ ] 啟動 log 的 `server.listen` 的 `games` 有 `/song-guess`，`server.lan` 的 `games` 有 `song-guess` 那一鍵；另有一行 `song-guess.itunes.config`
+- [ ] B 開 `http://<IP>/` → 遊戲清單有「猜歌」
+
+### 5-1. 連得到 Apple 嗎（開始玩之前先確認）
+
+猜歌要連三個 Apple 網域，**誰要連哪個不一樣**：
+
+| 誰 | 網域 | 用途 |
+|----|------|------|
+| **server 那台**（Rex 的 Mac 或容器） | `itunes.apple.com` | 出題時搜尋歌手（https，要能連外網） |
+| **每一台玩家的電腦** | `audio-ssl.itunes.apple.com` | 試聽檔（每首約 1 MB），瀏覽器直接向 Apple 取，不經 Rex 的電腦 |
+| **每一台玩家的電腦** | `is1-ssl.mzstatic.com`（數字可能是其他，以 Apple 回傳為準） | 揭曉卡的專輯封面 |
+
+- [ ] **主機**：在終端機執行下面這行，應印出兩行網址（`previewUrl` 與 `artworkUrl100`）。印得出來＝ server 那台連得到 `itunes.apple.com`；把兩個網址記下來給下一步用。
+
+  ```bash
+  curl -sG 'https://itunes.apple.com/search' --data-urlencode 'term=孫燕姿' -d attribute=artistTerm -d country=TW -d media=music -d entity=song -d limit=1 | grep -oE '"(previewUrl|artworkUrl100)":"[^"]+"'
+  ```
+
+- [ ] （Docker 部署才需要）容器內也連得到，應印出 `200`：
+
+  ```bash
+  docker compose exec fishing-work node -e "fetch('https://itunes.apple.com/search?term=test&limit=1').then(r=>console.log(r.status),e=>console.log('FAIL',e.cause?.code??e.message))"
+  ```
+
+- [ ] **A、B 每一台**：把上一步的 `previewUrl` 網址（`https://audio-ssl.itunes.apple.com/….m4a`）貼到瀏覽器網址列 → 直接播出約 30 秒的歌，或下載一個約 1 MB 的檔案，**兩種都算通**；出現「無法連上這個網站」、一直轉圈或被公司的封鎖頁擋下 ＝ 不通
+- [ ] **A、B 每一台**：把 `artworkUrl100` 網址（`https://is1-ssl.mzstatic.com/….jpg`）貼到瀏覽器 → 看到專輯封面
+- [ ] （改用指令檢查也可以）兩個網址各跑一次，都應印出 `200`：
+  - macOS：`curl -s -o /dev/null -w '%{http_code}\n' '<網址>'`
+  - Windows（命令提示字元或 PowerShell）：`curl.exe -s -o NUL -w "%{http_code}" "<網址>"`
+
+任何一台不通：先記下是哪一台、哪個網域，照本節最後「連不到 Apple 網域時」處理；其他台可以繼續測。
+
+### 5-2. 加入
+
+- [ ] A、B 開 `http://<IP>/song-guess/`，輸入不同暱稱（風格卡片只有「視訊會議」一張）按「進入遊戲」→ 畫面像 Google Meet 通話，舞台中央「尚無人分享音訊」
+- [ ] 兩邊的參加者 tile 都看得到對方；右側「通話中的訊息」出現「X 加入」
+
+### 5-3. 一局 5 首（B 出題）
+
+- [ ] B 按控制列「分享音訊」→ 出現對話框「分享音訊」；A 的舞台顯示「B 正在準備分享音訊…」
+- [ ] B 在「歌手」欄填 `孫燕姿` 按「分享」→ 按鈕短暫變「搜尋中…」，接著**兩台同時聽到第 1 首**（約 1.5 秒的起播緩衝後開始）
+- [ ] 舞台左上「B 正在分享音訊」、中央波形動畫、下方「歌手：孫燕姿 · 第 1 / 5 首」；字幕列有歌名字數提示與倒數（例如「歌名 ＿ ＿ ＿（3 字） · 00:21」）；**畫面上沒有歌名與封面**
+- [ ] **聲音大致同步**：A、B 坐在一起，各拿下一邊耳機互相聽（或一人兩邊耳朵各戴一台的耳機）→ 兩台像同一首歌在播、頂多有一點回音感；**聽得出明顯的先後（差半拍以上）就算不同步**，記下大約差多少
+- [ ] A 在「通話中的訊息」打一個錯的歌名 → 兩台都看到這則訊息
+- [ ] A 打對歌名（不認得這首就等揭曉，下一首再試；5 首裡猜對一首即可）→ 兩台看到「A 猜對了」（**不顯示原文**），A 自己另見「你猜對了 +<分數>」；A 的 tile 分數增加 50～100（越快越高）
+- [ ] **猜對後歌繼續播**，不會提早結束；B（出題者）也可以猜、猜對一樣得分
+- [ ] 已猜對的 A 再打一次歌名（或含歌名的句子）→ 被擋下「你已經猜對了，不要說出歌名」，B 看不到
+- [ ] 試聽播完（約 30 秒）→ **揭曉卡**：專輯**封面**、歌名、歌手、本首猜對者與分數（沒人猜對顯示「沒有人猜對」）；字幕列「下一首 00:04」倒數
+- [ ] 約 5 秒後自動進第 2 首，兩台又同時開始播；舞台變「第 2 / 5 首」
+- [ ] 第 5 首揭曉停 5 秒後 → 舞台換成**本局排名表**（標題「本局結果 · 孫燕姿」：名次、暱稱、本局得分、猜對首數）；字幕列「本局第一名：X（n 分）」；兩台看到的排名與分數一致
+- [ ] 排名停著不動，直到有人再按「分享音訊」開始下一局
+
+### 5-4. 重新整理與自動播放（再開一局，播放中做）
+
+- [ ] 第 n 首播放中，B 按 F5 重新整理 → **不用重打暱稱**自動回到遊戲，分數還在
+- [ ] B 的歌**從目前的位置接著播**（不是從頭）：和 A 互相對一下，兩台仍然大致同步，字幕列倒數與 A 一致
+- [ ] **自動播放被擋**：重新整理後頁面還沒被點過，瀏覽器可能不讓它自己出聲 → 舞台中央（原本波形的位置）出現按鈕「**點一下開始播放**」；點一下 → 立刻出聲，而且是**目前的位置**、與 A 同步
+- [ ] （選做，上一項沒出現按鈕時用來重現）Safari：選單「Safari → 此網站的設定 → 自動播放 → 永不自動播放」；Firefox：「設定 → 隱私權與安全性 → 權限 → 自動播放 → 封鎖音訊與視訊」；設好後重新整理，應出現「點一下開始播放」。驗完改回原設定
+- [ ] 音量：滑鼠移到控制列的喇叭圖示，上方浮出滑桿 → 拉動只影響自己這台；重新整理後音量保留
+- [ ] （選做）C 在某首播放中途加入 → 一進來就從目前進度接著聽、可以猜也會得分；idle 時進來則看得到上一局排名
+
+### 5-5. 出題失敗（選做）
+
+- [ ] 出題時填一個不存在的歌手（例如 `zzzz不存在的歌手`）→ 對話框顯示「找不到這位歌手的歌（至少要 5 首有試聽的歌），換一位試試」，對話框還在、可以改填再送
+- [ ] 出題者按「取消」→ 回到「尚無人分享音訊」（或上一局排名），別人可以按「分享音訊」
+
+### 連不到 Apple 網域時
+
+| 哪裡不通 | 會看到的現象 | 下一步 |
+|----------|-------------|--------|
+| **server 那台**連不到 `itunes.apple.com` | 出題者按「分享」後，對話框顯示「搜尋失敗，請再試一次」（最久等 8 秒），對話框還在可重試；server log 有 `"event":"song-guess.itunes.failed"`（warn，帶原因）。另兩款遊戲不受影響 | 確認主機／容器能連外網（重跑 5-1 的指令）；Docker 看 `docker compose logs`。換網路或排除代理、防火牆後直接重試，不必重啟（失敗的搜尋不會被快取） |
+| **某台玩家電腦**連不到 `audio-ssl.itunes.apple.com` | 那一台**沒有聲音**：倒數、聊天與揭曉都正常，舞台中央的波形換成「點一下開始播放」，但**點了還是沒聲音、按鈕又跑出來**；其他台正常。瀏覽器開發者工具 Network 分頁可看到 `.m4a` 請求失敗 | 記下是哪台、哪個網域、5-1 的檢查結果（瀏覽器錯誤畫面截圖或 curl 印出的狀態碼）→ **回報**。v1 沒有替代方案：server 不轉送音訊；「server 中繼試聽檔」列在 v2（[spec/song-guess/architecture.md](../spec/song-guess/architecture.md) §9），由 Rex 與海圖決定要不要開。可先請那位同事換一台連得到的電腦 |
+| **某台玩家電腦**連不到 `is1-ssl.mzstatic.com` | 聲音正常，只有揭曉卡的封面出不來（歌名、歌手、得分照常） | 同上，記下並回報；不影響遊戲進行 |
+
 ## 出問題時要收集的資訊
 
 請把以下內容一併回報（貼文字或截圖），比較好判斷是網路、防火牆還是程式問題：
@@ -78,9 +168,11 @@
    - 出問題前後的 `draw-guess.connect`、`draw-guess.join`（`addr` 是對方 IP，可確認對方到底有沒有連進來）、`draw-guess.join.rejected`（`error` 欄位）、`draw-guess.disconnect`（`reason` 欄位）
    - 任何 `"level":"warn"` 或 `"level":"error"` 的行
    - 若筆跡不同步：有沒有 `draw-guess.draw.dropped`（被丟棄的筆跡）
+   - 猜歌：`song-guess.itunes.config`（啟動時的 iTunes 設定）、`song-guess.itunes.search`／`song-guess.itunes.failed`（每次歌手搜尋的結果或失敗原因）、`song-guess.round`（每首開始、揭曉、本局結束）、`song-guess.join`／`song-guess.disconnect`
 3. **瀏覽器 console**（出問題的那台）：
    - 桌機 Chrome／Edge：`F12` 或 `Cmd+Option+J` → Console 分頁，紅字錯誤全部截圖
    - Safari：先在「設定 → 進階」勾選顯示開發選單，再 `Cmd+Option+C`
    - 手機：看不到 console 時，記下畫面上的錯誤文字與狀態列的連線狀態即可
    - Network 分頁的 `socket.io` 請求狀態（是 101 WebSocket、還是一直重試）
+   - 猜歌沒聲音：Network 分頁裡 `audio-ssl.itunes.apple.com` 的 `.m4a` 請求狀態（200／206 還是失敗），以及畫面上有沒有「點一下開始播放」
 4. **網路資訊**：主機 `ipconfig getifaddr en0` 的結果、出問題裝置的 IP（同一網段嗎？例如都是 `192.168.1.x`）、對方開 `http://<IP>/healthz` 的結果。
