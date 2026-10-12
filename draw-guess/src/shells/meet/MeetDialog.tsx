@@ -9,11 +9,15 @@
 // 遊戲說明（purpose 'help'，Epic 6；DESIGN §16）：標題為 title（「說明」或主題名稱）、內文 body 為 14px 段落（段距 8px、--fg-on-panel）；
 //   沒有 body 時 items 為主題清單（一列一個按鈕，↑↓／Home／End 移動）＋右下「關閉」；有 body 時按鈕顯示選項原文（「關閉」「返回」，主要在最右）。
 //   body 未提供時輸出與 Epic 6 前完全相同。
-import { useId, useRef, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+// 送出中（DialogProps.busy；plan/notes.md 2026-10-12）：輸入框改 readOnly＋aria-busy（外觀同原本的停用：opacity .6），不用原生 disabled，
+//   焦點留在輸入框，送出失敗後 Esc／Enter 照常可用；busy 結束時若焦點已不在對話框內，放回輸入框（沒有輸入框時放回第一個可用選項＝主要按鈕；shells/dialogFocus）。
+import { useId, useRef, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { tip } from '../../layout/tooltipPlacement'
+import { useRestoreDialogFocus } from '../dialogFocus'
 import type { DialogItem, DialogProps, DialogPurpose } from '../views'
 import {
   HELP_CLOSE_TEXT,
+  MEET_DIALOG_REFOCUS_SELECTORS,
   MEET_RESUME_TEXT,
   dialogKeyAction,
   isDestructiveButton,
@@ -22,8 +26,11 @@ import {
   meetDialogHeading,
 } from './meetLayout'
 
-export function MeetDialog({ purpose, label, input, title, body, items, onEscape, note, error }: DialogProps) {
+export function MeetDialog({ purpose, label, input, title, body, items, onEscape, busy = false, note, error }: DialogProps) {
   const fieldId = useId()
+  const rootRef = useRef<(HTMLFormElement & HTMLDivElement) | null>(null)
+  // 保險：busy 結束時焦點若已不在對話框內（掉到 body），放回輸入框或第一個可用選項；Esc／Enter 掛在對話框上，焦點在外面就收不到
+  useRestoreDialogFocus(busy, rootRef, MEET_DIALOG_REFOCUS_SELECTORS)
   const primary = items[0] as DialogItem | undefined
   const secondary = items[1] as DialogItem | undefined
 
@@ -46,7 +53,14 @@ export function MeetDialog({ purpose, label, input, title, body, items, onEscape
   }
 
   return (
-    <MeetCard as="form" label={label} heading={meetDialogHeading(purpose, title)} onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
+    <MeetCard
+      as="form"
+      rootRef={rootRef}
+      label={label}
+      heading={meetDialogHeading(purpose, title)}
+      onSubmit={handleSubmit}
+      onKeyDown={handleKeyDown}
+    >
       {title !== undefined && purpose !== 'help' && <p className="mb-[12px] text-[14px] leading-[20px] text-fg-on-panel">{title}</p>}
       {body !== undefined && <div className="flex flex-col gap-[8px] text-[14px] leading-[20px] text-fg-on-panel">{body}</div>}
 
@@ -65,14 +79,16 @@ export function MeetDialog({ purpose, label, input, title, body, items, onEscape
             autoFocus
             value={input.value}
             onChange={(e) => input.onChange(e.target.value)}
-            disabled={input.disabled}
+            // 送出中：readOnly＋aria-busy，不用原生 disabled（會失去焦點）
+            readOnly={busy}
+            aria-busy={busy || undefined}
             maxLength={input.maxLength}
             placeholder={input.placeholder}
             aria-invalid={input.invalid}
             autoComplete="off"
             spellCheck={false}
             enterKeyHint={input.enterKeyHint}
-            className="block h-[40px] w-full rounded-[4px] border border-border-panel bg-input px-[12px] text-[14px] text-fg-on-panel outline-none placeholder:text-fg-on-panel-muted focus:border-accent-panel aria-[invalid=true]:border-sem-error disabled:opacity-60"
+            className="block h-[40px] w-full rounded-[4px] border border-border-panel bg-input px-[12px] text-[14px] text-fg-on-panel outline-none placeholder:text-fg-on-panel-muted focus:border-accent-panel aria-[invalid=true]:border-sem-error aria-busy:cursor-default aria-busy:opacity-60"
           />
         </div>
       )}
@@ -137,6 +153,7 @@ function HelpTopicList({ items, onRun, onClose }: { items: DialogItem[]; onRun: 
               type="button"
               autoFocus={i === 0}
               aria-disabled={item.disabled || undefined}
+              data-dialog-option=""
               onClick={() => onRun(item)}
               className="flex h-[40px] w-full cursor-pointer items-center rounded-[4px] px-[8px] text-left text-[14px] text-fg-on-panel transition-colors duration-100 outline-none hover:bg-panel-hover focus:bg-panel-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-panel"
             >
@@ -160,7 +177,10 @@ function HelpTopicList({ items, onRun, onClose }: { items: DialogItem[]; onRun: 
   )
 }
 
-/** 文字按鈕：第一個選項為主要（type=submit 以承接 Enter 的隱式送出），其餘 type=button */
+/**
+ * 文字按鈕：第一個選項為主要（type=submit 以承接 Enter 的隱式送出），其餘 type=button。
+ * data-dialog-option（dialogFocus.DIALOG_OPTION_ATTR）：標記為對話框的選項，busy 結束後還原焦點時用
+ */
 function DialogButton(props: { purpose: DialogPurpose; item: DialogItem; index: number; autoFocus: boolean; onRun: () => void }) {
   const { purpose, item, index, autoFocus, onRun } = props
   const primary = index === 0
@@ -171,6 +191,7 @@ function DialogButton(props: { purpose: DialogPurpose; item: DialogItem; index: 
       autoFocus={autoFocus}
       aria-label={ariaLabel}
       aria-disabled={item.disabled || undefined}
+      data-dialog-option=""
       {...(ariaLabel !== item.label || item.disabled ? tip(item.label, 'top') : {})}
       onClick={primary ? undefined : onRun}
       className={`h-[36px] min-w-[64px] rounded-[4px] px-[12px] text-[14px] font-medium transition-colors duration-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-panel ${
@@ -203,12 +224,15 @@ export function MeetCard(props: {
   heading?: string
   onSubmit?: (e: FormEvent) => void
   onKeyDown?: (e: KeyboardEvent<HTMLFormElement & HTMLDivElement>) => void
+  /** 對話框根節點（呼叫端要查焦點是否還在對話框內時用） */
+  rootRef?: RefObject<(HTMLFormElement & HTMLDivElement) | null>
   children: ReactNode
 }) {
-  const { as: Tag, label, heading, onSubmit, onKeyDown, children } = props
+  const { as: Tag, label, heading, onSubmit, onKeyDown, rootRef, children } = props
   const headingId = useId()
   return (
     <Tag
+      ref={rootRef}
       role="dialog"
       aria-label={label}
       aria-describedby={heading !== undefined ? headingId : undefined}

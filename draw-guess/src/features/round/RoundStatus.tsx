@@ -32,7 +32,10 @@ export function VolunteerStatus() {
   return <VolunteerButton />
 }
 
-/** 「▷ 我來畫」：錯誤（回合已開始的競態等）以錯誤圖示＋文字顯示在旁邊（文字色沿用外層狀態列），4 秒或回合狀態改變後消失 */
+/**
+ * 「▷ 我來畫」：錯誤（回合已開始的競態等）以錯誤圖示＋文字顯示在旁邊（文字色沿用外層狀態列），4 秒或回合狀態改變後消失。
+ * 送出中以 StatusButton 的 busy 呈現（aria-disabled＋aria-busy，不是原生 disabled）：失敗後焦點仍在按鈕上，可以直接再按一次
+ */
 function VolunteerButton() {
   const round = useGameStore((s) => s.round)
   const { label, icon: Icon } = useVolunteerView()
@@ -56,7 +59,7 @@ function VolunteerButton() {
 
   return (
     <>
-      <StatusButton label={volunteerAriaLabel(label)} onClick={() => void handleClick()} disabled={busy}>
+      <StatusButton label={volunteerAriaLabel(label)} onClick={() => void handleClick()} busy={busy}>
         {Icon !== undefined && <Icon size={14} />}
         <span>{busy ? '請稍候…' : label}</span>
       </StatusButton>

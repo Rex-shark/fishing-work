@@ -9,9 +9,12 @@
 // 遊戲說明（purpose 'help'，Epic 6；DESIGN §16）：標題列顯示 title（「說明」或主題名稱）、內文 body 為 14px 段落（段距 8px）；
 //   沒有 body 時 items 為主題清單（一列一個按鈕，↑↓／Home／End 移動）＋右下「關閉」；有 body 時按鈕顯示選項原文（「返回」「關閉」）。
 //   body 未提供時輸出與 Epic 6 前完全相同。
-import { useId, useRef, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+// 送出中（DialogProps.busy；plan/notes.md 2026-10-12）：輸入框改 readOnly＋aria-busy（外觀同原本的停用：opacity .6），不用原生 disabled，
+//   焦點留在輸入框，送出失敗後 Esc／Enter 照常可用；busy 結束時若焦點已不在對話框內，放回輸入框（沒有輸入框時放回第一個可用選項；shells/dialogFocus）。
+import { useId, useRef, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { CloseIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
+import { useRestoreDialogFocus } from '../dialogFocus'
 import type { DialogItem, DialogProps, DialogPurpose } from '../views'
 import { DIALOG_CLOSE, dialogButtonText, dialogKeyAction, officeButtonLabel } from './officeLayout'
 
@@ -26,8 +29,11 @@ export interface OfficeDialogConfig {
 }
 
 export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }) {
-  const { purpose, label, input, title, body, items, onEscape, note, error, config } = props
+  const { purpose, label, input, title, body, items, onEscape, busy = false, note, error, config } = props
   const fieldId = useId()
+  const rootRef = useRef<(HTMLFormElement & HTMLDivElement) | null>(null)
+  // 保險：busy 結束時焦點若已不在對話框內（掉到 body），放回輸入框或第一個可用選項；Esc／Enter 掛在對話框上，焦點在外面就收不到
+  useRestoreDialogFocus(busy, rootRef)
   const description = config.descriptions?.[purpose]
   // 說明：title 當標題列文字、按鈕顯示選項原文
   const help = purpose === 'help'
@@ -56,6 +62,7 @@ export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }
   return (
     <OfficeDialogFrame
       as="form"
+      rootRef={rootRef}
       label={label}
       heading={help && title !== undefined ? title : config.titles[purpose]}
       onSubmit={handleSubmit}
@@ -79,14 +86,16 @@ export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }
             autoFocus
             value={input.value}
             onChange={(e) => input.onChange(e.target.value)}
-            disabled={input.disabled}
+            // 送出中：readOnly＋aria-busy，不用原生 disabled（會失去焦點）
+            readOnly={busy}
+            aria-busy={busy || undefined}
             maxLength={input.maxLength}
             placeholder={input.placeholder}
             aria-invalid={input.invalid}
             autoComplete="off"
             spellCheck={false}
             enterKeyHint={input.enterKeyHint}
-            className="block h-[26px] w-full rounded-[2px] border border-border bg-input px-[6px] text-fg outline-none placeholder:text-fg-muted focus:border-border-focus aria-[invalid=true]:border-sem-error disabled:opacity-60"
+            className="block h-[26px] w-full rounded-[2px] border border-border bg-input px-[6px] text-fg outline-none placeholder:text-fg-muted focus:border-border-focus aria-[invalid=true]:border-sem-error aria-busy:cursor-default aria-busy:opacity-60"
           />
         </div>
       )}
@@ -120,6 +129,7 @@ export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }
 
 /**
  * 右下按鈕：第一個為主要（確定，type=submit 以承接 Enter 的隱式送出）、其餘為次要。
+ * data-dialog-option（dialogFocus.DIALOG_OPTION_ATTR）：標記為對話框的選項，busy 結束後還原焦點時用（標題列的關閉鈕不標）。
  * text：可見文字（預設「確定」「取消」；說明對話框為選項原文）；無障礙名稱以可見文字開頭再補實際動作
  */
 function DialogButton(props: { item: DialogItem; text: string; primary: boolean; autoFocus: boolean; onRun: () => void }) {
@@ -131,6 +141,7 @@ function DialogButton(props: { item: DialogItem; text: string; primary: boolean;
       autoFocus={autoFocus}
       aria-label={ariaLabel}
       aria-disabled={item.disabled || undefined}
+      data-dialog-option=""
       {...(ariaLabel !== item.label || item.disabled ? tip(item.label, 'top') : {})}
       onClick={primary ? undefined : onRun}
       className={`h-[26px] min-w-[80px] rounded-[2px] px-3 transition-colors duration-100 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-border-focus ${
@@ -174,6 +185,7 @@ function HelpTopicList({ items, onRun, onClose }: { items: DialogItem[]; onRun: 
               type="button"
               autoFocus={i === 0}
               aria-disabled={item.disabled || undefined}
+              data-dialog-option=""
               onClick={() => onRun(item)}
               className="flex h-[32px] w-full cursor-pointer items-center px-3 text-left text-fg transition-colors duration-100 outline-none hover:bg-hover focus:bg-active focus:text-fg-on-active"
             >
@@ -222,12 +234,15 @@ export function OfficeDialogFrame(props: {
   onSubmit?: (e: FormEvent) => void
   onKeyDown?: (e: KeyboardEvent<HTMLFormElement & HTMLDivElement>) => void
   onClose?: () => void
+  /** 對話框根節點（呼叫端要查焦點是否還在對話框內時用） */
+  rootRef?: RefObject<(HTMLFormElement & HTMLDivElement) | null>
   children: ReactNode
 }) {
-  const { as: Tag, label, heading, onSubmit, onKeyDown, onClose, children } = props
+  const { as: Tag, label, heading, onSubmit, onKeyDown, onClose, rootRef, children } = props
   const headingId = useId()
   return (
     <Tag
+      ref={rootRef}
       role="dialog"
       aria-label={label}
       aria-describedby={headingId}

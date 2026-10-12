@@ -2,6 +2,7 @@
 // 文字與規則依 DESIGN.md §15、plan/meet-theme.md；本檔不含任何樣式。檔名刻意與 MeetShell.tsx／MeetDialog.tsx 取不同字根（macOS 檔名不分大小寫）。
 import { MIN_PLAYERS, type RoundPhase } from '@fishing-work/shared'
 import type { ShellId, ShellThemeSwitch } from '../types'
+import { DIALOG_OPTION_ATTR, DIALOG_REFOCUS_SELECTORS } from '../dialogFocus'
 import type { DialogPurpose } from '../views'
 
 // ─── 視窗標題 ───────────────────────────────────────────────────
@@ -123,6 +124,16 @@ export function dialogKeyAction(key: string, isComposing: boolean): 'cancel' | n
   if (isComposing) return null
   return key === 'Escape' ? 'cancel' : null
 }
+
+/**
+ * busy 結束後焦點的落點（dialogFocus.restoreDialogFocus）：輸入框 → 主要按鈕（第一個選項，type=submit）→ 其餘可用選項。
+ * Meet 的按鈕在 DOM 裡是「次要…主要」（主要在最右），照預設的 DOM 順序會落在次要按鈕，所以先找主要按鈕
+ */
+export const MEET_DIALOG_REFOCUS_SELECTORS = [
+  DIALOG_REFOCUS_SELECTORS[0],
+  `[${DIALOG_OPTION_ATTR}][type="submit"]:not([disabled]):not([aria-disabled="true"])`,
+  DIALOG_REFOCUS_SELECTORS[1],
+] as const
 
 /** 說明對話框（purpose 'help'）清單步驟的關閉按鈕 */
 export const HELP_CLOSE_TEXT = '關閉'

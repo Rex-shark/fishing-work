@@ -224,7 +224,9 @@ describe('未提供 body 時三個 Dialog 的輸出與 Epic 6 前完全相同（
     topicErr: {
       purpose: 'topic',
       label: '出題',
-      input: { value: '', onChange: noop, placeholder: 'p', ariaLabel: '題目', invalid: true, disabled: true },
+      // 送出中：原為 input.disabled，2026-10-12 起改為對話框層級的 busy（輸入框 readOnly＋aria-busy，不用原生 disabled）
+      busy: true,
+      input: { value: '', onChange: noop, placeholder: 'p', ariaLabel: '題目', invalid: true },
       items: [
         { id: 'ok', label: '送出中…', onSelect: noop, disabled: true },
         { id: 'cancel', label: '放棄本回合', onSelect: noop },
@@ -260,13 +262,47 @@ describe('未提供 body 時三個 Dialog 的輸出與 Epic 6 前完全相同（
   }
   const dialogs = { vscode: VscodeDialog, ppt: PptDialog, meet: MeetDialog }
 
+  /**
+   * 2026-10-12 焦點修正（plan/notes.md：送出中不再用原生 disabled）之後，三個 Dialog 的輸出與 Epic 6 前只差三處；把這三處還原再比對原本的雜湊，
+   * 其餘仍須逐字相同（雜湊值未更動）：
+   *   (1) 輸入框送出中的樣式 disabled:opacity-60 → aria-busy:cursor-default aria-busy:opacity-60；
+   *   (2) 送出中的輸入框 disabled → readOnly＋aria-busy；
+   *   (3) 選項多了 data-dialog-option（busy 結束後還原焦點用；ppt、meet 標在按鈕，vscode 標在選單）
+   */
+  const beforeFocusFix = (html: string) =>
+    html
+      .replace('aria-busy:cursor-default aria-busy:opacity-60', 'disabled:opacity-60')
+      .replace(' readOnly="" aria-busy="true"', ' disabled=""')
+      .replaceAll(' data-dialog-option=""', '')
+
+  it('焦點修正後的差異只有上述三處（還原前的輸出確實含這些字樣，且各只出現預期的次數）', () => {
+    // 選項標記的個數：ppt、meet 每個按鈕一個；vscode 選單一個
+    const options: Record<string, Record<string, number>> = {
+      vscode: { topic: 1, topicErr: 1, cancel: 1, cancelNoEsc: 1 },
+      ppt: { topic: 2, topicErr: 2, cancel: 2, cancelNoEsc: 3 },
+      meet: { topic: 2, topicErr: 2, cancel: 2, cancelNoEsc: 3 },
+    }
+    for (const [shell, Dialog] of Object.entries(dialogs)) {
+      for (const [name, props] of Object.entries(cases)) {
+        const html = renderToStaticMarkup(<Dialog {...props} />)
+        const hasInput = props.input !== undefined
+        expect(html.split('aria-busy:cursor-default aria-busy:opacity-60').length - 1, `${shell} ${name}`).toBe(hasInput ? 1 : 0)
+        expect(html.split(' readOnly="" aria-busy="true"').length - 1, `${shell} ${name}`).toBe(props.busy ? 1 : 0)
+        expect(html.split(' data-dialog-option=""').length - 1, `${shell} ${name}`).toBe(options[shell]![name])
+        // 現在的輸出沒有任何原生 disabled、也沒有 disabled: 的樣式；還原後的字樣不會與現有內容相撞
+        expect(html, `${shell} ${name}`).not.toMatch(/\sdisabled=""|disabled:opacity-60/)
+        expect(/<input [^>]*\sdisabled=""/.test(beforeFocusFix(html)), `${shell} ${name}`).toBe(props.busy === true)
+      }
+    }
+  })
+
   it.each(Object.keys(cases))('%s', async (name) => {
     const crypto = (await import('node:crypto' as string)) as { createHash(a: string): { update(s: string): { digest(e: string): string } } }
     const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16)
     for (const [shell, Dialog] of Object.entries(dialogs)) {
       const props = cases[name]!
       const html = renderToStaticMarkup(<Dialog {...props} />)
-      expect(hash(html), `${shell} ${name}`).toBe(expected[shell]![name])
+      expect(hash(beforeFocusFix(html)), `${shell} ${name}`).toBe(expected[shell]![name])
       // body 明確給 undefined 也一樣
       expect(renderToStaticMarkup(<Dialog {...props} body={undefined} />), `${shell} ${name}`).toBe(html)
     }

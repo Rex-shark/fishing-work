@@ -30,7 +30,6 @@ export interface DialogField {
   onChange(value: string): void
   placeholder: string
   ariaLabel: string
-  disabled?: boolean
   maxLength?: number
   invalid?: boolean
   enterKeyHint?: 'go' | 'send' | 'done'
@@ -52,6 +51,13 @@ export interface DialogProps {
   /** 第一個選項為預設（Enter） */
   items: DialogItem[]
   onEscape?: () => void
+  /**
+   * 送出中（等 server 回應）：輸入框不可編輯、選項由呼叫端各自設 disabled。
+   * 殼層必須讓焦點留在對話框內：輸入框用 readOnly＋aria-busy 呈現，**不得用原生 disabled**
+   * （被停用的元素會失去焦點，之後 Esc／Enter 都收不到；plan/notes.md 2026-10-12）；
+   * busy 由 true 轉 false 時若焦點已不在對話框內，殼層把焦點放回輸入框（沒有輸入框時放回第一個可用選項）
+   */
+  busy?: boolean
   /** 進行中的提示 */
   note?: string | null
   /** 錯誤訊息 */

@@ -2,7 +2,10 @@
 // 用於出題、放棄確認、遊戲說明（Epic 6）、切換偽裝的快速選單；自動重連畫面只放一行提示（QuickInputNotice）。上方一個輸入框（可省略），下方一串選項；Enter 執行反白的選項、↑↓ 切換、Esc 關閉。
 // Enter 走 form 原生 submit（單一文字欄位的隱式送出），注音等輸入法選字的 Enter 不會觸發（踩雷紀錄 Phase 3）。
 // 功能元件以 ShellViews.Dialog（shells/views.ts）使用，本主題的實作為檔尾的 VscodeDialog。
+// 送出中（busy；DialogProps.busy，plan/notes.md 2026-10-12）：輸入框改 readOnly＋aria-busy（外觀同原本的停用：opacity .6），不用原生 disabled，
+//   焦點留在輸入框，送出失敗後 Esc／Enter 照常可用；busy 結束時若焦點已不在框內，放回輸入框（純選單時放回選單；shells/dialogFocus）。
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useRestoreDialogFocus } from '../dialogFocus'
 import type { DialogProps, DialogPurpose } from '../views'
 
 export interface QuickItem {
@@ -19,7 +22,6 @@ export interface QuickInputField {
   onChange(value: string): void
   placeholder: string
   ariaLabel: string
-  disabled?: boolean
   maxLength?: number
   invalid?: boolean
   enterKeyHint?: 'go' | 'send' | 'done'
@@ -36,6 +38,8 @@ interface QuickInputProps {
   body?: ReactNode
   items: QuickItem[]
   onEscape?: () => void
+  /** 送出中：輸入框 readOnly＋aria-busy（不用原生 disabled，焦點留在原處）；結束時焦點若不在框內則放回 */
+  busy?: boolean
   /** 框內最下方的訊息（錯誤以 text-sem-error 顯示） */
   message?: ReactNode
   /** 定位用 class（absolute／top 等由呼叫端決定） */
@@ -47,8 +51,9 @@ interface QuickInputProps {
 /** 快速輸入框的外框樣式（QuickInput 與 QuickInputNotice 共用） */
 const QUICK_INPUT_BOX = 'z-30 w-[600px] max-w-[calc(100%-32px)] rounded-[3px] border border-border bg-quickinput p-[6px] text-[13px] text-fg shadow-quickinput'
 
-export function QuickInput({ label, input, title, body, items, onEscape, message, className, initialActive = 0 }: QuickInputProps) {
+export function QuickInput({ label, input, title, body, items, onEscape, busy = false, message, className, initialActive = 0 }: QuickInputProps) {
   const [active, setActive] = useState(initialActive)
+  const rootRef = useRef<HTMLFormElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
   const listId = useId()
   const activeIndex = Math.min(active, Math.max(0, items.length - 1))
@@ -58,6 +63,9 @@ export function QuickInput({ label, input, title, body, items, onEscape, message
   useEffect(() => {
     if (input === undefined) listRef.current?.focus()
   }, [input])
+
+  // 保險：busy 結束時焦點若已不在框內（掉到 body），放回輸入框或選單；Esc／Enter 掛在框內，焦點在外面就收不到
+  useRestoreDialogFocus(busy, rootRef)
 
   function run(item: QuickItem | undefined) {
     if (item !== undefined && !item.disabled) item.onSelect()
@@ -104,6 +112,7 @@ export function QuickInput({ label, input, title, body, items, onEscape, message
 
   return (
     <form
+      ref={rootRef}
       role="dialog"
       aria-label={label}
       onSubmit={handleSubmit}
@@ -118,7 +127,9 @@ export function QuickInput({ label, input, title, body, items, onEscape, message
           value={input.value}
           onChange={(e) => input.onChange(e.target.value)}
           onKeyDown={(e) => handleKeyDown(e, false)}
-          disabled={input.disabled}
+          // 送出中：readOnly＋aria-busy，不用原生 disabled（會失去焦點）
+          readOnly={busy}
+          aria-busy={busy || undefined}
           maxLength={input.maxLength}
           placeholder={input.placeholder}
           aria-label={input.ariaLabel}
@@ -130,15 +141,17 @@ export function QuickInput({ label, input, title, body, items, onEscape, message
           autoComplete="off"
           spellCheck={false}
           enterKeyHint={input.enterKeyHint}
-          className="block h-[26px] w-full rounded-[2px] border border-input bg-input px-[6px] text-fg outline-none placeholder:text-fg-muted focus:border-border-focus disabled:opacity-60"
+          className="block h-[26px] w-full rounded-[2px] border border-input bg-input px-[6px] text-fg outline-none placeholder:text-fg-muted focus:border-border-focus aria-busy:cursor-default aria-busy:opacity-60"
         />
       )}
 
+      {/* data-dialog-option（dialogFocus.DIALOG_OPTION_ATTR）：選項本身不可聚焦（aria-activedescendant），busy 結束後還原焦點時落在選單上 */}
       <ul
         ref={listRef}
         id={listId}
         role="listbox"
         aria-label={label}
+        data-dialog-option=""
         tabIndex={input === undefined ? 0 : -1}
         aria-activedescendant={input === undefined && activeItem ? optionId(activeIndex) : undefined}
         onKeyDown={input === undefined ? (e) => handleKeyDown(e, true) : undefined}
@@ -210,7 +223,7 @@ const DIALOG_POSITION: Record<DialogPurpose, string> = {
 }
 
 /** 選項前綴 `› `、提問白字、提示以註解 `// ` 呈現（仿命令面板與程式註解） */
-export function VscodeDialog({ purpose, label, input, title, body, items, onEscape, note, error }: DialogProps) {
+export function VscodeDialog({ purpose, label, input, title, body, items, onEscape, busy, note, error }: DialogProps) {
   return (
     <QuickInput
       label={label}
@@ -220,6 +233,7 @@ export function VscodeDialog({ purpose, label, input, title, body, items, onEsca
       body={body}
       items={items.map((item) => ({ ...item, label: `› ${item.label}` }))}
       onEscape={onEscape}
+      busy={busy}
       message={
         <>
           {note != null && <QuickInputNote>{`// ${note}`}</QuickInputNote>}

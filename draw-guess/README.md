@@ -10,7 +10,7 @@ fishing-work 的「我畫你猜」客戶端：React 19 + Vite 8 + TypeScript + T
 
 | 指令 | 說明 |
 |------|------|
-| `npm run dev` | 根目錄：同時啟動 server（:3000）與 Vite（綁 **80 埠**、`strictPort`；開 http://localhost/draw-guess/，同事開 `http://<Rex IP>/draw-guess/`），`/socket.io` 由 Vite proxy 到 `localhost:3000`。80 被占用（例如正式版 `npm start` 在跑）會直接失敗，用 `lsof -nP -iTCP:80` 查 |
+| `npm run dev` | 根目錄：同時啟動 server（:5173）與 Vite（綁 **80 埠**、`strictPort`；開 http://localhost/draw-guess/，同事開 `http://<Rex IP>/draw-guess/`），`/socket.io` 由 Vite proxy 到 `localhost:5173`。80 被占用（例如正式版 `npm start` 在跑）會直接失敗，用 `lsof -nP -iTCP:80` 查 |
 | `npm run build` | 根目錄：建置 `draw-guess/dist/` 與 `server/dist/index.js` |
 | `npm run typecheck -w @fishing-work/draw-guess` | `tsc --noEmit`（app、`test/` 與 vite.config） |
 | `npm test -w @fishing-work/draw-guess` | Vitest：`test/` 下的純函式測試（畫布渲染、輸入換算、store 筆跡正規化與聊天、倒數、聊天格式、得分差、殼層標題／假行號／尺寸、狀態列回合文字、玩家列） |
