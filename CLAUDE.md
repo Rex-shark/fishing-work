@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本檔提供 Claude Code 在此 repo 工作時的核心指引。**主檔保持精簡**，只放本專案特有的資訊；跨專案通用的工作規則（計畫驅動、狀態符號、Git 不自動 commit）已在全域 `~/.claude/CLAUDE.md`，不在此重複。
+本檔提供 Claude Code 在此 repo 工作時的核心指引。**主檔保持精簡**，只放本專案特有的資訊；跨專案通用的工作規則（計畫驅動、狀態符號、plan／spec／user 目錄慣例、agent 撰寫原則）定義在全域 skill `project-structure`（`~/.claude/skills/project-structure/SKILL.md`），其鋪設到本專案的版本為 [plan/README.md](plan/README.md)，不在此重複。Git 不自動 commit，由 Rex 自行 commit。
 
 ## 語言規則
 
@@ -66,7 +66,7 @@ fishing-work/
 
 ```bash
 npm install                 # 安裝三個 workspace 的相依
-npm run dev                 # 同時啟動 server（:3000，只當 proxy 目標）與 Vite（綁 :80 → http://localhost/draw-guess/）
+npm run dev                 # 一次啟動 server（:3000，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:3001），並自動開瀏覽器到 http://localhost/（遊戲清單；兩款遊戲都是 HMR）
 npm run build               # 建置 draw-guess/dist/ 與 server/dist/index.js
 npm start                   # 正式：node server/dist/index.js（PORT 預設 80、HOST 預設 0.0.0.0；公司區網只放行標準埠）
 npm run typecheck           # 三個 workspace 的 tsc --noEmit
@@ -80,7 +80,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 ### 區網分享（同事連線）
 
-`npm start` 後 log 會印出區網網址（形如 `http://192.168.x.x/draw-guess/`，80 埠不帶埠號），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3000 npm start` 避開 80。詳見 `spec/architecture.md` §3。
+`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列兩款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3000 npm start` 避開 80。詳見 `spec/architecture.md` §3。
 
 ### 外網分享（Cloudflare Tunnel，備用）
 
@@ -101,8 +101,8 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | 檔案 | 內容 |
 |------|------|
 | [spec/overview.md](spec/overview.md) | 產品定位、v1 遊戲規則、範圍內外 |
-| [spec/architecture.md](spec/architecture.md) | 模組佈局、Socket 事件契約（型別放 `shared/`）、回合狀態機、驗證指令。**實作唯一契約，改動需舵手定案** |
-| [spec/draw-contest/](spec/draw-contest/) | **繪圖比賽**（Epic 14）：`overview.md` 規則、`architecture.md` 契約／狀態機／評分器／部署（改動需羅盤定案；共用層需舵手）、`design.md` 簡報偽裝的畫面對照 |
+| [spec/architecture.md](spec/architecture.md) | 模組佈局、Socket 事件契約（型別放 `shared/`）、回合狀態機、驗證指令。**實作唯一契約，改動需架構師（海圖）定案** |
+| [spec/draw-contest/](spec/draw-contest/) | **繪圖比賽**（Epic 14）：`overview.md` 規則、`architecture.md` 契約／狀態機／評分器／部署（改動需架構師（海圖）定案）、`design.md` 簡報偽裝的畫面對照 |
 | [plan/draw-guess-mvp.md](plan/draw-guess-mvp.md) | Epic 1 任務拆解與派工規範 |
 | [plan/chat-image.md](plan/chat-image.md) | Epic 2 聊天室圖片（拖曳上傳、即時中繼、不保留） |
 | [plan/camouflage-themes.md](plan/camouflage-themes.md) | Epic 3 多偽裝主題（vscode／ppt 殼層、遊戲內切換） |
@@ -140,4 +140,6 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 多 session 協作的身分與職責寫在 [.claude/team/ROSTER.md](.claude/team/ROSTER.md)，查詢與登記用 `/team-identity`。
 子代理沒有 session 身分；派工 prompt 須註明不得登記名冊、不得跨 session 傳訊。
-驗收：龍骨回報完成後，舵手派 [`acceptance-reviewer`](.claude/agents/acceptance-reviewer.md) 子代理做獨立驗收（四項指令、契約比對、協定測試、瀏覽器實測），舵手依報告定案與回寫文件，不再親自驗收（Rex 2026-09-29）。
+驗收：實作子代理回報完成後，架構師（海圖）派 [`acceptance-reviewer`](.claude/agents/acceptance-reviewer.md) 子代理做獨立驗收（四項指令、契約比對、協定測試、瀏覽器實測），架構師依報告定案與回寫文件，不親自驗收（Rex 2026-09-29 定案）。
+
+> 名冊中出現的舵手（Helm）、龍骨（Keel）、羅盤（Compass）、帆（Sail）為另一台電腦上的舊 session，2026-10-10 已移除；plan／spec 內提到他們的地方是歷史紀錄，不改。

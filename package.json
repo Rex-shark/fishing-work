@@ -13,8 +13,7 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-guess\"",
-    "dev:contest": "concurrently -k -n server,contest -c blue,green \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-contest\"",
+    "dev": "concurrently --kill-others-on-fail -n server,guess,contest,open -c blue,magenta,green,gray \"npm run dev -w @fishing-work/server\" \"npm run dev -w @fishing-work/draw-guess\" \"npm run dev -w @fishing-work/draw-contest\" \"node scripts/dev-open.mjs\"",
     "build": "npm run build -w @fishing-work/draw-guess && npm run build -w @fishing-work/draw-contest && npm run build -w @fishing-work/server",
     "start": "node server/dist/index.js",
     "tunnel": "cloudflared tunnel --url http://localhost:80",

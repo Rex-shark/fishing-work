@@ -33,14 +33,14 @@ npm run build        # 產出 draw-guess/dist/ 與 server/dist/index.js
 npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面）、PORT=80
 ```
 
-1. **看啟動 log**：`server.lan` 那一行的 `share` 會列出可分享的網址（每個區網 IP 一個），例如 `http://192.168.1.23/draw-guess/`（80 埠不帶埠號）；找不到區網 IP 時會印 `server.lan.none` 警告（確認已連上 Wi-Fi／有線網路）。
+1. **看啟動 log**：`server.lan` 那一行的 `share` 會列出站台根網址（遊戲清單，每個區網 IP 一個），例如 `http://192.168.1.23/`（80 埠不帶埠號）；`games` 另列兩款遊戲的完整網址（`draw-guess` → `http://192.168.1.23/draw-guess/`、`draw-contest` → `http://192.168.1.23/draw-contest/`）；找不到區網 IP 時會印 `server.lan.none` 警告（確認已連上 Wi-Fi／有線網路）。
 2. **查 IP**（也可直接看 log）：`ipconfig getifaddr en0`（有線網路可能是 `en1` 等其他介面）。
 3. **macOS 防火牆**：第一次啟動會跳出「是否允許 node 接受連入連線」→ 選「允許」。若「系統設定 → 網路 → 防火牆 → 選項」設成「封鎖所有連入連線」，需取消。
 4. **用另一台裝置驗證**：同事的電腦或手機開 `http://<IP>/healthz`，應回 `{"ok":true}`。
 5. **分享** `http://<IP>/draw-guess/` 給同事即可（`http://<IP>/` 是遊戲清單頁）。客戶端不需要設定任何伺服器位址。
 6. **IP 會隨 DHCP 變動**：請在路由器為這台電腦保留 IP，或改用 `http://<電腦名稱>.local/draw-guess/`（mDNS，macOS 與多數 Windows 10+ 可解析）。電腦名稱見「系統設定 → 一般 → 共享」底部的「本機主機名稱」，或在終端機執行 `scutil --get LocalHostName`。
 
-環境變數：`PORT`（預設 80）、`HOST`（預設 `0.0.0.0`）。例如 `PORT=8080 npm start`（非 80 埠時網址會帶埠號 `http://<IP>:8080/draw-guess/`）；`HOST=127.0.0.1` 只允許本機連線，區網同事會連不上。選用 `PUBLIC_URL`（例如 `http://192.168.1.50/draw-guess/`）：有設時 `server.lan` 只印這個網址（`source: "PUBLIC_URL"`），主要給 Docker 部署用。
+環境變數：`PORT`（預設 80）、`HOST`（預設 `0.0.0.0`）。例如 `PORT=8080 npm start`（非 80 埠時網址會帶埠號 `http://<IP>:8080/`）；`HOST=127.0.0.1` 只允許本機連線，區網同事會連不上。選用 `PUBLIC_URL`（站台根網址，例如 `http://192.168.1.50/`）：有設時 `server.lan` 的 `share` 只印這個網址、`games` 由同一 origin 推出兩款遊戲的網址（`source: "PUBLIC_URL"`），主要給 Docker 部署用。
 
 - 為什麼是 80：公司區網只放行標準埠，5173／3000 之類的埠會被擋。macOS 10.14 起一般使用者即可綁 80，不需 sudo；Linux 需 `sudo` 或 `setcap`。
 - 伺服器重啟後分數歸零（只存在記憶體）。
@@ -88,13 +88,13 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 
 3. **查這台電腦的區網 IP**：macOS `ipconfig getifaddr en0`（有線網路可能是 `en1`）；Windows 在命令提示字元執行 `ipconfig`，看「IPv4 位址」。
 4. **分享** `http://<IP>/draw-guess/` 給同事（`http://<IP>/healthz` 回 `{"ok":true}` 代表連得到）。
-   - 容器內看不到主機的區網 IP，啟動 log 不會列出分享網址，而是印 `server.lan.container` 提示。想讓 log 直接印出正確網址，可設 `PUBLIC_URL`：
+   - 容器內看不到主機的區網 IP，啟動 log 不會列出分享網址，而是印 `server.lan.container` 提示。想讓 log 直接印出正確網址，可設 `PUBLIC_URL`（站台根網址）：
 
      ```bash
-     PUBLIC_URL=http://192.168.1.50/draw-guess/ docker compose up -d
+     PUBLIC_URL=http://192.168.1.50/ docker compose up -d
      ```
 
-     或在專案根目錄建立 `.env` 檔寫入 `PUBLIC_URL=http://192.168.1.50/draw-guess/`（`HOST_PORT` 也可以寫在這裡），之後 `docker compose up -d` 都會套用。
+     或在專案根目錄建立 `.env` 檔寫入 `PUBLIC_URL=http://192.168.1.50/`（`HOST_PORT` 也可以寫在這裡），之後 `docker compose up -d` 都會套用。舊值 `PUBLIC_URL=http://192.168.1.50/draw-guess/` 仍相容（程式只取 origin，印出來一樣是根網址）。
 
 常用指令（都在專案根目錄執行）：
 
@@ -106,10 +106,10 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 | 看狀態（含健康檢查） | `docker compose ps` |
 
 - **重開機自動恢復**：compose 設了 `restart: unless-stopped`，只要 Docker Desktop 有開機自動啟動（設定 → General →「Start Docker Desktop when you sign in」）就會自己起來；用 `docker compose down` 停掉的則不會。
-- **Windows 的 80 埠被占用**（常見是 IIS 或 `http.sys`，啟動時報埠已被使用）：改用其他主機埠，例如 PowerShell `$env:HOST_PORT=8080; docker compose up -d --build`（或寫進 `.env`：`HOST_PORT=8080`），分享網址要帶埠號 `http://<IP>:8080/draw-guess/`；也可以停掉占用 80 的服務。注意公司區網可能只放行標準埠。
+- **Windows 的 80 埠被占用**（常見是 IIS 或 `http.sys`，啟動時報埠已被使用）：改用其他主機埠，例如 PowerShell `$env:HOST_PORT=8080; docker compose up -d --build`（或寫進 `.env`：`HOST_PORT=8080`），分享網址要帶埠號 `http://<IP>:8080/`（我畫你猜為 `http://<IP>:8080/draw-guess/`）；也可以停掉占用 80 的服務。注意公司區網可能只放行標準埠。
 - **防火牆**：第一次啟動時系統若詢問是否允許 Docker 接受連入連線 → 允許，否則同事連不上。
 - **外網分享**：Cloudflare Tunnel 仍在主機上跑（不放進容器）：`cloudflared tunnel --url http://localhost:80`（主機埠改過就改成對應埠）。
-- 只想用 Dockerfile 不用 compose 也可以：`docker build -t fishing-work .` → `docker run -d --name fishing-work -p 80:80 --restart unless-stopped fishing-work`。要讓 log 印出正確的分享網址，`docker run` 再加 `-e PUBLIC_URL=http://<新電腦 IP>/draw-guess/`。
+- 只想用 Dockerfile 不用 compose 也可以：`docker build -t fishing-work .` → `docker run -d --name fishing-work -p 80:80 --restart unless-stopped fishing-work`。要讓 log 印出正確的分享網址，`docker run` 再加 `-e PUBLIC_URL=http://<新電腦 IP>/`（站台根網址）。
 
 ## 繪圖比賽
 
@@ -123,15 +123,15 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 4. 畫完按「完成」交卷（交卷後不能改）；時間到會自動交卷。中途加入的人本回合旁觀。
 5. 評分器逐張打分（0～100），全部評完後以投影片瀏覽揭曉每人的畫、分數與名次，前三名高亮；隨機評分時畫面會標示「隨機評分」。揭曉停到有人按「我出題」開始下一回合。
 
-**網址**：正式（`npm start` 或 Docker）為 `http://<IP>/draw-contest/`；Docker 的 `PUBLIC_URL` 仍填我畫你猜的網址，啟動 log `server.lan` 的 `shareContest` 會由同一個 origin 推出繪圖比賽的網址。
+**網址**：正式（`npm start` 或 Docker）為 `http://<IP>/draw-contest/`；`PUBLIC_URL` 填站台根網址（例如 `http://<IP>/`），啟動 log `server.lan` 的 `games` 會列兩款遊戲的完整網址（2026-10-12 起；舊的 `/draw-guess/` 值仍相容）。
 
 **開發**：
 
 ```bash
-npm run dev:contest  # 同時啟動 server（:3000）與繪圖比賽的 Vite（綁 :3001）
+npm run dev  # 一次啟動 server（:3000）、我畫你猜的 Vite（:80）與繪圖比賽的 Vite（:3001），並自動開瀏覽器到 http://localhost/（遊戲清單）
 ```
 
-瀏覽器開 <http://localhost:3001/draw-contest/>（Vite 開發版，HMR；`/socket.io` proxy 到 `localhost:3000`）。`npm run dev`（我畫你猜，:80）不受影響，兩者可同時跑、共用同一個 server（:3000）。開發版只在本機用，3001 不給區網同事連。
+從遊戲清單點進 <http://localhost/draw-contest/> 就是 Vite 開發版（HMR；:80 的 Vite 把 `/draw-contest` 轉給 :3001，`/socket.io` 轉給 server :3000）。3001 只是內部轉發目標，不需要直接開，也不給區網同事連。
 
 ## Ollama 連線
 
@@ -141,7 +141,7 @@ npm run dev:contest  # 同時啟動 server（:3000）與繪圖比賽的 Vite（�
 |------|------|------|
 | `JUDGE` | `ollama` | `ollama`：Clef 決策模型（**預設**）；`random`：隨機評分器（不需要 AI）。**沒有 Ollama 的機器設 `JUDGE=random`** |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama 位址；Docker 內預設 `http://host.docker.internal:11434`（compose 已設） |
-| `JUDGE_MODEL` | `clef:27b-q4_k_m` | Ollama 裡的模型 tag（27B Q4_K_M，約 17 GB；`ollama list` 可查）；換 `clef-flash` 時改此值 |
+| `JUDGE_MODEL` | `clef:27b-nvfp4` | Ollama 裡的模型 tag（27B NVFP4，約 18 GB；`ollama list` 可查）；用其他版本（如 `clef:27b-q4_k_m`、`clef-flash`）時改此值 |
 | `JUDGE_IMAGE_WIDTH` | `640` | 送模型前把交卷圖等比縮到此寬度（1280×720 → 640×360，評分快約 3 倍、分數幾乎不變）；畫廊仍顯示原圖 |
 | `JUDGE_TIMEOUT_MS` | `30000` | 單張評分逾時；逾時或失敗的那張退回隨機，且本回合剩下的一律改用隨機 |
 | `JUDGE_FAKE_DELAY_MS` | `1500` | 隨機評分器每張的假延遲（讓「評分中 n/m」看得到；測試設 0） |

@@ -34,17 +34,17 @@ fishing-work/
 
 ## 2. 技術棧
 
-與平台相同（[../architecture.md](../architecture.md) §2）。客戶端 `draw-contest/` 的 `package.json`、`tsconfig`、`eslint.config.js`、`vite.config.ts` 以 `draw-guess/` 為範本；Vite `base: '/draw-contest/'`，**dev server 綁 3001**（80 已被 draw-guess 的 dev server 占用；開發只在 Rex 本機，不需區網），`/socket.io` proxy 到 `:3000`。
+與平台相同（[../architecture.md](../architecture.md) §2）。客戶端 `draw-contest/` 的 `package.json`、`tsconfig`、`eslint.config.js`、`vite.config.ts` 以 `draw-guess/` 為範本；Vite `base: '/draw-contest/'`，**dev server 綁 3001**（80 已被 draw-guess 的 dev server 占用；開發只在 Rex 本機，不需區網），`/socket.io` proxy 到 `:3000`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:3000`、**`/draw-guess`** proxy（含 ws）到 draw-guess 的 Vite `:80`（Vite 對 base 以外的根路徑會 302 到 `/draw-contest/`；加了之後直接開 `http://localhost:3001/` 也是遊戲清單；與 draw-guess 的 Vite 對稱，Rex 2026-10-12 要求、海圖定案）。
 
 ## 3. 執行拓樸與部署
 
 ### 開發
 
 ```bash
-npm run dev:contest     # concurrently：server（PORT=3000）＋ draw-contest Vite（:3001）→ http://localhost:3001/draw-contest/
+npm run dev     # concurrently：server（PORT=3000）＋ draw-guess Vite（:80）＋ draw-contest Vite（:3001）；自動開瀏覽器到 http://localhost/（遊戲清單）
 ```
 
-`npm run dev`（draw-guess）維持不變。**兩個 dev 腳本都會各自起一個 server :3000，不能同時跑**；要同時開發兩款遊戲，先跑 `npm run dev`，再另開終端只跑 `npm run dev -w @fishing-work/draw-contest`（只起 Vite :3001，共用前者的 server）。
+2026-10-12 起只有一條 dev 腳本（原 `dev:contest` 移除）：從遊戲清單點進 `http://localhost/draw-contest/` 即為本遊戲的 HMR 開發版（:80 的 draw-guess Vite 把 `/draw-contest` 含 ws 轉給 :3001）。:3001 只是轉發目標，不需直接開；開發只在 Rex 本機，不給區網同事連。細節見平台 spec §3「開發」。
 
 ### 正式
 
@@ -56,7 +56,7 @@ npm run dev:contest     # concurrently：server（PORT=3000）＋ draw-contest V
 |------|------|------|
 | `JUDGE` | `ollama` | `ollama`：Clef 決策模型（**預設**，Rex 2026-10-07 定案；連不上 Ollama 時啟動只 log warn，每回合仍先試 ollama，失敗才退回 random 並只影響該回合，畫面標「隨機評分」）；`random`：隨機評分器（沒有模型的機器或測試用） |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama 位址；Docker 內用 `http://host.docker.internal:11434`（compose 已設） |
-| `JUDGE_MODEL` | `clef:27b-q4_k_m` | Rex 本機已下載的 tag（27B Q4_K_M，17 GB；`ollama list` 可查）；換 `clef-flash` 時改此值 |
+| `JUDGE_MODEL` | `clef:27b-nvfp4` | Rex 本機已下載的 tag（27B NVFP4，18 GB；`ollama list` 可查；2026-10-10 Rex 由 `clef:27b-q4_k_m` 改）；用其他版本（如 `clef:27b-q4_k_m`、`clef-flash`）時改此值 |
 | `JUDGE_IMAGE_WIDTH` | `640` | 送模型前把交卷 PNG 等比縮到此寬度（640×360）；2026-10-07 實測 1280 要 14 秒、640 只要 4.5 秒且分數幾乎相同、320 開始失真 |
 | `JUDGE_TIMEOUT_MS` | `30000` | 單張評分逾時；逾時或失敗該張退回 random，且**本回合剩餘各張一律改用 random**（有界：最壞只多等一次逾時） |
 | `JUDGE_FAKE_DELAY_MS` | `1500` | random 評分器每張的假延遲（讓「評分中 n/m」看得到；測試設 0） |
@@ -274,6 +274,7 @@ export interface Judge {
   - 合成：`score = round(100 × (0.6 × likeness/4 + 0.3 × is_topic + 0.1 × effort/2))`，`confidence = likeness.confidence`。
   - **2026-10-07 羅盤實測**（Ollama 0.40.0、`clef:27b-q4_k_m`、M5 32 GB、1280×720 蘋果線稿）：對「an apple」likeness 2.20／is_topic 0.82／effort 1.12 → 合成 63 分；同一張對「a car」likeness 0.37／is_topic 0.09 → 11 分，分得開。黑底白筆與白底黑筆結果幾乎相同（2.20 vs 2.12），**不需反白**。延遲：1280×720 約 14 秒（1299 tokens）、640×360 約 4.5 秒（515 tokens，likeness 2.17 幾乎不變）、320×180 約 3.3 秒但失真（1.84）。定案：server 送模型前縮到 `JUDGE_IMAGE_WIDTH`（640），純 JS 解碼＋2×2 box 縮小（建議 `pngjs`，不引入原生相依，Docker 映像不變大），交卷原圖仍存 1280×720 給畫廊。
   - 題目語言：`topic` 原樣放進 state 與 instructions（中文題目直接送）。**帆 2026-10-07 實測**（640 寬、約 585 tokens、judgedBy 'ai'）：中文題「蘋果」蘋果圖 likeness 2.69／is_topic 0.93／effort 1.32 → 75 分（4.6 秒，暖機首張 10.2 秒），空白圖 → 3 分；英文題「apple」蘋果圖 → 76 分、空白圖 → 2 分；中英幾乎相同。對照 1280 原圖 79 分、13.8 秒。Docker 容器經 host.docker.internal 評分結果與本機相同。**補 instructions 後重跑**（2026-10-07 驗收）：線稿蘋果 76（likeness 2.76／is_topic 0.92／effort 1.47）、空白 3；彩色蘋果圖本機與 Docker 都 82 分、約 4.7–5.0 秒、空白 4 分。Ollama 掛住（收連線不回應）時第一張等滿 30 秒逾時退回、其餘直接 random，交卷到揭曉 33 秒（有界）。未驗：冷啟動暖機（實測過一次首張 10.2 秒）。
+  - **2026-10-10 換 `clef:27b-nvfp4` 實測**（Ollama 0.40.2、M5 Max 128 GB、640 寬、約 597 tokens、合成圖）：請求與回應格式不變。蘋果線稿對「an apple」77 分（likeness 2.81／is_topic 0.92／effort 1.40）、對「蘋果」74 分、彩色蘋果 79 分、汽車線稿對「汽車」81 分；畫錯題（蘋果圖對「a car」9 分、汽車圖對「蘋果」10 分）、空白 3 分、亂塗 4 分，分得開，與 Q4 版同一水準。延遲：暖機首張 4.7 秒，之後每張約 0.6–1.3 秒。未驗：Docker 容器經 host.docker.internal、32 GB 機器上的速度。
   - **`confidence` 的含義**：熵正規化的「模型有多確定」，不是「畫得多好」：蘋果圖的 likeness confidence 只有 0.19–0.22（機率分散在 2～4 級），空白圖反而 0.78–0.83（集中在 0 級）。v1 只存進 `results.confidence`、畫面不顯示；日後若要用，只能當「AI 不太確定」的標記，不得當品質指標。
 - **佇列**（`queue.ts`）：一次一張（`JUDGE_CONCURRENCY` 固定 1，不開放設定；27B 單張 4.5 秒，30 人最壞約 2.5 分鐘，交卷即評所以大多在倒數內算完）；每張 `JUDGE_TIMEOUT_MS` 逾時（AbortSignal）；失敗或逾時 → 該張改用 random 評分、`judgeMode` 設為 `'random'`，本回合剩餘各張直接走 random。回合結束（參賽者離開）時丟棄已無對應者的工作。
 - **假的 Ollama**（Phase 3，`user/mock/systemone.mjs`）：只實作 `POST /v1/systemone`，回應格式與真 Ollama 相同、分數由圖片雜湊決定；用來在模型未就緒時測 `ollama.ts` 的組請求與解析。
@@ -297,6 +298,8 @@ export interface Judge {
 
 | 日期 | 內容 |
 |------|------|
+| 2026-10-12 | §2／§3：`dev:contest` 移除，併入根目錄 `npm run dev`（三個程序一次起）；draw-contest Vite 加三條 proxy（`^/$`、`/healthz` → `:3000`，`/draw-guess` → `:80`）；平台 spec §3 已改（Rex 2026-10-12、海圖定案） |
+| 2026-10-10 | Rex 換模型：§3 `JUDGE_MODEL` 預設 `clef:27b-q4_k_m` → `clef:27b-nvfp4`（程式、compose、README、假 Ollama 預設同步）；§6 補 nvfp4 實測數據；契約與評分邏輯不變 |
 | 2026-10-07 | 初版（羅盤）：契約 §4、狀態機 §5、評分器 §6；共用層項目（§1 複製決策、§3 Docker／環境變數、根目錄建置）送舵手定案 |
 | 2026-10-07 | Phase 3 驗收通過後回寫：§3 `JUDGE` 退回語意改為「每回合先試、失敗才退回該回合」；§6 探測含模型存在檢查與非阻塞實測、補 instructions 後的分數 |
 | 2026-10-07 | 帆 Phase 3 回報後：§6 三題補 instructions（定案）、中文題實測數據、`confidence` 含義、連不上時「只 warn、每回合重試」；§3 `JUDGE` 預設 ollama（Rex 定案） |

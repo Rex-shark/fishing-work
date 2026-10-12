@@ -21,7 +21,7 @@
 - 決策 2：**基底映像 `node:24-slim`**（目前的 Active LTS；`engines` 為 `>=22.12`，tsup target node22）。開發機仍用 Node 25，不影響。原因：部署求穩，用 LTS。
 - 決策 3：**容器內以非 root 的 `node` 使用者跑、聽 80**（Docker 20.10 起容器預設允許非 root 綁低埠）；`ENV NODE_ENV=production PORT=80 HOST=0.0.0.0 IN_CONTAINER=1`；`EXPOSE 80`；`HEALTHCHECK` 打 `/healthz`（用 Node 內建 `fetch`，不裝 curl）。
 - 決策 4：**`docker-compose.yml`**（便利用，Rex 可只用 Dockerfile）：一個服務、`build: .`、`ports: "${HOST_PORT:-80}:80"`、`restart: unless-stopped`（新電腦重開機自動起來）、可選環境變數 `PUBLIC_URL`。
-- 決策 5：**分享網址 log**：容器內的網路介面是 Docker 內部網段（172.x），server 印的「區網網址」會是錯的。新增可選環境變數 `PUBLIC_URL`（例如 `http://192.168.1.50/draw-guess/`）：有設就印它；沒設且 `IN_CONTAINER=1` 時改印提示「請用主機的區網 IP：http://<主機 IP>:<對外埠>/draw-guess/，或設定 PUBLIC_URL」（2026-09-29 定案：以 spec §3 文案為準），不印 172.x 網址。原因：Rex 要把正確網址給同事。
+- 決策 5：**分享網址 log**：容器內的網路介面是 Docker 內部網段（172.x），server 印的「區網網址」會是錯的。新增可選環境變數 `PUBLIC_URL`（例如 `http://192.168.1.50/draw-guess/`）：有設就印它；沒設且 `IN_CONTAINER=1` 時改印提示「請用主機的區網 IP：http://<主機 IP>:<對外埠>/draw-guess/，或設定 PUBLIC_URL」（2026-09-29 定案：以 spec §3 文案為準），不印 172.x 網址。原因：Rex 要把正確網址給同事。**2026-10-12 更新**：分享網址改印站台根網址（遊戲清單）與 `games`，`PUBLIC_URL` 改為根網址語意（舊值相容），見 spec §3（海圖定案）。
 - 決策 6：**`.dockerignore`**：排除 `node_modules`、所有 `dist`、`.git`、`.idea`、`*.iml`、`.claude`、`plan`、`spec`、`user`、`*.md`（`server/public/index.html` 不受影響）。原因：建置脈絡小、快，不把文件與本機設定打進映像。
 - 決策 7：**不做的事**：不做 HTTPS（Epic 8 已暫緩）、不推到 registry（在新電腦上 `git clone` 後直接 build，避開 Apple Silicon／x86 架構差異）、Cloudflare Tunnel 維持在主機上跑（`cloudflared tunnel --url http://localhost:80`），不放進容器。
 - 決策 8：**新電腦注意事項寫進 README**：Windows 的 80 埠可能被 IIS／`http.sys` 佔用 → 改 `HOST_PORT=8080` 或停掉該服務；首次啟動防火牆要允許 Docker；查 IP：macOS `ipconfig getifaddr en0`、Windows `ipconfig`。

@@ -19,7 +19,7 @@
 
 - [ ] 主機：`npm run build` 成功（exit 0）
 - [ ] 主機：`caffeinate -i npm start`（或在 tmux 裡跑），log 出現 `server.listen`（`port` 為 80）
-- [ ] log 的 `server.lan` 列出區網網址，記下：`http://______________/draw-guess/`
+- [ ] log 的 `server.lan` 的 `share` 列出區網根網址（遊戲清單），記下：`http://______________/`（`games` 另列 `/draw-guess/`、`/draw-contest/` 的完整網址）
 - [ ] 若 macOS 跳出「是否允許 node 接受連入連線」→ 允許
 - [ ] 玩家 B 裝置開 `http://<IP>/healthz` → 顯示 `{"ok":true}`
 - [ ] 玩家 B 裝置開 `http://<IP>/` → 看到遊戲清單「我畫你猜」

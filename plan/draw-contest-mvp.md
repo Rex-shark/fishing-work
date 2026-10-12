@@ -31,7 +31,7 @@
 - 決策 8：**揭曉＝投影片瀏覽**、無倒數、停到下一回合；中途加入者在 join 後補收畫廊。原因：Rex 需求 5；簡報的檢視模式天生就是畫廊。
 - 決策 9：**Ollama 不進映像**，容器以 `OLLAMA_URL=http://host.docker.internal:11434` 連主機；compose 加 `extra_hosts: host.docker.internal:host-gateway`；Linux 主機要 `OLLAMA_HOST=0.0.0.0`。原因：模型 18 GB；Rex 需求 6。
 - 決策 10：**`shared` 只經子路徑匯出** `@fishing-work/shared/draw-contest`，不進根匯出。原因：型別名稱（`PlayerPublic`、`RoundPublic`…）與 draw-guess 衝突。
-- 決策 11：**開發腳本另加 `dev:contest`**，`npm run dev` 不變；contest 的 Vite dev 綁 3001。原因：80 已被 draw-guess 的 dev server 占用；不影響舵手那邊的流程。
+- 決策 11：**開發腳本另加 `dev:contest`**，`npm run dev` 不變；contest 的 Vite dev 綁 3001。原因：80 已被 draw-guess 的 dev server 占用；不影響舵手那邊的流程。**2026-10-12 作廢**：Rex 要求 dev 只留一個版本、啟動後直接看到遊戲選擇頁，`dev:contest` 併入 `npm run dev`（三個程序一次起，見平台 spec §3），海圖定案。
 
 ## 版面對照
 
@@ -48,7 +48,7 @@
 - `npm run dev`、`npm start`、`npm run build` 的 draw-guess 行為不變；新 workspace 必須有 `typecheck` 與 `test` script（無測試時 `vitest run --passWithNoTests`），否則 `npm test --workspaces` 會炸。
 - shared 子路徑由 tsup `noExternal` 一併打包，不改 tsup 設定；驗收確認 `server/dist/index.js` 不含對 shared 的 require。
 - `/draw-guess` 的 SPA fallback（無副檔名回 index、帶副檔名 404）與 `/healthz` 逐字不變；`static.missing` 警告每款各一則。
-- `PUBLIC_URL` 語意不變（仍是我畫你猜的完整網址）；`shareLog` 由 origin 推出第二款：`server.lan` 事件加 `games: ["/draw-guess/","/draw-contest/"]` 與 `shareContest`，既有 `share`／`local`／`source` 欄位不變；容器提示加一句「繪圖比賽為 /draw-contest/」；`shareLog.test.ts` 既有 9 例不得改、只能加。
+- `PUBLIC_URL` 語意不變（仍是我畫你猜的完整網址）；`shareLog` 由 origin 推出第二款：`server.lan` 事件加 `games: ["/draw-guess/","/draw-contest/"]` 與 `shareContest`，既有 `share`／`local`／`source` 欄位不變；容器提示加一句「繪圖比賽為 /draw-contest/」；`shareLog.test.ts` 既有 9 例不得改、只能加。**2026-10-12 更新**：分享網址改印站台根網址（遊戲清單）與 `games`，`PUBLIC_URL` 改為根網址語意，`shareContest` 移除、`shareLog.test.ts` 依新契約改寫，見 spec §3（海圖定案）。
 - Docker 驗收照 Epic 9：非 80 主機埠 build＋跑一次，`/draw-contest/` 與 `/draw-guess/` 都載得到，回報映像大小。
 - README 的「繪圖比賽」與「Ollama 連線」兩節放在 Docker 一節之後，不改既有段落。
 - 資料夾歸屬：`server/src/games/draw-contest/`、`shared/src/draw-contest/`、`draw-contest/` 歸羅盤與帆；`server/src/{app,index,static}.ts`、`shared/package.json`、根 `package.json`、Dockerfile、compose、README 既有段落仍是共用層，六項以外的改動要知會舵手。
@@ -95,6 +95,7 @@
 | ✅ | 本機實測（2026-10-07 羅盤，Rex 已下載 `clef:27b-q4_k_m`、M5 32 GB）：1280 約 14 秒、640 約 4.5 秒；蘋果 63 分 vs 汽車 11 分；黑底不需反白；結果已寫回 spec §6 | 剩：中文題目實測一次（接好後由帆做） |
 | ✅ | Docker 實測：`docker compose up -d --build`，容器連 `host.docker.internal:11434` 評分成功；README 寫 macOS／Linux 兩種設定 | 決策 9；2026-10-07 acceptance-reviewer 驗收 Phase 3 有條件通過（10 項過；容器 judgedBy ai、蘋果 82／空白 4、單張約 4.7–5.0 秒；映像 363 MB、pngjs 7.0.0、無 @types；探測非阻塞的字面條件待舵手定案） |
 | ✅ | 預設 `JUDGE` 改為 `ollama`（judge/index.ts、compose `${JUDGE:-ollama}`、README；spec §3 表已改）；連不上自動退回 random | Rex 2026-10-07 定案：改 |
+| ✅ | 預設 `JUDGE_MODEL` 改為 `clef:27b-nvfp4`（judge/index.ts、compose、README、`user/mock/systemone.mjs` 預設、judge 測試的預設值斷言；spec §3 表與 §6 實測） | Rex 2026-10-10：換模型版本。真模型實測（Ollama 0.40.2、M5 Max 128 GB）：蘋果 74–79 分、汽車 81 分、畫錯題 9–10 分、空白 3／亂塗 4 分；暖機首張 4.7 秒、之後約 0.6–1.3 秒。未驗：Docker 容器 |
 
 ### Phase 4：驗收
 

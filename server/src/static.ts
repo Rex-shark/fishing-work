@@ -27,7 +27,7 @@ const games: GameStatic[] = [
   {
     base: '/draw-contest',
     dist: resolve(serverRoot, '..', 'draw-contest', 'dist'),
-    missingHint: '先執行 npm run build（開發時請走 Vite：npm run dev:contest → http://localhost:3001/draw-contest/）',
+    missingHint: '先執行 npm run build（開發時請走 Vite：npm run dev → http://localhost/draw-contest/）',
   },
 ];
 
