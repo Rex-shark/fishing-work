@@ -9,7 +9,6 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
-| 🔄 | Epic 15：繪圖比賽 AI 評語（メスガキ） | 2026-10-12 ~ — | [contest-commentary.md](contest-commentary.md)：揭曉卡片每張一句評語，本機 Ollama `gemma4:26b-mlx-bf16`、雌小鬼人格自由發揮（只限繁中台灣用語、一句 40 字內）、`think: false`、預設開（`COMMENT=off` 可關）；評語不擋揭曉、`contest:comment` 補送；順帶移除評分前縮圖與 `pngjs`（Clef nvfp4 MLX 原圖 2.4 秒）。Phase 0 規格 ✅（海圖），Phase 1／2 派水手長 |
 | ⏸ | Epic 8：語音輸入（語音轉文字） | 2026-09-29 ~ — | [voice-input.md](voice-input.md)：沿用 live2D 的 whisper.cpp 做法，按麥克風講話轉成正體文字填入聊天；Meet 麥克風按鈕、ppt「聽寫」、vscode 輸入列麥克風；**2026-09-29 暫緩**：只能用區網 IP，http 下瀏覽器不開放麥克風；需區網 HTTPS 通過可行性測試才恢復 |
 | 🔄 | Epic 9：Docker 部署 | 2026-09-29 ~ — | [docker-deploy.md](docker-deploy.md)：多階段 Dockerfile（node:24-slim、非 root、healthcheck）＋ docker-compose；容器內分享網址改由 `PUBLIC_URL` 或提示；換電腦 `docker compose up -d --build` 一行部署；Phase 1 完成、龍骨 docker 驗證通過（映像 362MB），待舵手協定測試 |
 
@@ -19,6 +18,7 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
+| ✅ | Epic 15：繪圖比賽 AI 評語（メスガキ） | 2026-10-12 ~ 2026-10-12 | [contest-commentary.md](contest-commentary.md)：揭曉卡片每張一句評語，本機 Ollama `gemma4:26b-mlx-bf16`、雌小鬼人格自由發揮（只限繁中台灣用語、一句 40 字內）、`think: false`、預設開（`COMMENT=off` 可關）；評語不擋揭曉、`contest:comment` 補送；順帶移除評分前縮圖與 `pngjs`（Clef nvfp4 MLX 原圖 2.4 秒）。Phase 1–4 水手長實作、acceptance-reviewer 兩次驗收通過、Rex 實戰目視通過；順帶揭曉列帶題目、評語不截斷、兩款送出中焦點修正 |
 | ✅ | Epic 10：首頁紙張質感（需求測試） | 2026-09-29 ~ 2026-10-07 | [home-paper.md](home-paper.md)：首頁改成暖白紙底＋紙紋（顆粒、纖維、紙漿斑駁，CSS＋內嵌 SVG）＋紙卡；只動首頁；試做給 Rex 看效果再決定採用或還原；2026-10-07 Rex 採用、acceptance-reviewer 驗收通過 |
 | ✅ | Epic 13：試算表偽裝主題（Excel 風格） | 2026-10-06 ~ 2026-10-07 | [excel-theme.md](excel-theme.md)：第四套殼層 `excel`——A–C 欄人員分數表＝玩家、E 欄起浮動「圖片 1」＝畫布、「圖片格式」分頁＝工具列、右「註解」窗格＝聊天、「插入圖片」＝我來畫、出題＝「替代文字」；ppt／excel 共用 `shells/office/`。Phase 1、2 ✅（2026-10-06：工具列斷點 500px、三殼層截圖位元組不變、四主題混玩通過），待驗收；舵手定案（窄版圖片移到表格下、斷線字 `--fg-muted`、首頁卡片 2×2）已收尾；2026-10-06 acceptance-reviewer 驗收通過；2026-10-07 Rex 目視通過 |
 | ✅ | Epic 12：作畫時間改 2 分鐘（小修正） | 2026-10-06 ~ 2026-10-07 | [round-time.md](round-time.md)：`ROUND_SECONDS` 90 → 600 → **120**（唯一來源；Rex 試過 10 分鐘後改 2 分鐘），同步 spec、README、說明文字；寫死 90 的測試改為由常數推導；龍骨兩輪實作並複驗完成；2026-10-07 Rex 目視通過 |
