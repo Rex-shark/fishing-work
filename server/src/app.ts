@@ -6,6 +6,7 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { DRAW_GUESS_NAMESPACE, MAX_IMAGE_BYTES } from '@fishing-work/shared';
 import { DRAW_CONTEST_NAMESPACE } from '@fishing-work/shared/draw-contest';
+import type { CommentSetup } from './games/draw-contest/commentary/index';
 import type { JudgeSetup } from './games/draw-contest/judge/index';
 import { registerDrawContest, type DrawContestNamespace } from './games/draw-contest/register';
 import type { Room as DrawContestRoom, RoomDurations as DrawContestDurations } from './games/draw-contest/room';
@@ -30,6 +31,8 @@ export interface AppOptions {
   contestDurations?: Partial<DrawContestDurations>;
   /** 繪圖比賽：注入評分器（測試用；預設依環境變數 JUDGE 等建立） */
   judge?: JudgeSetup;
+  /** 繪圖比賽：注入評語器（測試用；預設依環境變數 COMMENT 等建立） */
+  comment?: CommentSetup;
 }
 
 /** spec §3：Socket.IO 心跳間隔 */
@@ -84,6 +87,7 @@ export function createApp(options: AppOptions = {}): App {
     clock: options.clock,
     durations: options.contestDurations,
     judge: options.judge,
+    comment: options.comment,
   });
 
   return {

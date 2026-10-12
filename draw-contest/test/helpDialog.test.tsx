@@ -100,6 +100,12 @@ describe('HelpDialog：清單 → 內文 → 返回 → 清單 → 關閉（決�
     expect(detail(other, 'chat-reconnect')).toContain('想換介面風格：X。')
     expect(detail(other, 'submit')).toContain('在確認框按「S」')
     expect(detail(other, 'ranking')).toContain('按「開始」開始下一回合')
+    // Epic 15：揭曉的評語說明（評審名稱來自 shared 常數，不是殼層名稱，換殼層不變）
+    expect(detail(PPT_VIEWS, 'ranking')).toContain('<p>揭曉時評審「メスガキ」會給每張交卷的畫一句評語')
+    expect(detail(other, 'ranking')).toContain('揭曉時評審「メスガキ」')
+    // Phase 4：第一名的評語是稱讚版
+    expect(detail(PPT_VIEWS, 'ranking')).toContain('寫在畫的下面，第一名會被稱讚。')
+    expect(detail(PPT_VIEWS, 'scoring')).not.toContain('稱讚')
     for (const t of HELP_TOPICS) expect(detail(PPT_VIEWS, t.id), t.id).not.toContain('{')
   })
 
@@ -180,7 +186,9 @@ describe('未提供 body 時 PptDialog 的輸出與我畫你猜相同（複製�
     topicErr: {
       purpose: 'topic',
       label: '出題',
-      input: { value: '', onChange: noop, placeholder: 'p', ariaLabel: '題目', invalid: true, disabled: true },
+      // 送出中：原為 input.disabled，2026-10-12 起改為對話框層級的 busy（輸入框 readOnly＋aria-busy，不用原生 disabled）
+      busy: true,
+      input: { value: '', onChange: noop, placeholder: 'p', ariaLabel: '題目', invalid: true },
       items: [
         { id: 'ok', label: '送出中…', onSelect: noop, disabled: true },
         { id: 'cancel', label: '放棄本回合', onSelect: noop },
@@ -193,13 +201,37 @@ describe('未提供 body 時 PptDialog 的輸出與我畫你猜相同（複製�
   }
   const dialogs = { ppt: PptDialog }
 
+  /**
+   * 2026-10-12 焦點修正（plan/notes.md：送出中不再用原生 disabled）之後，輸出與當初複製時只差三處；把這三處還原再比對原本的雜湊，
+   * 其餘仍須與複製時逐字相同：
+   *   (1) 輸入框送出中的樣式 disabled:opacity-60 → aria-busy:cursor-default aria-busy:opacity-60；
+   *   (2) 送出中的輸入框 disabled → readOnly＋aria-busy；
+   *   (3) 選項按鈕多了 data-dialog-option（busy 結束後還原焦點用）
+   */
+  const beforeFocusFix = (html: string) =>
+    html
+      .replace('aria-busy:cursor-default aria-busy:opacity-60', 'disabled:opacity-60')
+      .replace(' readOnly="" aria-busy="true"', ' disabled=""')
+      .replaceAll(' data-dialog-option=""', '')
+
+  it('焦點修正後的差異只有上述三處（還原前的輸出確實含這些字樣）', () => {
+    const topic = renderToStaticMarkup(<PptDialog {...cases.topic!} />)
+    const busy = renderToStaticMarkup(<PptDialog {...cases.topicErr!} />)
+    expect(topic).toContain('aria-busy:cursor-default aria-busy:opacity-60')
+    expect(topic.match(/ data-dialog-option=""/g)).toHaveLength(2)
+    expect(topic).not.toContain(' readOnly=""')
+    expect(busy).toContain(' readOnly="" aria-busy="true"')
+    expect(busy).not.toMatch(/\sdisabled=""/)
+    expect(beforeFocusFix(busy)).toMatch(/<input [^>]*\sdisabled=""/)
+  })
+
   it.each(Object.keys(cases))('%s', async (name) => {
     const crypto = (await import('node:crypto' as string)) as { createHash(a: string): { update(s: string): { digest(e: string): string } } }
     const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16)
     for (const [shell, Dialog] of Object.entries(dialogs)) {
       const props = cases[name]!
       const html = renderToStaticMarkup(<Dialog {...props} />)
-      expect(hash(html), `${shell} ${name}`).toBe(expected[shell]![name])
+      expect(hash(beforeFocusFix(html)), `${shell} ${name}`).toBe(expected[shell]![name])
       // body 明確給 undefined 也一樣
       expect(renderToStaticMarkup(<Dialog {...props} body={undefined} />), `${shell} ${name}`).toBe(html)
     }

@@ -4,9 +4,12 @@
 // 內容垂直置中，高於視窗時從頂端排。只用 home-* class（DESIGN §14.2 token）與 home-paper utility，不重用殼層 token、不寫死色碼（紙紋 data URI 只放 theme.css）。
 // 內容：標題、暱稱輸入（join／rememberedNickname／nicknameDraft、字數、錯誤）、介面風格卡片（只選取＝寫 uiStore.shellId）、
 // 「進入遊戲」按鈕（Enter 亦可）、連線狀態一行、頁尾。加入成功後 App 以選取的殼層進遊戲畫面。
+// 加入中（busy）不用原生 disabled（plan/notes.md 2026-10-12：被停用的元素會失去焦點，加入失敗後就不能直接重打再按 Enter）：
+//   暱稱輸入框改 readOnly＋aria-busy、按鈕改 aria-disabled＋aria-busy（外觀同原本的停用）；加入失敗時焦點放回輸入框。
+//   未連線時按鈕仍是原生 disabled（不是使用者送出造成的停用，維持原樣）。
 // 相依規則：可 import shells/catalog、shells/types、layout/uiStore、layout/themeCardNav、socket/client、store/game；
 // 不得 import 特定殼層、shells/views、工具提示（首頁在殼層之外），也不得含偽裝字樣（test/shellBoundary.test.ts 把關）。
-import { useId, useState, type FormEvent } from 'react'
+import { useId, useRef, useState, type FormEvent } from 'react'
 import { NICKNAME_MAX, countChars } from '@fishing-work/shared/draw-contest'
 import { useUiStore } from '../layout/uiStore'
 import { THEME_CATALOG } from '../shells/catalog'
@@ -24,6 +27,9 @@ export function HomeScreen() {
   const setDraft = useUiStore((s) => s.setNicknameDraft)
   const [nickname, setNicknameState] = useState(() => useUiStore.getState().nicknameDraft ?? rememberedNickname())
   const [submitting, setSubmitting] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  /** 加入請求在途：用 ref 擋重複送出（按鈕加入中不是原生 disabled；連按兩下時第二下還看不到 submitting 的更新） */
+  const joining = useRef(false)
   const id = useId()
   const ids = { title: `${id}-title`, field: `${id}-field`, count: `${id}-count`, error: `${id}-error`, styles: `${id}-styles` }
 
@@ -37,13 +43,21 @@ export function HomeScreen() {
   }
 
   async function handleJoin() {
-    if (!canSubmit) return
+    if (!canSubmit || joining.current) return
+    joining.current = true
     setSubmitting(true)
     try {
       const r = await join(nickname)
-      // 加入成功後草稿作廢（之後回到首頁時改用上次的暱稱）
-      if (r.ok) setDraft(null)
+      if (r.ok) {
+        // 加入成功後草稿作廢（之後回到首頁時改用上次的暱稱）
+        setDraft(null)
+      } else {
+        // 加入失敗（暱稱重複等）：焦點放回暱稱輸入框，可以直接重打再按 Enter
+        // （在輸入框按 Enter 送出時焦點本來就沒離開；用滑鼠按按鈕、或在風格卡片上按 Enter 送出時焦點在別處）
+        inputRef.current?.focus()
+      }
     } finally {
+      joining.current = false
       setSubmitting(false)
     }
   }
@@ -81,12 +95,15 @@ export function HomeScreen() {
             </span>
           </div>
           <input
+            ref={inputRef}
             id={ids.field}
             name="nickname"
             autoFocus
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
-            disabled={busy}
+            // 加入中：readOnly＋aria-busy，不用原生 disabled（會失去焦點）
+            readOnly={busy}
+            aria-busy={busy || undefined}
             // maxLength 以 UTF-16 計（emoji 算 2），放寬 4 倍，長度以 server 為準
             maxLength={NICKNAME_MAX * 4}
             aria-invalid={joinError !== null}
@@ -94,7 +111,7 @@ export function HomeScreen() {
             autoComplete="off"
             spellCheck={false}
             enterKeyHint="go"
-            className="home-paper h-12 w-full rounded-xl border border-home-border bg-home-surface px-4 text-[16px] text-home-fg outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-home-fg-dim focus:border-home-accent focus:outline-2 focus:outline-offset-0 focus:outline-home-accent aria-[invalid=true]:border-home-error disabled:opacity-60"
+            className="home-paper h-12 w-full rounded-xl border border-home-border bg-home-surface px-4 text-[16px] text-home-fg outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-home-fg-dim focus:border-home-accent focus:outline-2 focus:outline-offset-0 focus:outline-home-accent aria-[invalid=true]:border-home-error aria-busy:cursor-default aria-busy:opacity-60"
           />
           {joinError !== null && (
             <p id={ids.error} role="alert" className="text-[13px] leading-[18px] text-home-error">
@@ -122,8 +139,11 @@ export function HomeScreen() {
         <div className="flex flex-col gap-3">
           <button
             type="submit"
-            disabled={!canSubmit}
-            className="h-12 w-full cursor-pointer rounded-xl bg-home-accent text-[16px] font-semibold text-home-on-accent transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-home-accent enabled:hover:bg-home-accent-hover disabled:cursor-default disabled:opacity-50"
+            // 未連線（不是加入中）：原生 disabled，同原本。加入中：aria-disabled＋aria-busy（按鈕仍可聚焦，焦點不會掉；重複送出由 handleJoin 擋）
+            disabled={!busy && connection !== 'connected'}
+            aria-disabled={busy || undefined}
+            aria-busy={busy || undefined}
+            className="h-12 w-full cursor-pointer rounded-xl bg-home-accent text-[16px] font-semibold text-home-on-accent transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-home-accent enabled:not-aria-disabled:hover:bg-home-accent-hover disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50"
           >
             {enterButtonLabel(submitting)}
           </button>

@@ -3,7 +3,7 @@
 // 繪圖比賽只有 ppt 殼層：沿用我畫你猜的禁用字樣（日後加主題時規則已就位），正向對照改以字串樣本驗證規則本身；
 // 另加：整個 src 不得殘留我畫你猜專屬的事件與玩法（draw:op、chat:image、猜題、畫師…）。
 import { describe, expect, it } from 'vitest'
-import { CANVAS_BACKGROUND } from '@fishing-work/shared/draw-contest'
+import { CANVAS_BACKGROUND, COMMENT_PERSONA_NAME } from '@fishing-work/shared/draw-contest'
 import { applyCanvasBackground } from '../src/features/canvas/canvasBackground'
 import { SHELLS } from '../src/shells'
 import { PLANNED_THEMES } from '../src/shells/catalog'
@@ -326,6 +326,25 @@ describe('我畫你猜的殘留（spec/draw-contest/architecture.md §4：只用
       const hit = DRAW_GUESS_LEFTOVERS.test(bad) || importPaths(bad).some((p) => p === '@fishing-work/shared')
       expect(hit, bad).toBe(true)
     }
+  })
+})
+
+describe('評審名稱（Epic 15）：唯一來源是 shared 的 COMMENT_PERSONA_NAME', () => {
+  it('src 全部不寫死評審名稱（含註解）；揭曉卡片與說明都從 shared 匯入', () => {
+    for (const [file, src] of Object.entries(allSources)) expect(src.includes(COMMENT_PERSONA_NAME), file).toBe(false)
+    const users = Object.entries(allSources)
+      .filter(([, src]) => /\bCOMMENT_PERSONA_NAME\b/.test(stripComments(src)))
+      .map(([file]) => file.replace('../src/', ''))
+      .sort()
+    expect(users).toEqual(['features/help/helpTopics.ts', 'features/reveal/Reveal.tsx', 'features/reveal/revealView.ts'])
+  })
+
+  it('功能元件的評語行不用殼層的偽裝字樣當前綴（design §3：前綴用評審名稱）', () => {
+    const reveal = Object.entries(featureSources).filter(([file]) => file.includes('/features/reveal/'))
+    expect(reveal).toHaveLength(2)
+    for (const [file, src] of reveal) expect(stripComments(src), file).not.toMatch(/註解/)
+    // 正向對照
+    expect(/註解/.test(stripComments("<span>註解：{comment.text}</span>"))).toBe(true)
   })
 })
 

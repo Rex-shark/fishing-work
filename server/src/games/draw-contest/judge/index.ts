@@ -1,11 +1,13 @@
 // 依環境變數建立評分器：spec/draw-contest/architecture.md §3「評分器環境變數」、§6
-// JUDGE（ollama｜random，預設 ollama）、OLLAMA_URL、JUDGE_MODEL、JUDGE_IMAGE_WIDTH、JUDGE_TIMEOUT_MS、JUDGE_FAKE_DELAY_MS。
+// JUDGE（ollama｜random，預設 ollama）、OLLAMA_URL、JUDGE_MODEL、JUDGE_TIMEOUT_MS、JUDGE_FAKE_DELAY_MS。
 // JUDGE=ollama：主評分器為 Clef（ollama.ts）、fallback 為 random。啟動時非同步探測一次（不阻塞啟動、只 log）；
 // 探測失敗也**不**永久改成 random——每回合仍先試 ollama，連不上會很快失敗並由佇列退回 random（本回合剩餘走 random），
 // 所以 Ollama 之後才開也不用重啟 server。
+// 探測到模型時背景暖機一次（§6.1「啟動」：Clef 也比照暖機；1×1 PNG 的 systemone 請求，結果只 log）：
+// Clef 冷啟動第一張實測 13.4 秒，不暖機第一回合第一張會等。暖機失敗同樣不影響評分。
 import { log } from '../../../lib/log';
 import type { Clock } from '../room';
-import { createOllamaJudge, probeOllama, type FetchLike, type ProbeResult } from './ollama';
+import { createOllamaJudge, probeOllama, warmupSystemOne, type FetchLike, type JudgeWarmupResult, type ProbeResult } from './ollama';
 import { createRandomJudge } from './random';
 import type { Judge } from './types';
 
@@ -15,13 +17,14 @@ export const DEFAULT_JUDGE_CONFIG = {
   judge: 'ollama',
   ollamaUrl: 'http://127.0.0.1:11434',
   model: 'clef:27b-nvfp4',
-  imageWidth: 640,
   timeoutMs: 30_000,
   fakeDelayMs: 1500,
 } as const;
 
 /** 啟動探測的逾時（毫秒）：只為 log，不影響評分 */
 export const PROBE_TIMEOUT_MS = 3000;
+/** 暖機逾時（毫秒）：與評語器暖機相同（冷啟動第一張實測 13.4 秒，留足餘裕）；只為 log，不影響評分 */
+export const WARMUP_TIMEOUT_MS = 60_000;
 
 export type JudgeKind = 'random' | 'ollama';
 
@@ -29,7 +32,6 @@ export interface JudgeConfig {
   judge: JudgeKind;
   ollamaUrl: string;
   model: string;
-  imageWidth: number;
   timeoutMs: number;
   fakeDelayMs: number;
 }
@@ -41,6 +43,8 @@ export interface JudgeSetup {
   timeoutMs: number;
   /** JUDGE=ollama 時的啟動探測（完成後已 log；測試可 await）；random 時不存在 */
   probe?: Promise<ProbeResult>;
+  /** JUDGE=ollama 時的背景暖機（探測成功才送；null = 探測失敗而未暖機；完成後已 log，測試可 await）；random 時不存在 */
+  warmup?: Promise<JudgeWarmupResult | null>;
 }
 
 type Logger = (event: string, fields?: Record<string, unknown>) => void;
@@ -67,7 +71,6 @@ export function readJudgeConfig(env: NodeJS.ProcessEnv = process.env, warn: Logg
     judge,
     ollamaUrl: env.OLLAMA_URL?.trim() || DEFAULT_JUDGE_CONFIG.ollamaUrl,
     model: env.JUDGE_MODEL?.trim() || DEFAULT_JUDGE_CONFIG.model,
-    imageWidth: readInt(env, 'JUDGE_IMAGE_WIDTH', DEFAULT_JUDGE_CONFIG.imageWidth, warn, 1),
     timeoutMs: readInt(env, 'JUDGE_TIMEOUT_MS', DEFAULT_JUDGE_CONFIG.timeoutMs, warn, 1),
     fakeDelayMs: readInt(env, 'JUDGE_FAKE_DELAY_MS', DEFAULT_JUDGE_CONFIG.fakeDelayMs, warn, 0),
   };
@@ -77,12 +80,13 @@ export interface JudgeSetupOptions {
   timers?: Pick<Clock, 'setTimeout' | 'clearTimeout'>;
   warn?: Logger;
   info?: Logger;
-  /** 測試注入（評分與探測共用）；預設全域 fetch */
+  /** 測試注入（評分、探測、暖機共用）；預設全域 fetch */
   fetch?: FetchLike;
   probeTimeoutMs?: number;
+  warmupTimeoutMs?: number;
 }
 
-/** 依設定建立評分器組合；JUDGE=ollama 時主評分器為 ollama、fallback 為 random，並非同步探測一次 */
+/** 依設定建立評分器組合；JUDGE=ollama 時主評分器為 ollama、fallback 為 random，並非同步探測一次，模型在就背景暖機一次 */
 export function createJudgeSetup(config: JudgeConfig, options: JudgeSetupOptions = {}): JudgeSetup {
   const warn = options.warn ?? log.warn;
   const info = options.info ?? log.info;
@@ -92,7 +96,6 @@ export function createJudgeSetup(config: JudgeConfig, options: JudgeSetupOptions
   const ollama = createOllamaJudge({
     url: config.ollamaUrl,
     model: config.model,
-    imageWidth: config.imageWidth,
     ...(options.fetch ? { fetch: options.fetch } : {}),
     onScored: ({ topic, raw, out, ms, inputTokens }) =>
       info('draw-contest.judge.scored', { topic, ...raw, score: out.score, confidence: out.confidence, ms, ...(inputTokens !== undefined ? { inputTokens } : {}) }),
@@ -113,7 +116,19 @@ export function createJudgeSetup(config: JudgeConfig, options: JudgeSetupOptions
       });
     return result;
   });
-  return { judge: ollama, fallback: random, timeoutMs: config.timeoutMs, probe };
+  const warmup = probe.then(async (result) => {
+    if (!result.ok) return null;
+    const warmed = await warmupSystemOne({
+      url: config.ollamaUrl,
+      model: config.model,
+      timeoutMs: options.warmupTimeoutMs ?? WARMUP_TIMEOUT_MS,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+    });
+    if (warmed.ok) info('draw-contest.judge.warmup', { model: config.model, ms: warmed.ms, ...(warmed.inputTokens !== undefined ? { inputTokens: warmed.inputTokens } : {}) });
+    else warn('draw-contest.judge.warmupFailed', { model: config.model, ms: warmed.ms, reason: warmed.reason });
+    return warmed;
+  });
+  return { judge: ollama, fallback: random, timeoutMs: config.timeoutMs, probe, warmup };
 }
 
 /** 讀環境變數並建立評分器組合（register 的預設） */
@@ -123,7 +138,7 @@ export function judgeSetupFromEnv(env: NodeJS.ProcessEnv = process.env, warn: Lo
     judge: config.judge,
     timeoutMs: config.timeoutMs,
     ...(config.judge === 'ollama'
-      ? { ollamaUrl: config.ollamaUrl, model: config.model, imageWidth: config.imageWidth }
+      ? { ollamaUrl: config.ollamaUrl, model: config.model }
       : { fakeDelayMs: config.fakeDelayMs }),
   });
   return createJudgeSetup(config, { warn });

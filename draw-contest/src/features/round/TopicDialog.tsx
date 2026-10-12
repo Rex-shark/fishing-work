@@ -1,6 +1,7 @@
 // 出題（spec/draw-contest/design.md §2 choosing：ppt「輸入標題」對話框）：對話框外觀與位置由殼層提供（ShellViews.Dialog）。
 // Enter 送出（round:setTopic → 所有人進入作畫）、Esc＝放棄出題（round:cancel → idle）。
 // 只在 phase = choosing 且自己是出題者時渲染；合法性以 server 為準，前端只顯示字數。
+// 送出中（busy）交給殼層的 Dialog 呈現：輸入框不可編輯但焦點留在原處，送出失敗後可以直接再按 Enter／Esc（plan/notes.md 2026-10-12）。
 import { useState } from 'react'
 import { TOPIC_MAX, countChars } from '@fishing-work/shared/draw-contest'
 import { useShellViews } from '../../shells/views'
@@ -14,7 +15,8 @@ export function TopicDialog() {
   return <TopicForm />
 }
 
-function TopicForm() {
+/** 出題表單（不看顯示條件的部分；測試以假 Dialog 擷取 props） */
+export function TopicForm() {
   const { Dialog } = useShellViews()
   const endsAt = useGameStore((s) => s.round.endsAt)
   const remaining = usePhaseRemainingSeconds('choosing', endsAt)
@@ -46,6 +48,7 @@ function TopicForm() {
     <Dialog
       purpose="topic"
       label="出題"
+      busy={busy}
       input={{
         value: topic,
         onChange: (v) => {
@@ -54,7 +57,6 @@ function TopicForm() {
         },
         placeholder: `輸入題目（1–${TOPIC_MAX} 字）後按 Enter`,
         ariaLabel: '題目',
-        disabled: busy,
         // maxLength 以 UTF-16 計（emoji 算 2），放寬 4 倍，長度以 server 為準（踩雷紀錄 Phase 3）
         maxLength: TOPIC_MAX * 4,
         invalid: error !== null,

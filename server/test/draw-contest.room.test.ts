@@ -163,6 +163,7 @@ describe('join', () => {
       submittedCount: 0,
       judgedCount: 0,
       judgeMode: null,
+      commentMode: null,
       results: null,
       lastTopic: null,
     });
@@ -315,6 +316,7 @@ describe('§5 round:setTopic／round:cancel', () => {
       submittedCount: 0,
       judgedCount: 0,
       judgeMode: null,
+      commentMode: null,
       results: null,
       lastTopic: null,
     });
@@ -472,8 +474,8 @@ describe('§5 judging／ended', () => {
     const ended = rounds(fx)[1];
     expect(ended).toMatchObject({ phase: 'ended', endsAt: null, judgedCount: 2, judgeMode: 'ai', topic: '蘋果', lastTopic: '蘋果' });
     expect(ended.results).toEqual([
-      { playerId: B, nickname: 'Bob', rank: 1, score: 90, confidence: 0.5, judgedBy: 'ai', submitted: true, submittedAt: clock.t },
-      { playerId: A, nickname: 'Alice', rank: 2, score: 70, confidence: 0.5, judgedBy: 'ai', submitted: true, submittedAt: clock.t },
+      { playerId: B, nickname: 'Bob', rank: 1, score: 90, confidence: 0.5, judgedBy: 'ai', submitted: true, submittedAt: clock.t, comment: null, commentPending: false },
+      { playerId: A, nickname: 'Alice', rank: 2, score: 70, confidence: 0.5, judgedBy: 'ai', submitted: true, submittedAt: clock.t, comment: null, commentPending: false },
     ]);
     expect(chatTexts(fx)).toEqual(['揭曉：第一名 Bob（90 分）']);
     expect(players(fx).map((p) => [p.id, p.score])).toEqual([[A, 70], [B, 90]]);
@@ -530,6 +532,8 @@ describe('§5 judging／ended', () => {
       judgedBy: null,
       submitted: false,
       submittedAt: null,
+      comment: null,
+      commentPending: false,
     });
     expect(galleries(allAsync())).toHaveLength(1);
   });

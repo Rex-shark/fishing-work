@@ -207,6 +207,12 @@ socket.on('contest:gallery', (image) => {
   if (store().me !== null) store().addGalleryImage(image)
 })
 
+// 評語（Epic 15）：ended 之後才完成的評語逐張補上（成功為字串、失敗為 null）；store 只收 roundNo 相符且 results 裡有的那一筆。
+// ended 之前完成的不會發這個事件，直接在 round:update／快照的 results 裡
+socket.on('contest:comment', (update) => {
+  if (store().me !== null) store().applyComment(update)
+})
+
 socket.on('round:update', (round) => {
   if (store().me !== null) store().setRound(round)
 })

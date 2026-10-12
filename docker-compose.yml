@@ -16,6 +16,13 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       # Ollama 裡的模型 tag（ollama list 可查）；換 clef-flash 時改此值
       JUDGE_MODEL: ${JUDGE_MODEL:-clef:27b-nvfp4}
+      # 繪圖比賽的評語器（Epic 15，spec/draw-contest/architecture.md §3、§6.1）：ollama（預設；gemma4 產メスガキ評語）或 off（沒有 gemma4 或記憶體不足的機器，例如 32 GB）
+      # 兩個模型同時常駐約 71 GB；連不上時該回合沒有評語，分數與揭曉不受影響
+      COMMENT: ${COMMENT:-ollama}
+      # 評語用的 Ollama 模型 tag（位址同 OLLAMA_URL）
+      COMMENT_MODEL: ${COMMENT_MODEL:-gemma4:26b-mlx-bf16}
+      # 單張評語逾時（毫秒）；逾時那張沒有評語，本回合剩餘各張跳過
+      COMMENT_TIMEOUT_MS: ${COMMENT_TIMEOUT_MS:-20000}
     # Linux 需要此對應才解析得到 host.docker.internal；macOS／Windows 的 Docker Desktop 本來就有
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -12,6 +12,7 @@ import {
 import { log } from '../../lib/log';
 import { clientAddress } from '../../lib/network';
 import { CHAT_ERROR_MESSAGES } from './chat';
+import { commentSetupFromEnv, type CommentSetup } from './commentary/index';
 import { judgeSetupFromEnv, type JudgeSetup } from './judge/index';
 import { Room, type ActionOutcome, type Clock, type Effect, type RoomDurations } from './room';
 
@@ -25,6 +26,8 @@ export interface RegisterOptions {
   durations?: Partial<RoomDurations>;
   /** 評分器（測試注入）；預設依環境變數 JUDGE 等建立（judge/index.ts） */
   judge?: JudgeSetup;
+  /** 評語器（測試注入）；預設依環境變數 COMMENT 等建立（commentary/index.ts） */
+  comment?: CommentSetup;
 }
 
 /** 讀取 player:join 的 payload；不信任客戶端：payload 不是物件回 null，形狀不對的欄位視為缺省 */
@@ -79,6 +82,7 @@ function logRoundEffects(effects: Effect[]): void {
         submitted: r.submittedCount,
         judged: r.judgedCount,
         judgeMode: r.judgeMode,
+        commentMode: r.commentMode,
         ...(r.results ? { results: r.results.map((x) => ({ player: x.playerId, rank: x.rank, score: x.score })) } : {}),
       });
     }
@@ -92,6 +96,10 @@ export function registerDrawContest(nsp: DrawContestNamespace, options: Register
     durations: options.durations,
     judge: options.judge ?? judgeSetupFromEnv(),
     onJudgeFallback: (info) => log.warn('draw-contest.judge.fallback', { ...info }),
+    comment: options.comment ?? commentSetupFromEnv(),
+    // 評語成功的 log（題目、分數、字數、耗時）由評語器回報：commentary/index.ts 的 draw-contest.comment.done
+    onCommentFailure: (info) => log.warn('draw-contest.comment.failed', { ...info }),
+    onCommentSkip: (info) => log.info('draw-contest.comment.skipped', { ...info }),
     onAsyncEffects: (effects) => {
       try {
         applyEffects(nsp, room, effects);

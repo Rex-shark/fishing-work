@@ -1,11 +1,12 @@
 // 繪圖比賽的 store（store/game；spec/draw-contest/architecture.md §7）：本機畫布、交卷狀態、揭曉畫廊的 object URL 生命週期、
-// 新回合清空、快照（加入／重連接管）、聊天去重、畫筆、resuming。
+// 新回合清空、快照（加入／重連接管）、聊天去重、畫筆、resuming、評語（Epic 15：contest:comment 補進 results）。
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import {
   BRUSH_DEFAULT,
   PALETTE,
   type ChatMessage,
   type PlayerPublic,
+  type ResultEntry,
   type RoomSnapshot,
   type RoundPublic,
 } from '@fishing-work/shared/draw-contest'
@@ -48,6 +49,20 @@ const snapshot = (patch: Partial<RoomSnapshot>): RoomSnapshot => ({
   ...patch,
 })
 const png = (n = 8) => new Uint8Array(n).fill(1).buffer
+/** 一筆已交卷的揭曉結果（預設：沒有評語、也不在產生中） */
+const result = (playerId: string, rank: number, patch: Partial<ResultEntry> = {}): ResultEntry => ({
+  playerId,
+  nickname: playerId,
+  rank,
+  score: 100 - rank,
+  confidence: 0.5,
+  judgedBy: 'ai',
+  submitted: true,
+  submittedAt: rank,
+  comment: null,
+  commentPending: false,
+  ...patch,
+})
 
 const get = () => useGameStore.getState()
 
@@ -195,6 +210,266 @@ describe('store：揭曉畫廊（gallery）的 object URL 生命週期', () => {
     get().applySnapshot(snapshot({ round: round({ roundNo: 5, phase: 'ended', results: [] }) }))
     get().addGalleryImage({ roundNo: 5, playerId: 'a', png: png() })
     expect(get().gallery.get('a')).toBe('blob:test/1')
+  })
+})
+
+describe('store：評語（contest:comment → round.results；Epic 15、architecture §4／§5）', () => {
+  /** 已加入、第 n 回合已揭曉：a、b 的評語還在產生，c 揭曉前就有評語，d 未交卷 */
+  function joinEnded(roundNo = 3) {
+    joinDrawing(roundNo)
+    get().setRound(
+      round({
+        roundNo,
+        phase: 'ended',
+        commentMode: 'ai',
+        results: [
+          result('a', 1, { commentPending: true }),
+          result('b', 2, { commentPending: true }),
+          result('c', 3, { comment: '早就寫好了' }),
+          result('d', 4, { submitted: false, submittedAt: null, judgedBy: null, confidence: null, score: 0 }),
+        ],
+      }),
+    )
+  }
+  const comments = () => get().round.results?.map((r) => [r.playerId, r.comment, r.commentPending])
+
+  it('initialRound.commentMode 為 null', () => {
+    expect(initialRound.commentMode).toBeNull()
+  })
+
+  it('正常：填入該玩家的 comment、commentPending 設 false；其他人不動', () => {
+    joinEnded()
+    const before = get().round.results ?? []
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '雜魚～' })
+    expect(comments()).toEqual([
+      ['a', '雜魚～', false],
+      ['b', null, true],
+      ['c', '早就寫好了', false],
+      ['d', null, false],
+    ])
+    const after = get().round.results ?? []
+    // 只換被改到的那一筆與陣列本身；其餘欄位與其他筆的物件參照不變
+    expect(after).not.toBe(before)
+    expect(after[0]).toEqual({ ...before[0], comment: '雜魚～', commentPending: false })
+    for (const i of [1, 2, 3]) expect(after[i]).toBe(before[i])
+    expect(get().round.phase).toBe('ended')
+    expect(get().round.commentMode).toBe('ai')
+  })
+
+  it('失敗（comment null）：commentPending 設 false、comment 維持 null（不再顯示「…」）', () => {
+    joinEnded()
+    get().applyComment({ roundNo: 3, playerId: 'b', comment: null })
+    expect(comments()?.[1]).toEqual(['b', null, false])
+    expect(comments()?.[0]).toEqual(['a', null, true])
+  })
+
+  it('逐張到齊：每張各自更新', () => {
+    joinEnded()
+    get().applyComment({ roundNo: 3, playerId: 'b', comment: '二號' })
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '一號' })
+    expect(comments()?.slice(0, 2)).toEqual([
+      ['a', '一號', false],
+      ['b', '二號', false],
+    ])
+  })
+
+  it('回合不符（上一回合遲到的、或未來的）：忽略，狀態參照不變', () => {
+    joinEnded(3)
+    const before = get().round
+    get().applyComment({ roundNo: 2, playerId: 'a', comment: '舊的' })
+    get().applyComment({ roundNo: 4, playerId: 'a', comment: '新的' })
+    expect(get().round).toBe(before)
+  })
+
+  it('找不到該玩家（不在 results 裡）：忽略', () => {
+    joinEnded()
+    const before = get().round
+    get().applyComment({ roundNo: 3, playerId: 'zzz', comment: '誰' })
+    expect(get().round).toBe(before)
+  })
+
+  it('results 為 null（還沒揭曉、或初始狀態）：忽略', () => {
+    joinDrawing(3)
+    get().setRound(round({ roundNo: 3, phase: 'judging', participantIds: ['me'], commentMode: 'ai' }))
+    const before = get().round
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '太早' })
+    expect(get().round).toBe(before)
+    expect(get().round.results).toBeNull()
+    useGameStore.setState({ ...initialGameState, gallery: new Map() })
+    get().applyComment({ roundNo: 0, playerId: 'a', comment: 'x' })
+    expect(get().round).toBe(initialRound)
+  })
+
+  it('新回合開始後，上一回合遲到的評語不會寫進新回合', () => {
+    joinEnded(3)
+    get().setRound(round({ roundNo: 4, phase: 'drawing', participantIds: ['me'] }))
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '遲到' })
+    expect(get().round.results).toBeNull()
+    get().setRound(round({ roundNo: 4, phase: 'ended', results: [result('a', 1, { commentPending: true })] }))
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '遲到' })
+    expect(comments()).toEqual([['a', null, true]])
+  })
+
+  it('順序一：round:update（pending）→ contest:comment → 之後的 round:update 帶 server 的最新 results（直接採用，評語還在）', () => {
+    joinEnded()
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '雜魚～' })
+    // server 發 contest:comment 時已同步更新自己的 results；之後的 round:update（例如有人出題 → choosing）帶的就是最新值
+    get().setRound(
+      round({
+        roundNo: 3,
+        phase: 'choosing',
+        setterId: 'p2',
+        commentMode: 'ai',
+        results: [result('a', 1, { comment: '雜魚～' }), result('b', 2, { commentPending: true }), result('c', 3, { comment: '早就寫好了' })],
+      }),
+    )
+    expect(comments()).toEqual([
+      ['a', '雜魚～', false],
+      ['b', null, true],
+      ['c', '早就寫好了', false],
+    ])
+    // 回合狀態換了（choosing）之後，同一回合的評語照樣補得上
+    get().applyComment({ roundNo: 3, playerId: 'b', comment: '二號' })
+    expect(comments()?.[1]).toEqual(['b', '二號', false])
+  })
+
+  it('順序二：帶最新 results 的 round:update 先到、同一則 contest:comment 後到：結果相同（重複套用無害）', () => {
+    joinEnded()
+    get().setRound(
+      round({ roundNo: 3, phase: 'ended', commentMode: 'ai', results: [result('a', 1, { comment: '雜魚～' }), result('b', 2, { commentPending: true })] }),
+    )
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '雜魚～' })
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '雜魚～' })
+    expect(comments()).toEqual([
+      ['a', '雜魚～', false],
+      ['b', null, true],
+    ])
+  })
+
+  it('順序三：contest:comment 比揭曉的 round:update 早到（當下 results 為 null → 忽略），隨後的 results 以 server 為準直接採用', () => {
+    joinDrawing(3)
+    get().setRound(round({ roundNo: 3, phase: 'judging', participantIds: ['me'], commentMode: 'ai' }))
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '雜魚～' })
+    expect(get().round.results).toBeNull()
+    get().setRound(round({ roundNo: 3, phase: 'ended', commentMode: 'ai', results: [result('a', 1, { comment: '雜魚～' }), result('b', 2, { commentPending: true })] }))
+    expect(comments()).toEqual([
+      ['a', '雜魚～', false],
+      ['b', null, true],
+    ])
+  })
+
+  it('第一名稱讚版（Phase 4）：揭曉的 round:update 把第一名重設為 pending（其他人已有評語）→ contest:comment 補上稱讚句', () => {
+    joinDrawing(3)
+    get().setRound(round({ roundNo: 3, phase: 'judging', participantIds: ['me'], commentMode: 'ai' }))
+    // 揭曉：第一名不論原本評語是否完成，一律 comment null、commentPending true（architecture §5）；其他人維持原值
+    get().setRound(
+      round({
+        roundNo: 3,
+        phase: 'ended',
+        commentMode: 'ai',
+        results: [result('a', 1, { commentPending: true }), result('b', 2, { comment: '雜魚～' }), result('c', 3, { comment: '就這？' })],
+      }),
+    )
+    expect(comments()).toEqual([
+      ['a', null, true],
+      ['b', '雜魚～', false],
+      ['c', '就這？', false],
+    ])
+    const before = get().round.results ?? []
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '哼，勉強算你厲害啦～' })
+    expect(comments()).toEqual([
+      ['a', '哼，勉強算你厲害啦～', false],
+      ['b', '雜魚～', false],
+      ['c', '就這？', false],
+    ])
+    const after = get().round.results ?? []
+    for (const i of [1, 2]) expect(after[i]).toBe(before[i])
+  })
+
+  it('第一名稱讚版：中途加入的快照裡第一名仍是 pending，之後的 contest:comment 照樣補上；稱讚版失敗（null）就沒有評語', () => {
+    get().applySnapshot(
+      snapshot({ round: round({ roundNo: 5, phase: 'ended', commentMode: 'ai', results: [result('a', 1, { commentPending: true }), result('b', 2, { comment: '雜魚～' })] }) }),
+    )
+    get().applyComment({ roundNo: 5, playerId: 'a', comment: '哼，勉強算你厲害啦～' })
+    expect(comments()?.[0]).toEqual(['a', '哼，勉強算你厲害啦～', false])
+    get().setRound(round({ roundNo: 6, phase: 'drawing', participantIds: ['me'] }))
+    get().setRound(round({ roundNo: 6, phase: 'ended', commentMode: 'ai', results: [result('a', 1, { commentPending: true }), result('b', 2, { comment: '雜魚～' })] }))
+    get().applyComment({ roundNo: 6, playerId: 'a', comment: null })
+    expect(comments()).toEqual([
+      ['a', null, false],
+      ['b', '雜魚～', false],
+    ])
+  })
+
+  it('同一人收到第二則 contest:comment（已不是 pending）：以後到的為準', () => {
+    joinEnded()
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '第一句' })
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '第二句' })
+    expect(comments()?.[0]).toEqual(['a', '第二句', false])
+    // 已有評語者（c：揭曉前就寫好）也一樣會被後到的事件覆蓋
+    get().applyComment({ roundNo: 3, playerId: 'c', comment: '改寫' })
+    expect(comments()?.[2]).toEqual(['c', '改寫', false])
+  })
+
+  it('本回合評語失敗（ended 之後）：仍 pending 的各收到一則 null，再收到 commentMode off 的 round:update；已產生的評語保留', () => {
+    joinEnded()
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: null })
+    get().applyComment({ roundNo: 3, playerId: 'b', comment: null })
+    get().setRound(
+      round({
+        roundNo: 3,
+        phase: 'ended',
+        commentMode: 'off',
+        results: [result('a', 1), result('b', 2), result('c', 3, { comment: '早就寫好了' }), result('d', 4, { submitted: false })],
+      }),
+    )
+    expect(get().round.commentMode).toBe('off')
+    expect(comments()).toEqual([
+      ['a', null, false],
+      ['b', null, false],
+      ['c', '早就寫好了', false],
+      ['d', null, false],
+    ])
+  })
+
+  it('中途加入（快照為揭曉中的回合）：results 的評語直接採用，之後的 contest:comment 照收', () => {
+    get().applySnapshot(
+      snapshot({
+        round: round({ roundNo: 5, phase: 'ended', commentMode: 'ai', results: [result('a', 1, { comment: '雜魚～' }), result('b', 2, { commentPending: true })] }),
+      }),
+    )
+    expect(comments()).toEqual([
+      ['a', '雜魚～', false],
+      ['b', null, true],
+    ])
+    get().applyComment({ roundNo: 5, playerId: 'b', comment: '二號' })
+    expect(comments()?.[1]).toEqual(['b', '二號', false])
+  })
+
+  it('重連接管同一回合：快照的 results 覆蓋本機的（斷線期間漏收的評語補回來）', () => {
+    joinEnded(3)
+    get().applySnapshot(
+      snapshot({
+        players: [player('me', 0)],
+        round: round({ roundNo: 3, phase: 'ended', commentMode: 'ai', results: [result('a', 1, { comment: '漏收的' }), result('b', 2, { comment: '也是' })] }),
+      }),
+    )
+    expect(comments()).toEqual([
+      ['a', '漏收的', false],
+      ['b', '也是', false],
+    ])
+  })
+
+  it('不動其他狀態：畫廊、本機畫布、交卷狀態', () => {
+    joinEnded()
+    get().addGalleryImage({ roundNo: 3, playerId: 'a', png: png() })
+    const { gallery, myCanvas, submitted, players } = get()
+    get().applyComment({ roundNo: 3, playerId: 'a', comment: '雜魚～' })
+    expect(get().gallery).toBe(gallery)
+    expect(get().myCanvas).toBe(myCanvas)
+    expect(get().submitted).toBe(submitted)
+    expect(get().players).toBe(players)
+    expect(revoked).not.toHaveBeenCalled()
   })
 })
 

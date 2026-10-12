@@ -114,6 +114,9 @@ describe('e2e /draw-contest', () => {
     expect(ended.results?.find((r) => r.playerId === a.snapshot.you)?.score).toBe(sA);
     expect(ended.results?.find((r) => r.playerId === b.snapshot.you)?.score).toBe(sB);
     expect(ended.judgeMode).toBe('random');
+    // 評語（Epic 15）：測試預設 COMMENT=off（vitest.config.ts）→ commentMode off、沒有評語也沒有 pending
+    expect(ended.commentMode).toBe('off');
+    expect(ended.results?.map((r) => [r.comment, r.commentPending])).toEqual([[null, false], [null, false]]);
 
     await waitFor(() => galleryB.length === 2, 3000, 'gallery');
     const imgA = galleryB.find((g) => g.playerId === a.snapshot.you) as GalleryImage;

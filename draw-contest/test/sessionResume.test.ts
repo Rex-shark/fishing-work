@@ -1,5 +1,6 @@
 // socket/client 的重連憑證與 resuming（plan/home-page.md 決策 4）：hasSavedSession、啟動時的 resuming、清掉憑證的路徑。
 // 以假的 location／sessionStorage 載入模組（socket 為 autoConnect: false，不會真的連線）；socket.connect／timeout 以 spy 取代。
+// 同一套載入方式順帶驗 Epic 15 的 contest:comment 有接到 store（未加入時忽略）。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const SESSION_KEY = 'fishing-work:draw-contest:session'
@@ -146,5 +147,47 @@ describe('resuming 的轉移', () => {
     fire(client.socket, 'connect')
     await vi.waitFor(() => expect(useGameStore.getState().me).toBe('p1'))
     expect(useGameStore.getState().resuming).toBe(true)
+  })
+})
+
+describe('contest:comment 接到 store（Epic 15；architecture §4）', () => {
+  const entry = (playerId: string, commentPending: boolean) => ({
+    playerId,
+    nickname: playerId,
+    rank: 1,
+    score: 50,
+    confidence: 0.5,
+    judgedBy: 'ai' as const,
+    submitted: true,
+    submittedAt: 1,
+    comment: null,
+    commentPending,
+  })
+
+  it('已加入：把評語填進 round.results 該筆、commentPending 設 false', async () => {
+    const { client, useGameStore } = await load(fakeSessionStorage())
+    const round = { ...useGameStore.getState().round, roundNo: 2, phase: 'ended' as const, results: [entry('a', true), entry('b', true)] }
+    useGameStore.setState({ me: 'p1', round })
+    fire(client.socket, 'contest:comment', { roundNo: 2, playerId: 'b', comment: '雜魚～' })
+    expect(useGameStore.getState().round.results?.map((r) => [r.playerId, r.comment, r.commentPending])).toEqual([
+      ['a', null, true],
+      ['b', '雜魚～', false],
+    ])
+    // 失敗（null）也收：不再 pending
+    fire(client.socket, 'contest:comment', { roundNo: 2, playerId: 'a', comment: null })
+    expect(useGameStore.getState().round.results?.[0]).toMatchObject({ comment: null, commentPending: false })
+  })
+
+  it('未加入（me 為 null）：忽略', async () => {
+    const { client, useGameStore } = await load(fakeSessionStorage())
+    const round = { ...useGameStore.getState().round, roundNo: 2, phase: 'ended' as const, results: [entry('a', true)] }
+    useGameStore.setState({ me: null, round })
+    fire(client.socket, 'contest:comment', { roundNo: 2, playerId: 'a', comment: '雜魚～' })
+    expect(useGameStore.getState().round).toBe(round)
+  })
+
+  it('只註冊一個 contest:comment 處理', async () => {
+    const { client } = await load(fakeSessionStorage())
+    expect((client.socket as unknown as { listeners(e: string): unknown[] }).listeners('contest:comment')).toHaveLength(1)
   })
 })

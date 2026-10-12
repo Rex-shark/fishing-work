@@ -1,9 +1,10 @@
 // 遊戲說明的內容（features/help；Phase 2 第二段正式文案）：六個主題、佔位符、秒數與數字一律由 shared 常數推導（不寫死）、
-// 沒有我畫你猜專屬的玩法（猜題、畫師、傳圖）、ppt 的代入值。
+// 沒有我畫你猜專屬的玩法（猜題、畫師、傳圖）、ppt 的代入值、揭曉時的 AI 評語（Epic 15：評審名稱讀 shared 常數）。
 import { describe, expect, it } from 'vitest'
 import {
   CHAT_MAX,
   CHOOSING_SECONDS,
+  COMMENT_PERSONA_NAME,
   DRAW_SECONDS,
   MIN_PLAYERS,
   RECONNECT_GRACE_SECONDS,
@@ -12,6 +13,7 @@ import {
   TOPIC_MAX,
 } from '@fishing-work/shared/draw-contest'
 import { formatDuration } from '../src/features/help/helpText'
+import { COMMENT_PENDING_TEXT } from '../src/features/reveal/revealView'
 import {
   HELP_BACK_LABEL,
   HELP_CLOSE_LABEL,
@@ -72,11 +74,59 @@ describe('主題資料', () => {
     for (const n of rendered.match(/\d+/g) ?? []) expect(allowed.has(n), n).toBe(true)
   })
 
+  it('評分主題（Epic 15 Phase 2.5）：由 Clef 評分、評審寫評語；連不上 Ollama 時退回隨機評分；不再有 Epic 14 的舊文案', () => {
+    const paragraphs = findHelpTopic('scoring')?.paragraphs ?? []
+    expect(paragraphs).toHaveLength(3)
+    expect(paragraphs[0]).toContain(`由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分`)
+    expect(paragraphs[0]).toContain('「正在評分」')
+    expect(paragraphs[1]).toContain(`評語由另一位評審「${COMMENT_PERSONA_NAME}」負責`)
+    expect(paragraphs[1]).toContain('不影響分數與排名')
+    expect(paragraphs[2]).toContain('連不上 Ollama')
+    expect(paragraphs[2]).toContain('退回隨機評分')
+    expect(paragraphs[2]).toContain('也不會有評語')
+    const text = paragraphs.join('')
+    expect(text).not.toMatch(/目前使用隨機評分|日後改用/)
+  })
+
   it('評分主題說明隨機評分（分數與畫得像不像無關、揭曉標示「隨機」）', () => {
     const text = findHelpTopic('scoring')?.paragraphs.join('') ?? ''
     expect(text).toContain('隨機評分')
     expect(text).toContain('「隨機」')
     expect(text).toContain(`0–${SCORE_MAX} 分`)
+  })
+
+  it('「排名與總分」說明揭曉時的評語（Epic 15）：評審名稱、每張交卷的畫一句、產生中「正在寫評語」、關閉或失敗沒有、不影響分數與排名', () => {
+    const paragraphs = findHelpTopic('ranking')?.paragraphs ?? []
+    // 接在講揭曉的那一段之後
+    expect(paragraphs[0]).toContain('全部評完就揭曉')
+    const text = paragraphs[1] ?? ''
+    expect(text).toContain(`評審「${COMMENT_PERSONA_NAME}」`)
+    expect(text).toContain('揭曉時')
+    expect(text).toContain('每張交卷的畫一句評語')
+    expect(text).toContain('寫在畫的下面')
+    // Phase 4：第一名是稱讚版，揭曉後才寫（那張先顯示產生中的文字、晚一點出現）
+    expect(text).toContain('第一名會被稱讚')
+    expect(text).toContain('第一名那句是揭曉後才寫的，會晚一點出現')
+    // 產生中的文字與卡片同一個常數（2026-10-12 由「…」改為「正在寫評語」，說明跟著變）
+    expect(COMMENT_PENDING_TEXT).toBe('正在寫評語')
+    expect(text).toContain(`還沒寫好的先顯示「${COMMENT_PENDING_TEXT}」`)
+    expect(text.indexOf(`「${COMMENT_PENDING_TEXT}」`)).toBeLessThan(text.indexOf('第一名那句'))
+    expect(text).not.toContain('…')
+    expect(text).toContain('不影響分數與排名')
+    // 只有「評分」（誰寫評語）與這一段（揭曉時怎麼顯示）提到評審；其他主題沒有
+    // 「第一名會被稱讚」只講一次（不在「評分」重複）
+    expect(HELP_TOPICS.flatMap((t) => t.paragraphs).filter((p) => p.includes('稱讚'))).toEqual([text])
+    const mentions = HELP_TOPICS.flatMap((t) => t.paragraphs.map((p) => [t.id, p] as const)).filter(([, p]) => p.includes(COMMENT_PERSONA_NAME))
+    expect(mentions.map(([id]) => id)).toEqual(['scoring', 'ranking'])
+  })
+
+  it('評審名稱不寫死：原始碼以 ${COMMENT_PERSONA_NAME} 組字（改常數說明跟著變）', () => {
+    expect(COMMENT_PERSONA_NAME).toBe('メスガキ')
+    expect(helpSource).not.toContain(COMMENT_PERSONA_NAME)
+    expect(helpSource.match(/評審「\$\{COMMENT_PERSONA_NAME\}」/g)).toHaveLength(2)
+    // 產生中的文字也不寫死（讀 reveal 的常數）
+    expect(helpSource).toContain('先顯示「${COMMENT_PENDING_TEXT}」')
+    expect(helpSource).not.toContain('正在寫評語')
   })
 
   it('沒有我畫你猜專屬的玩法（猜題、畫師、傳圖片、放棄本回合）', () => {
@@ -104,6 +154,15 @@ describe('renderTopic', () => {
     expect(renderTopic(findHelpTopic('be-setter')!, names)[0]).toContain('「從目前投影片開始」')
     expect(renderTopic(findHelpTopic('chat-reconnect')!, names).at(-1)).toBe('同一個暱稱在別的分頁加入會接管，原分頁回到首頁。想換介面風格：檔案 → 切換偽裝。')
     expect(renderTopic(findHelpTopic('submit')!, names)[0]).toBe('畫好按「完成」，在確認框按「儲存」就交卷；交卷後不能再修改。按「取消」可以回去繼續畫。')
+    // 評語那一段沒有佔位符，代入後原樣
+    expect(renderTopic(findHelpTopic('ranking')!, names)[1]).toBe(
+      '揭曉時評審「メスガキ」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚。還沒寫好的先顯示「正在寫評語」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。',
+    )
+    expect(renderTopic(findHelpTopic('scoring')!, names)).toEqual([
+      `每交一張就排隊評一張，由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分，畫得越像題目分數越高；畫面會顯示「正在評分」的進度。`,
+      '評語由另一位評審「メスガキ」負責，每張交卷的畫一句；評語不影響分數與排名。',
+      '連不上 Ollama（執行這兩個模型的服務）時，本回合剩下的畫會退回隨機評分，也不會有評語。隨機評分的分數由圖片本身決定、和畫得像不像無關，同一張圖永遠同分；揭曉時分數旁會標示「隨機」。',
+    ])
   })
 
   it('同一段出現多次也全部代入；不修改原資料', () => {

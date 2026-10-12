@@ -2,11 +2,14 @@
 // 以 server 為準的部分：me、players、round（RoundPublic）、chat；本機才有的部分：
 //   myCanvas（自己的筆跡，只在記憶體，交卷時 exportPng 重繪成 PNG；決策 3）、brush、submitted／submitting（本回合交卷）、
 //   gallery（揭曉畫廊：playerId → PNG 的 object URL；收到 contest:gallery 且 roundNo 相符才建，新回合開始時全部 revoke）。
+// 評語（Epic 15；architecture §4、§5）：round.results 每筆的 comment／commentPending 以 server 為準（快照與 round:update 直接採用），
+//   揭曉後才完成的評語由 contest:comment 補進 results（applyComment）。
 import { create } from 'zustand'
 import {
   BRUSH_DEFAULT,
   PALETTE,
   type ChatMessage,
+  type CommentUpdate,
   type GalleryImage,
   type PlayerPublic,
   type RoomSnapshot,
@@ -89,6 +92,11 @@ export interface GameActions {
   appendChat(m: ChatMessage): void
   /** 收到 contest:gallery：roundNo 與目前回合相符才建 object URL（同一人重送時 revoke 舊的） */
   addGalleryImage(image: GalleryImage): void
+  /**
+   * 收到 contest:comment（Epic 15：揭曉後評語陸續完成）：roundNo 與目前回合相符且已有 results 時，
+   * 把該玩家那筆的 comment 填入（失敗為 null）、commentPending 設 false；回合不符、尚無 results、找不到該玩家都忽略
+   */
+  applyComment(update: CommentUpdate): void
   setSubmitting(value: boolean): void
   /** 交卷成功（ack ok） */
   markSubmitted(): void
@@ -111,6 +119,7 @@ export const initialRound: RoundPublic = {
   submittedCount: 0,
   judgedCount: 0,
   judgeMode: null,
+  commentMode: null,
   results: null,
   lastTopic: null,
 }
@@ -264,6 +273,19 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
       if (old !== undefined) URL.revokeObjectURL(old)
       gallery.set(playerId, URL.createObjectURL(new Blob([bytes], { type: 'image/png' })))
       return { gallery }
+    }),
+
+  // 與 round:update 的先後不定，兩種順序結果相同：server 發 contest:comment 時已同步更新自己的 results，
+  // 之後才到的 round:update／快照帶的就是最新值（直接採用）；先到的 round:update 還是 pending，由這裡補上。
+  // 只換被改到的那一筆與 results 陣列（其他卡片的物件參照不變）
+  applyComment: ({ roundNo, playerId, comment }) =>
+    set((state) => {
+      const { round } = state
+      if (roundNo !== round.roundNo || round.results === null) return state
+      const at = round.results.findIndex((r) => r.playerId === playerId)
+      if (at === -1) return state
+      const results = round.results.map((r, i) => (i === at ? { ...r, comment, commentPending: false } : r))
+      return { round: { ...round, results } }
     }),
 
   setSubmitting: (submitting) => set({ submitting }),

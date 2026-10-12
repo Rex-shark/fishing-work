@@ -1,24 +1,28 @@
 // Clef 評分器（ollama.ts）與 JUDGE=ollama 的組合：spec/draw-contest/architecture.md §3、§6
 // 對 user/mock/systemone.mjs（同真 Ollama 0.40.0 格式）或注入的 fetch 測，不連真模型。
+// 2026-10-12（Epic 15 決策 12）：縮圖與 pngjs 已移除，交卷原圖 base64 直送；測試圖改用 helpers 的 makePng（server 不解碼圖片）。
+import { inflateSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PNG } from 'pngjs';
 import { createApp } from '../src/app';
 import { createJudgeSetup, judgeSetupFromEnv, readJudgeConfig } from '../src/games/draw-contest/judge/index';
 import {
   EFFORT_CRITERIA,
   JUDGE_TASK,
   LIKENESS_CRITERIA,
+  WARMUP_PNG_BASE64,
   buildSystemOneRequest,
+  buildWarmupRequest,
   combineScore,
   createOllamaJudge,
-  downscalePng,
   parseSystemOneResponse,
   probeOllama,
+  warmupSystemOne,
   type FetchLike,
 } from '../src/games/draw-contest/judge/ollama';
 import { JudgeQueue, type JudgeFallbackInfo, type JudgeResult } from '../src/games/draw-contest/judge/queue';
 import { createRandomJudge } from '../src/games/draw-contest/judge/random';
 import { silenceLogs } from './e2e/helpers';
+import { makePng } from './helpers/drawContest';
 
 interface MockOllama {
   url: string;
@@ -26,7 +30,7 @@ interface MockOllama {
   close(): Promise<void>;
   requests: Array<{ method: string; path: string; body?: unknown }>;
 }
-type StartMock = (options?: { port?: number; host?: string; delayMs?: number; model?: string }) => Promise<MockOllama>;
+type StartMock = (options?: { port?: number; host?: string; delayMs?: number; model?: string; commentModel?: string }) => Promise<MockOllama>;
 
 const MODEL = 'clef:27b-q4_k_m';
 const mockPath = new URL('../../user/mock/systemone.mjs', import.meta.url).href;
@@ -47,22 +51,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-/** 1280×720 RGBA PNG；像素值由 fn(x, y) 決定 */
-function makeRealPng(width: number, height: number, fn: (x: number, y: number) => [number, number, number, number]): Buffer {
-  const png = new PNG({ width, height });
-  for (let y = 0; y < height; y++)
-    for (let x = 0; x < width; x++) {
-      const [r, g, b, a] = fn(x, y);
-      const i = (y * width + x) * 4;
-      png.data[i] = r;
-      png.data[i + 1] = g;
-      png.data[i + 2] = b;
-      png.data[i + 3] = a;
-    }
-  return PNG.sync.write(png);
-}
-
-const pattern = (x: number, y: number): [number, number, number, number] => [(x * 3 + y) & 0xff, (x ^ y) & 0xff, (y * 5) & 0xff, 255];
+/** 交卷原圖（1280×720 的 PNG bytes）；seed 改變內容 */
+const realPng = (seed = 0): Buffer => Buffer.from(makePng(seed));
 const signal = () => new AbortController().signal;
 
 /** 真模型實測回應（2026-10-07，Ollama 0.40.0、clef:27b-q4_k_m、1280×720 蘋果線稿、topic 'an apple'） */
@@ -91,55 +81,6 @@ const REAL_RESPONSE = {
 const jsonResponse = (status: number, body: unknown) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-describe('§6 縮圖（JUDGE_IMAGE_WIDTH）', () => {
-  it('1280×720 → 640×360，每個像素為 2×2 box 平均；原 Buffer 不變', () => {
-    const src = makeRealPng(1280, 720, pattern);
-    const copy = Buffer.from(src);
-    const out = PNG.sync.read(downscalePng(src, 640));
-    expect([out.width, out.height]).toEqual([640, 360]);
-    expect(src.equals(copy)).toBe(true);
-    for (const [x, y] of [[0, 0], [1, 0], [17, 5], [319, 180], [639, 359], [400, 77]]) {
-      for (let c = 0; c < 3; c++) {
-        let sum = 0;
-        for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) sum += pattern(2 * x + dx, 2 * y + dy)[c];
-        expect(out.data[(y * 640 + x) * 4 + c]).toBe(Math.round(sum / 4));
-      }
-      expect(out.data[(y * 640 + x) * 4 + 3]).toBe(255);
-    }
-  });
-
-  it('黑底白線：細線縮小後變灰（平均而非取樣）', () => {
-    const src = makeRealPng(1280, 720, (x) => (x === 100 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
-    const out = PNG.sync.read(downscalePng(src, 640));
-    expect(out.data[(10 * 640 + 50) * 4]).toBe(128); // (255 + 0) / 2
-    expect(out.data[(10 * 640 + 51) * 4]).toBe(0);
-  });
-
-  it('透明像素以 alpha 加權：不讓透明的顏色滲入', () => {
-    const src = makeRealPng(4, 2, (x) => (x % 2 === 0 ? [200, 100, 50, 255] : [0, 255, 0, 0]));
-    const out = PNG.sync.read(downscalePng(src, 2));
-    expect([out.width, out.height]).toEqual([2, 1]);
-    expect(Array.from(out.data.subarray(0, 4))).toEqual([200, 100, 50, 128]);
-  });
-
-  it('非整數倍（1000×500 → 640×320）：尺寸等比、每塊 1～2 像素的平均落在來源範圍內', () => {
-    const src = makeRealPng(1000, 500, (x, y) => [(x + y) % 256, 0, 0, 255]);
-    const out = PNG.sync.read(downscalePng(src, 640));
-    expect([out.width, out.height]).toEqual([640, 320]);
-    const v = out.data[(100 * 640 + 300) * 4];
-    // 目標 (300,100) ← 來源 x 468..469、y 156..157 → (x+y)%256 介於 112..114
-    expect(v).toBeGreaterThanOrEqual(112);
-    expect(v).toBeLessThanOrEqual(114);
-  });
-
-  it('寬度已 ≤ 目標：原 bytes 直接回傳（不放大）；寬度不合法或不是 PNG → throw', () => {
-    const small = makeRealPng(320, 180, pattern);
-    expect(downscalePng(small, 640)).toBe(small);
-    expect(() => downscalePng(makeRealPng(1280, 720, pattern), 0)).toThrow();
-    expect(() => downscalePng(Buffer.from('not a png'), 640)).toThrow();
-  });
-});
-
 describe('§6 請求格式', () => {
   it('buildSystemOneRequest：model、images、state、三題 instructions 與等級文案逐字（§6）', () => {
     expect(buildSystemOneRequest(MODEL, '蘋果', 'AAAA')).toEqual({
@@ -158,10 +99,11 @@ describe('§6 請求格式', () => {
     });
   });
 
-  it('對假 Ollama 送出：POST /v1/systemone、圖片為 640×360 PNG 的 base64、Content-Type JSON', async () => {
+  it('對假 Ollama 送出：POST /v1/systemone、圖片為交卷原 PNG 的 base64（不縮圖，bytes 逐位元相同）', async () => {
     const m = await mock();
-    const judge = createOllamaJudge({ url: `${m.url}/`, model: MODEL, imageWidth: 640 });
-    const png = makeRealPng(1280, 720, pattern);
+    const judge = createOllamaJudge({ url: `${m.url}/`, model: MODEL });
+    const png = realPng(7);
+    const copy = Buffer.from(png);
     const out = await judge.score({ png, topic: '蘋果' }, signal());
     expect(judge.mode).toBe('ai');
     expect(Number.isInteger(out.score)).toBe(true);
@@ -181,18 +123,18 @@ describe('§6 請求格式', () => {
     expect(body.questions.is_topic.instructions).toBe('Is this a drawing of 蘋果?');
     expect(body.questions.effort.instructions).toBe('How complete is the drawing?');
     expect(body.images).toHaveLength(1);
-    const sent = PNG.sync.read(Buffer.from(body.images[0], 'base64'));
-    expect([sent.width, sent.height]).toEqual([640, 360]);
+    expect(Buffer.from(body.images[0], 'base64').equals(copy)).toBe(true);
+    expect(png.equals(copy)).toBe(true); // 原 Buffer 不變
   });
 
   it('同一張圖＋同一題，假 Ollama 給同分；不同圖通常不同分', async () => {
     const m = await mock();
-    const judge = createOllamaJudge({ url: m.url, model: MODEL, imageWidth: 640 });
-    const a = makeRealPng(1280, 720, pattern);
+    const judge = createOllamaJudge({ url: m.url, model: MODEL });
+    const a = realPng(0);
     const outs = new Set<string>();
     const first = await judge.score({ png: a, topic: '貓' }, signal());
     expect(await judge.score({ png: Buffer.from(a), topic: '貓' }, signal())).toEqual(first);
-    for (let k = 1; k <= 5; k++) outs.add(JSON.stringify(await judge.score({ png: makeRealPng(1280, 720, (x, y) => [(x * k) & 0xff, y & 0xff, k, 255]), topic: '貓' }, signal())));
+    for (let k = 1; k <= 5; k++) outs.add(JSON.stringify(await judge.score({ png: realPng(k), topic: '貓' }, signal())));
     expect(outs.size).toBeGreaterThan(1);
   });
 });
@@ -227,21 +169,21 @@ describe('§6 解析與合成', () => {
 });
 
 describe('§6 錯誤與中止', () => {
-  const png = () => makeRealPng(1280, 720, pattern);
+  const png = () => realPng();
 
   it('HTTP 非 2xx → throw（附狀態碼與 Ollama 的 error 文字）', async () => {
     const m = await mock({ model: 'other:1b' });
-    const judge = createOllamaJudge({ url: m.url, model: MODEL, imageWidth: 640 });
+    const judge = createOllamaJudge({ url: m.url, model: MODEL });
     await expect(judge.score({ png: png(), topic: '蘋果' }, signal())).rejects.toThrow(/HTTP 404.*not found/);
     const fetch500: FetchLike = () => Promise.resolve(new Response('boom', { status: 500 }));
-    await expect(createOllamaJudge({ url: 'http://x', model: MODEL, imageWidth: 640, fetch: fetch500 }).score({ png: png(), topic: 't' }, signal())).rejects.toThrow(/HTTP 500：boom/);
+    await expect(createOllamaJudge({ url: 'http://x', model: MODEL, fetch: fetch500 }).score({ png: png(), topic: 't' }, signal())).rejects.toThrow(/HTTP 500：boom/);
   });
 
   it('連線被拒 → throw，訊息帶原因（ECONNREFUSED），不只是 fetch failed', async () => {
     const m = await mock();
     const url = m.url;
     await mocks.pop()!.close(); // 埠剛釋放，連線會被拒
-    const judge = createOllamaJudge({ url, model: MODEL, imageWidth: 640 });
+    const judge = createOllamaJudge({ url, model: MODEL });
     await expect(judge.score({ png: png(), topic: '蘋果' }, signal())).rejects.toThrow(/連不上 Ollama.*ECONNREFUSED/);
     expect(await probeOllama({ url, model: MODEL })).toEqual({ ok: false, reason: expect.stringMatching(/ECONNREFUSED/) });
   });
@@ -250,21 +192,21 @@ describe('§6 錯誤與中止', () => {
     const cases: unknown[] = ['{not json', { model: MODEL }, { answers: { ...REAL_RESPONSE.answers, is_topic: { type: 'noul', noul: -3 } } }];
     for (const body of cases) {
       const fetchImpl: FetchLike = () => Promise.resolve(jsonResponse(200, body));
-      await expect(createOllamaJudge({ url: 'http://x', model: MODEL, imageWidth: 640, fetch: fetchImpl }).score({ png: png(), topic: 't' }, signal())).rejects.toThrow();
+      await expect(createOllamaJudge({ url: 'http://x', model: MODEL, fetch: fetchImpl }).score({ png: png(), topic: 't' }, signal())).rejects.toThrow();
     }
   });
 
   it('真實回應經 fetch 注入：回 79 分；onScored 回報原始三值、耗時與 tokens', async () => {
     const onScored = vi.fn();
     const fetchImpl: FetchLike = () => Promise.resolve(jsonResponse(200, REAL_RESPONSE));
-    const out = await createOllamaJudge({ url: 'http://x', model: MODEL, imageWidth: 640, fetch: fetchImpl, onScored }).score({ png: png(), topic: 'an apple' }, signal());
+    const out = await createOllamaJudge({ url: 'http://x', model: MODEL, fetch: fetchImpl, onScored }).score({ png: png(), topic: 'an apple' }, signal());
     expect(out).toEqual({ score: 79, confidence: 0.22131643720216898 });
     expect(onScored).toHaveBeenCalledWith(expect.objectContaining({ topic: 'an apple', out, inputTokens: 1286, raw: expect.objectContaining({ likeness: 2.8727408163126174 }) }));
   });
 
   it('AbortSignal 接到 fetch：假 Ollama 延遲 5 秒，100 ms 時中止 → 立即 reject；已中止則不送請求', async () => {
     const m = await mock({ delayMs: 5000 });
-    const judge = createOllamaJudge({ url: m.url, model: MODEL, imageWidth: 640 });
+    const judge = createOllamaJudge({ url: m.url, model: MODEL });
     const ac = new AbortController();
     const err = new Error('評分逾時（100 ms）');
     err.name = 'TimeoutError';
@@ -275,7 +217,7 @@ describe('§6 錯誤與中止', () => {
     const fetchSpy = vi.fn<FetchLike>();
     const aborted = new AbortController();
     aborted.abort();
-    await expect(createOllamaJudge({ url: 'http://x', model: MODEL, imageWidth: 640, fetch: fetchSpy }).score({ png: png(), topic: 't' }, aborted.signal)).rejects.toThrow();
+    await expect(createOllamaJudge({ url: 'http://x', model: MODEL, fetch: fetchSpy }).score({ png: png(), topic: 't' }, aborted.signal)).rejects.toThrow();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -284,7 +226,7 @@ describe('§6 錯誤與中止', () => {
     const done: JudgeResult[] = [];
     const fallbacks: JudgeFallbackInfo[] = [];
     const queue = new JudgeQueue({
-      judge: createOllamaJudge({ url: m.url, model: MODEL, imageWidth: 640 }),
+      judge: createOllamaJudge({ url: m.url, model: MODEL }),
       fallback: createRandomJudge({ delayMs: 0 }),
       timeoutMs: 150,
       clock: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) },
@@ -304,17 +246,20 @@ describe('§6 錯誤與中止', () => {
 describe('§3 JUDGE=ollama：組合、啟動探測、不永久退回', () => {
   const cfg = (url: string, model = MODEL) => ({ ...readJudgeConfig({ JUDGE: 'ollama', OLLAMA_URL: url, JUDGE_MODEL: model }, () => {}), fakeDelayMs: 0 });
 
-  it('探測成功：主評分器 ai、fallback random；log info ollamaReady、不 warn', async () => {
+  it('探測成功：主評分器 ai、fallback random；log info ollamaReady、不 warn；接著背景暖機一次', async () => {
     const m = await mock();
     const warn = vi.fn();
     const info = vi.fn();
     const setup = createJudgeSetup(cfg(m.url), { warn, info });
     expect(setup.judge.mode).toBe('ai');
     expect(setup.fallback.mode).toBe('random');
-    expect(await setup.probe).toMatchObject({ ok: true, models: [MODEL] });
+    // 假 Ollama 的 /api/tags 同時列評分模型與評語模型（Epic 15）
+    expect(await setup.probe).toMatchObject({ ok: true, models: [MODEL, 'gemma4:26b-mlx-bf16'] });
     expect(info).toHaveBeenCalledWith('draw-contest.judge.ollamaReady', expect.objectContaining({ model: MODEL }));
+    // 探測之後只多一則暖機請求（Epic 15 Phase 2.5；原本這裡只有 GET /api/tags）
+    expect(await setup.warmup).toMatchObject({ ok: true });
     expect(warn).not.toHaveBeenCalled();
-    expect(m.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags']);
+    expect(m.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags', 'POST /v1/systemone']);
   });
 
   it('連不上（127.0.0.1:1）：warn ollamaUnavailable 附原因，但主評分器仍是 ai（不永久改 random）', async () => {
@@ -324,14 +269,21 @@ describe('§3 JUDGE=ollama：組合、啟動探測、不永久退回', () => {
     expect(r?.ok).toBe(false);
     expect(warn).toHaveBeenCalledWith('draw-contest.judge.ollamaUnavailable', expect.objectContaining({ reason: expect.stringMatching(/連不上 Ollama/), ollamaUrl: 'http://127.0.0.1:1' }));
     expect(setup.judge.mode).toBe('ai');
+    // 探測失敗就不暖機：只有 ollamaUnavailable 那一則 warn
+    expect(await setup.warmup).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('清單沒有該 model：warn 附原因', async () => {
     const m = await mock({ model: 'other:1b' });
     const warn = vi.fn();
-    const r = await createJudgeSetup(cfg(m.url), { warn, info: () => {} }).probe;
+    const setup = createJudgeSetup(cfg(m.url), { warn, info: () => {} });
+    const r = await setup.probe;
     expect(r).toEqual({ ok: false, reason: expect.stringMatching(/沒有模型 clef:27b-q4_k_m/) });
     expect(warn).toHaveBeenCalledWith('draw-contest.judge.ollamaUnavailable', expect.any(Object));
+    // 模型不在：不暖機、沒有 systemone 請求
+    expect(await setup.warmup).toBeNull();
+    expect(m.requests.map((x) => x.path)).toEqual(['/api/tags']);
   });
 
   it('探測逾時與非 2xx：回 ok=false 附原因', async () => {
@@ -346,13 +298,14 @@ describe('§3 JUDGE=ollama：組合、啟動探測、不永久退回', () => {
     const fetchImpl: FetchLike = (u, init) => fetch(u.replace('http://ollama.invalid', target), init);
     const setup = createJudgeSetup(cfg('http://ollama.invalid'), { warn: () => {}, info: () => {}, fetch: fetchImpl });
     expect((await setup.probe)?.ok).toBe(false);
+    expect(await setup.warmup).toBeNull();
     const done: JudgeResult[] = [];
     const queue = new JudgeQueue({
       ...setup,
       clock: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) },
       onDone: (_job, r) => done.push(r),
     });
-    const png = makeRealPng(1280, 720, pattern);
+    const png = realPng();
     queue.push({ playerId: 'a', input: { png, topic: '蘋果' } });
     await vi.waitFor(() => expect(done).toHaveLength(1));
     expect(done[0].judgedBy).toBe('random');
@@ -369,6 +322,81 @@ describe('§3 JUDGE=ollama：組合、啟動探測、不永久退回', () => {
   });
 });
 
+describe('§6.1 啟動：Clef 背景暖機（Epic 15 Phase 2.5）', () => {
+  const cfg = (url: string, model = MODEL) => ({ ...readJudgeConfig({ JUDGE: 'ollama', OLLAMA_URL: url, JUDGE_MODEL: model }, () => {}), fakeDelayMs: 0 });
+  const tags = { models: [{ name: MODEL }] };
+  const hang: FetchLike = (_u, init) => new Promise((_res, rej) => init.signal?.addEventListener('abort', () => rej(init.signal!.reason)));
+
+  it('暖機用的 1×1 PNG：寫死的位元組是合法 PNG（magic、IHDR 1×1 8-bit RGB、IDAT 解壓為單一像素 #1E1E1E、IEND）', () => {
+    const png = Buffer.from(WARMUP_PNG_BASE64, 'base64');
+    expect(png.toString('base64')).toBe(WARMUP_PNG_BASE64);
+    expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const chunks: { type: string; data: Buffer }[] = [];
+    for (let o = 8; o < png.length; ) {
+      const len = png.readUInt32BE(o);
+      chunks.push({ type: png.toString('ascii', o + 4, o + 8), data: png.subarray(o + 8, o + 8 + len) });
+      o += 12 + len;
+    }
+    expect(chunks.map((c) => c.type)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    const ihdr = chunks[0].data;
+    expect([ihdr.readUInt32BE(0), ihdr.readUInt32BE(4), ihdr[8], ihdr[9], ihdr[10], ihdr[11], ihdr[12]]).toEqual([1, 1, 8, 2, 0, 0, 0]);
+    expect([...inflateSync(chunks[1].data)]).toEqual([0, 0x1e, 0x1e, 0x1e]);
+  });
+
+  it('暖機請求：與評分請求同一份 state／questions、圖片為 1×1 PNG、另帶 keep_alive 30m', () => {
+    const body = buildWarmupRequest(MODEL);
+    expect(body).toEqual({ ...buildSystemOneRequest(MODEL, 'warmup', WARMUP_PNG_BASE64), keep_alive: '30m' });
+    expect(body.images).toEqual([WARMUP_PNG_BASE64]);
+    expect(body.state).toEqual({ task: JUDGE_TASK, topic: 'warmup' });
+    expect(Object.keys(body.questions)).toEqual(['likeness', 'is_topic', 'effort']);
+    // 評分請求本身不帶 keep_alive（§6 請求格式不變）
+    expect(buildSystemOneRequest(MODEL, '蘋果', 'AAAA')).not.toHaveProperty('keep_alive');
+  });
+
+  it('模型在：探測後背景送一則 POST /v1/systemone（1×1 PNG）；結果只 log draw-contest.judge.warmup，不當成評分（沒有 judge.scored）', async () => {
+    const m = await mock();
+    const warn = vi.fn();
+    const info = vi.fn();
+    const setup = createJudgeSetup(cfg(m.url), { warn, info });
+    expect(await setup.warmup).toEqual({ ok: true, ms: expect.any(Number), inputTokens: expect.any(Number) });
+    expect(m.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags', 'POST /v1/systemone']);
+    expect(m.requests[1].body).toEqual(buildWarmupRequest(MODEL));
+    expect(info).toHaveBeenCalledWith('draw-contest.judge.warmup', { model: MODEL, ms: expect.any(Number), inputTokens: expect.any(Number) });
+    expect(info.mock.calls.map((c) => c[0])).toEqual(['draw-contest.judge.ollamaReady', 'draw-contest.judge.warmup']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('不阻塞：createJudgeSetup 同步回傳；暖機掛住時評分器照常可用，逾時後只 warn warmupFailed', async () => {
+    const warn = vi.fn();
+    const fetchImpl: FetchLike = (u, init) => (u.endsWith('/api/tags') ? Promise.resolve(jsonResponse(200, tags)) : hang(u, init));
+    const t0 = Date.now();
+    const setup = createJudgeSetup(cfg('http://x'), { warn, info: () => {}, fetch: fetchImpl, warmupTimeoutMs: 80 });
+    expect(Date.now() - t0).toBeLessThan(50);
+    expect(setup.judge.mode).toBe('ai');
+    expect(await setup.warmup).toEqual({ ok: false, ms: expect.any(Number), reason: expect.stringMatching(/暖機逾時（80 ms）/) });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('draw-contest.judge.warmupFailed', { model: MODEL, ms: expect.any(Number), reason: expect.stringMatching(/暖機逾時/) });
+  });
+
+  it('暖機失敗（HTTP 500、回應缺欄位）：只 warn、不 throw；之後的評分不受影響（每張仍照常嘗試）', async () => {
+    let failWarmup = true;
+    const warn = vi.fn();
+    const fetchImpl: FetchLike = (u) => {
+      if (u.endsWith('/api/tags')) return Promise.resolve(jsonResponse(200, tags));
+      return Promise.resolve(failWarmup ? new Response('boom', { status: 500 }) : jsonResponse(200, REAL_RESPONSE));
+    };
+    const setup = createJudgeSetup(cfg('http://x'), { warn, info: () => {}, fetch: fetchImpl });
+    expect(await setup.warmup).toMatchObject({ ok: false, reason: expect.stringMatching(/HTTP 500：boom/) });
+    expect(warn).toHaveBeenCalledWith('draw-contest.judge.warmupFailed', expect.objectContaining({ model: MODEL, reason: expect.stringMatching(/HTTP 500/) }));
+    failWarmup = false;
+    await expect(setup.judge.score({ png: realPng(), topic: 'an apple' }, signal())).resolves.toMatchObject({ score: 79 });
+
+    const noAnswers: FetchLike = () => Promise.resolve(jsonResponse(200, { model: MODEL }));
+    expect(await warmupSystemOne({ url: 'http://x', model: MODEL, timeoutMs: 1000, fetch: noAnswers })).toMatchObject({ ok: false, reason: expect.stringMatching(/answers/) });
+    await expect(warmupSystemOne({ url: 'http://127.0.0.1:1', model: MODEL, timeoutMs: 1000 })).resolves.toMatchObject({ ok: false, reason: expect.stringMatching(/連不上 Ollama/) });
+  });
+});
+
 describe('測試隔離：vitest 不碰真的 Ollama（127.0.0.1:11434）', () => {
   it('server/vitest.config.ts 把 JUDGE 設 random、OLLAMA_URL 指向不可能連上的位址', () => {
     expect(process.env.JUDGE).toBe('random');
@@ -376,6 +404,7 @@ describe('測試隔離：vitest 不碰真的 Ollama（127.0.0.1:11434）', () =>
     const setup = judgeSetupFromEnv(process.env, () => {});
     expect(setup.judge.mode).toBe('random');
     expect(setup.probe).toBeUndefined();
+    expect(setup.warmup).toBeUndefined();
   });
 
   it('createApp() 不注入評分器（draw-guess 的 e2e 就是這樣起 server）：起停過程沒有任何 fetch', async () => {

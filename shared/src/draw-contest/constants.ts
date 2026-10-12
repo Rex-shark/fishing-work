@@ -33,6 +33,8 @@ export const CANVAS_BACKGROUND = '#1E1E1E';
 export const MAX_SUBMISSION_BYTES = 2_097_152;
 /** 單回合滿分 */
 export const SCORE_MAX = 100;
+/** 評審名稱（Epic 15 評語）；唯一來源，server 提示詞與揭曉卡片都讀它（Rex 2026-10-12 定名） */
+export const COMMENT_PERSONA_NAME = 'メスガキ';
 /** 筆刷粗細下限（邏輯像素，整數；同我畫你猜） */
 export const BRUSH_MIN = 1;
 /** 筆刷粗細上限（邏輯像素，整數；同我畫你猜） */

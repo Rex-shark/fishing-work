@@ -68,14 +68,24 @@ export function myResult(results: readonly ResultEntry[] | null, me: string | nu
 const WIDE_GAP = '\u3000'
 
 /**
+ * 揭曉的結果摘要（ended 的回合狀態列；design §2，2026-10-12 起帶題目：揭曉當下要對照題目看畫）：
+ * 「蘋果（全形空白）第一名：X（87 分）」（隨機評分加「（隨機評分）」；沒有人交卷「蘋果（全形空白）沒有人交卷」）。
+ * 題目用 results 對應的 lastTopic（ended 時已有）；沒有題目（理論上不會）退回只有第一名的那一句
+ */
+export function resultSummary(round: { results: readonly ResultEntry[]; lastTopic: string | null }): string {
+  const winner = winnerSummary(round.results)
+  return round.lastTopic !== null ? `${round.lastTopic}${WIDE_GAP}${winner}` : winner
+}
+
+/**
  * 上一回合摘要（idle 與 choosing 的回合狀態列；results 與 lastTopic 保留到下一回合 drawing 開始）：
- * 沒有結果「上一回合：—」；有題目「上一回合：蘋果（全形空白）第一名：X（87 分）」（隨機評分加「（隨機評分）」）；
+ * 沒有結果「上一回合：—」；有題目＝「上一回合：」＋揭曉的結果摘要（resultSummary，與 ended 那一列只差這個前綴）；
  * 沒有題目（理論上不會）退回 design 原文「上一回合第一名：X（87 分）」
  */
 export function lastRoundSummary(round: Pick<RoundPublic, 'results' | 'lastTopic'>): string {
   if (round.results === null) return '上一回合：—'
-  const winner = winnerSummary(round.results)
-  return round.lastTopic !== null ? `上一回合：${round.lastTopic}${WIDE_GAP}${winner}` : `上一回合${winner}`
+  const { results, lastTopic } = round
+  return lastTopic !== null ? `上一回合：${resultSummary({ results, lastTopic })}` : `上一回合${winnerSummary(results)}`
 }
 
 /** 回合狀態列的一段：文字＋（選填）倒數；optional＝窄螢幕（< 768px）可省略 */
@@ -109,7 +119,7 @@ function clock(seconds: number) {
  * - choosing：出題者「正在輸入標題… 00:45」、其他人「X 正在輸入標題… 00:45」；有上一回合結果時接在後面（窄螢幕省略）
  * - drawing：「作畫中 01:23」「標題：蘋果」「已儲存 3/8」；旁觀者把題目那段換成「本回合旁觀：蘋果」；最後 10 秒倒數為警示
  * - judging：「正在評分 5/8…」（隨機評分加「（隨機評分）」）
- * - ended：「第一名：X（87 分）」（隨機評分加註；沒有人交卷時「沒有人交卷」）
+ * - ended：「蘋果（全形空白）第一名：X（87 分）」（與 idle 有結果那一列相同，只少「上一回合：」前綴；隨機評分加註；沒有人交卷時「蘋果（全形空白）沒有人交卷」）
  */
 export function roundNotes(input: NotesInput, terms: RoundTerms): NotesSegment[] {
   const { round, isSetter, isParticipant, setterName, remaining } = input
@@ -134,7 +144,7 @@ export function roundNotes(input: NotesInput, terms: RoundTerms): NotesSegment[]
     case 'judging':
       return [{ text: judgingProgress(round) }]
     case 'ended':
-      return [{ text: round.results !== null ? winnerSummary(round.results) : '—' }]
+      return [{ text: round.results !== null ? resultSummary({ results: round.results, lastTopic: round.lastTopic }) : '—' }]
   }
 }
 

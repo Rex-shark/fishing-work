@@ -1,5 +1,6 @@
 // 繪圖比賽測試用：組出「檔頭＋IHDR＋任意內容」的 PNG bytes（server 不解碼，只驗 magic 與 IHDR 寬高）
 import { CANVAS_LOGICAL, type JudgeMode } from '@fishing-work/shared/draw-contest';
+import type { CommentInput, Commentator } from '../../src/games/draw-contest/commentary/queue';
 import type { Judge, JudgeInput, JudgeOutput } from '../../src/games/draw-contest/judge/types';
 
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -22,7 +23,6 @@ export function flush(): Promise<void> {
 }
 
 // ─── 假評分器 ─────────────────────────────────────────────────────
-
 
 export interface ManualCall {
   input: JudgeInput;
@@ -57,6 +57,48 @@ export class FnJudge implements Judge {
     readonly mode: JudgeMode = 'random',
   ) {}
   score(input: JudgeInput): Promise<JudgeOutput> {
+    this.inputs.push(input);
+    return Promise.resolve(this.fn(input));
+  }
+}
+
+// ─── 假評語器（Epic 15）──────────────────────────────────────────
+
+export interface ManualCommentCall {
+  input: CommentInput;
+  signal: AbortSignal;
+  resolve(comment: string): void;
+  reject(err: unknown): void;
+}
+
+/** 手動評語器：每次 comment() 記一筆，由測試決定何時以什麼內容 resolve／reject；收到 abort 即 reject */
+export class ManualCommentator implements Commentator {
+  readonly calls: ManualCommentCall[] = [];
+  comment(input: CommentInput, signal: AbortSignal): Promise<string> {
+    return new Promise((resolve, reject) => {
+      this.calls.push({ input, signal, resolve, reject });
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  }
+  /** resolve 第 i 次呼叫 */
+  resolveCall(i: number, comment: string): void {
+    const c = this.calls[i];
+    if (!c) throw new Error(`沒有第 ${i} 次評語呼叫`);
+    c.resolve(comment);
+  }
+  /** reject 第 i 次呼叫 */
+  rejectCall(i: number, err: unknown = new Error('boom')): void {
+    const c = this.calls[i];
+    if (!c) throw new Error(`沒有第 ${i} 次評語呼叫`);
+    c.reject(err);
+  }
+}
+
+/** 立即以函式決定內容的評語器（記錄呼叫） */
+export class FnCommentator implements Commentator {
+  readonly inputs: CommentInput[] = [];
+  constructor(private readonly fn: (input: CommentInput) => string) {}
+  comment(input: CommentInput): Promise<string> {
     this.inputs.push(input);
     return Promise.resolve(this.fn(input));
   }

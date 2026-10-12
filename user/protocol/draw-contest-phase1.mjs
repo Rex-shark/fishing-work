@@ -1,10 +1,13 @@
 // 繪圖比賽協定符合性測試（Epic 14 Phase 1 範圍）：只依 spec/draw-contest/architecture.md §4／§5 打 Socket，不看實作、不 import server 內部程式。
 // 涵蓋 §8 清單：加入／我出題／出題／取消／作畫／交卷（含 PNG 驗證）／評分／揭曉／排名／總分／中途加入補收畫廊／重連／聊天／ack 文案（§5.4）；
 // RoundPublic.lastTopic 生命週期（§4／§5：初始 null、drawing 為 null、ended＝本回合題目、下一回合 choosing 保留、drawing 清空；2026-10-07 補）。
+// Epic 15（2026-10-12 補）：本檔以 COMMENT=off 跑（§8），斷言評語關閉時的契約欄位——RoundPublic.commentMode（idle／choosing／drawing 為 null、
+// judging 起 'off'）、ResultEntry.comment null／commentPending false、整場沒有 contest:comment。評語開啟的流程在 draw-contest-comment.mjs。
 //
 // 用法（專案根目錄，需先 npm run build；隔離埠且只綁本機；**每次都要全新的 server 程序**，房間狀態在記憶體）：
-//   HOST=127.0.0.1 PORT=3196 JUDGE=random JUDGE_FAKE_DELAY_MS=0 node server/dist/index.js &
+//   HOST=127.0.0.1 PORT=3196 JUDGE=random JUDGE_FAKE_DELAY_MS=0 COMMENT=off node server/dist/index.js &
 //   TEST_PORT=3196 node --input-type=module < user/protocol/draw-contest-phase1.mjs
+// **COMMENT=off 必帶**（Epic 15 起）：預設 COMMENT=ollama 會在啟動時暖機並對每張交卷呼叫真模型，results 會出現 commentPending: true，本檔的斷言就會失敗。
 // 快速段總時長約 5 秒；全部 PASS 時 exit 0。
 //
 // 慢速段（選用，TEST_SLOW=1）：逾時交卷、SUBMIT_GRACE_SECONDS 寬限內補交、寬限過後才揭曉、未交卷者 0 分／null／排名接在後面。
@@ -76,9 +79,10 @@ const joinAs = async (nick, token) => {
   const rounds = collect(s, 'round:update'), players = collect(s, 'players:update'), chat = collect(s, 'chat:message');
   const gallery = [];
   s.on('contest:gallery', (g) => { gallery.push(g); seq.push('gallery'); });
+  const comments = collect(s, 'contest:comment');
   const r = await new Promise((res) => s.emit('player:join', token ? { nickname: nick, token } : { nickname: nick }, (x) => { seq.push('ack'); res(x); }));
   if (!r?.ok) throw new Error('join failed ' + j(r));
-  return { s, id: r.data.snapshot.you, token: r.data.token, snap: r.data.snapshot, seq, rounds, players, chat, gallery };
+  return { s, id: r.data.snapshot.you, token: r.data.token, snap: r.data.snapshot, seq, rounds, players, chat, gallery, comments };
 };
 const lastRound = (p) => p.rounds.at(-1);
 const lastPlayers = (p) => p.players.at(-1);
@@ -147,9 +151,11 @@ const rankingOk = (round) => {
   if (unOrder.join() !== expect.join()) return '未交卷者未依 participantIds 順序';
   return 'ok';
 };
+/** Epic 15：COMMENT=off 時每筆結果 comment null、commentPending false（§4 ResultEntry；欄位必須存在，不是缺省） */
+const commentOffOk = (e) => e.comment === null && e.commentPending === false;
 const submittedEntryOk = (e) => e.submitted === true && e.judgedBy === 'random' && Number.isInteger(e.score) && e.score >= 0 && e.score <= SCORE_MAX
-  && typeof e.confidence === 'number' && e.confidence >= 0 && e.confidence <= 1 && typeof e.submittedAt === 'number' && typeof e.nickname === 'string';
-const unsubmittedEntryOk = (e) => e.submitted === false && e.score === 0 && e.confidence === null && e.judgedBy === null && e.submittedAt === null;
+  && typeof e.confidence === 'number' && e.confidence >= 0 && e.confidence <= 1 && typeof e.submittedAt === 'number' && typeof e.nickname === 'string' && commentOffOk(e);
+const unsubmittedEntryOk = (e) => e.submitted === false && e.score === 0 && e.confidence === null && e.judgedBy === null && e.submittedAt === null && commentOffOk(e);
 /** 總分帳本：每個 ended 依 results 累加，與 players:update 比對（§5.2 每位參賽者 player.score += entry.score） */
 const totals = new Map();
 const addTotals = (round) => { for (const e of round.results ?? []) totals.set(e.playerId, (totals.get(e.playerId) ?? 0) + e.score); };
@@ -166,6 +172,7 @@ try {
   check('join ok：token 為字串、player id 不是 socket.id', typeof A.token === 'string' && A.id !== A.s.id);
   check('PlayerPublic 欄位齊全（score 0、connected、isSetter／participating／submitted false）', meA?.nickname === 'Alice' && meA.score === 0 && meA.connected === true && typeof meA.joinedAt === 'number' && meA.isSetter === false && meA.participating === false && meA.submitted === false, j(meA));
   check('RoundPublic 初始欄位（participantIds []、計數 0、judgeMode null）', Array.isArray(A.snap.round.participantIds) && A.snap.round.participantIds.length === 0 && A.snap.round.submittedCount === 0 && A.snap.round.judgedCount === 0 && A.snap.round.judgeMode === null, j(A.snap.round));
+  check('commentMode：idle 為 null（欄位存在）', 'commentMode' in A.snap.round && A.snap.round.commentMode === null, j(A.snap.round));
   check('快照含「加入」system 訊息', A.snap.chat.some((m) => m.kind === 'system' && m.fromId === null && m.text.includes('Alice')));
 
   const X = connect(); await once(X, 'connect'); sockets.push(X);
@@ -195,6 +202,7 @@ try {
   await waitPhase(B, 'choosing');
   const ch = lastRound(B);
   check('choosing：setterId=A、topic null、roundNo 仍 0、endsAt≈now+CHOOSING_SECONDS', ch?.phase === 'choosing' && ch.setterId === A.id && ch.topic === null && ch.roundNo === 0 && Math.abs(ch.endsAt - (t0 + CHOOSING_SECONDS * 1000)) < 2000, j(ch));
+  check('commentMode：choosing 為 null', ch?.commentMode === null, j(ch));
   await until(() => lastPlayers(B)?.find((p) => p.id === A.id)?.isSetter === true);
   check('players:update 帶 isSetter=true', lastPlayers(B)?.find((p) => p.id === A.id)?.isSetter === true);
   const rv3 = await call(B.s, 'round:volunteer');
@@ -230,6 +238,7 @@ try {
   check('drawing：participantIds＝在線者（含出題者 A）', sameSet(dB?.participantIds ?? [], [A.id, B.id]), j(dB?.participantIds));
   check('drawing：submittedCount／judgedCount 0、results null', dB?.submittedCount === 0 && dB.judgedCount === 0 && dB.results === null, j(dB));
   check('lastTopic：drawing 為 null（第一回合）', dA?.lastTopic === null && dB?.lastTopic === null, j([dA?.lastTopic, dB?.lastTopic]));
+  check('commentMode：drawing 為 null（judging 起才有值，生命週期同 judgeMode）', dA?.commentMode === null && dB?.commentMode === null && dB?.judgeMode === null, j([dA?.commentMode, dB?.commentMode]));
   await until(() => lastPlayers(B)?.every((p) => p.participating === true));
   check('players:update：A、B participating true、submitted false', lastPlayers(B)?.every((p) => p.participating === true && p.submitted === false), j(lastPlayers(B)));
   await until(() => B.chat.some((m) => m.kind === 'system' && m.text.includes('蘋果')));
@@ -275,6 +284,7 @@ try {
   const jc = C.rounds.filter((r) => r.roundNo === 1).map((r) => r.judgedCount);
   check('judgedCount 單調遞增、最後＝2', jc.every((v, i) => i === 0 || v >= jc[i - 1]) && jc.at(-1) === 2, j(jc));
   check('judging 起 judgeMode random', C.rounds.filter((r) => r.phase === 'judging' || r.phase === 'ended').every((r) => r.judgeMode === 'random'), j(C.rounds.map((r) => [r.phase, r.judgeMode])));
+  check('COMMENT=off：judging 起 commentMode off（judging、ended 每一則 round:update 皆是）', C.rounds.filter((r) => r.phase === 'judging' || r.phase === 'ended').every((r) => r.commentMode === 'off'), j(C.rounds.map((r) => [r.phase, r.commentMode])));
 
   // ════════ 8. 揭曉（results、排名、總分、畫廊）════════
   const e1 = lastRound(C);
@@ -282,7 +292,7 @@ try {
   check('lastTopic：judging 期間仍為 null', C.rounds.filter((r) => r.roundNo === 1 && r.phase === 'judging').every((r) => r.lastTopic === null), j(C.rounds.map((r) => [r.phase, r.lastTopic])));
   check('lastTopic：ended 等於本回合題目（去頭尾空白）', e1.lastTopic === '蘋果', j(e1.lastTopic));
   check('results 依 §5.2 排序、rank 1..n', rankingOk(e1) === 'ok', rankingOk(e1));
-  check('交卷者欄位：judgedBy random、score 整數 0..100、confidence 0..1、submittedAt 有值', e1.results.every(submittedEntryOk), j(e1.results));
+  check('交卷者欄位：judgedBy random、score 整數 0..100、confidence 0..1、submittedAt 有值；COMMENT=off → comment null、commentPending false', e1.results.every(submittedEntryOk), j(e1.results));
   check('random 評分器範圍：score 20..95、confidence 0.3..0.9（§6）', e1.results.every((e) => e.score >= 20 && e.score <= 95 && e.confidence >= 0.3 && e.confidence <= 0.9), j(e1.results));
   check('results 的 playerId／nickname 對應 A、B', sameSet(e1.results.map((e) => e.playerId), [A.id, B.id]) && e1.results.find((e) => e.playerId === A.id)?.nickname === 'Alice');
   addTotals(e1);
@@ -302,6 +312,7 @@ try {
   check('ended 後加入：快照帶 results（roundNo 1）', D.snap.round.phase === 'ended' && D.snap.round.results?.length === 2 && D.snap.round.roundNo === 1, j(D.snap.round));
   check('ended 後加入：快照的 players score＝總分', totalsOk(D.snap.players));
   check('lastTopic：ended 後加入者的快照帶上一回合題目', D.snap.round.lastTopic === '蘋果', j(D.snap.round.lastTopic));
+  check('COMMENT=off：ended 後加入者的快照 commentMode off、results 每筆 comment null／commentPending false', D.snap.round.commentMode === 'off' && D.snap.round.results?.every(commentOffOk), j(D.snap.round));
   await until(() => D.gallery.length >= 2);
   check('join ack 之後補收 2 則 contest:gallery（roundNo 1、bytes 一致）', g1ok(D) && D.seq[0] === 'ack', j(D.seq));
 
@@ -311,11 +322,13 @@ try {
   check('ended 時 volunteer ok（視同 idle）', rv5?.ok === true, j(rv5));
   check('choosing 期間 results 保留', lastRound(C)?.results?.length === 2 && lastRound(C).roundNo === 1, j(lastRound(C)));
   check('lastTopic：下一回合 choosing 仍保留（topic 回 null）', lastRound(C)?.lastTopic === '蘋果' && lastRound(C).topic === null, j([lastRound(C)?.topic, lastRound(C)?.lastTopic]));
+  check('commentMode：下一回合 choosing 回 null（同 judgeMode）；保留的 results 仍帶 comment／commentPending 欄位', lastRound(C)?.commentMode === null && lastRound(C).judgeMode === null && lastRound(C).results?.every(commentOffOk), j(lastRound(C)));
   const rt3 = await call(B.s, 'round:setTopic', { topic: '貓' });
   await waitPhase(C, 'drawing');
   const d2 = lastRound(C);
   check('第二回合 setTopic ok：roundNo 2、results 清空', rt3?.ok === true && d2.roundNo === 2 && d2.results === null && d2.topic === '貓', j(d2));
   check('lastTopic：下一回合 drawing 開始時清空', d2.lastTopic === null, j(d2.lastTopic));
+  check('commentMode：第二回合 drawing 為 null', d2.commentMode === null, j(d2.commentMode));
   check('participantIds＝4 位在線者（含出題者 B）', sameSet(d2.participantIds, [A.id, B.id, C.id, D.id]), j(d2.participantIds));
   await until(() => lastPlayers(C)?.every((p) => p.participating && !p.submitted));
   check('players:update 全員 participating、submitted 重置', lastPlayers(C)?.every((p) => p.participating === true && p.submitted === false), j(lastPlayers(C)));
@@ -347,7 +360,8 @@ try {
   const eB = e2.results?.find((e) => e.playerId === B.id), eC = e2.results?.find((e) => e.playerId === C.id);
   check('lastTopic：第二回合 ended 換成新題目', e2?.lastTopic === '貓', j(e2?.lastTopic));
   check('同一張圖＋同題目 → 同分（random 確定性）；同分先交卷者在前', eB && eC && eB.score === eC.score && eB.rank < eC.rank, j([eB, eC]));
-  check('第二回合 judgedCount＝4、全部 judgedBy random', e2.judgedCount === 4 && e2.results.every(submittedEntryOk), j(e2));
+  check('第二回合 judgedCount＝4、全部 judgedBy random（comment null、commentPending false）', e2.judgedCount === 4 && e2.results.every(submittedEntryOk), j(e2));
+  check('COMMENT=off：第二回合 ended commentMode off', e2.commentMode === 'off', j(e2.commentMode));
   addTotals(e2);
   await until(() => totalsOk(lastPlayers(B)));
   check('總分累加：A、B 為兩回合之和，C、D 為第二回合得分', totalsOk(lastPlayers(B)), j([lastPlayers(B)?.map((p) => [p.nickname, p.score]), [...totals]]));
@@ -409,6 +423,11 @@ try {
   } else {
     check('慢速段（逾時交卷／寬限／未交卷者）略過：設 TEST_SLOW=1 執行（待 Phase 0 決定縮時方式）', true, 'skipped');
   }
+
+  // ════════ 12b. COMMENT=off：整場沒有 contest:comment（§5 評語：off 時不排佇列、不發事件）════════
+  await sleep(300);
+  const everyone = [A, B, C, D, A2, D2];
+  check('COMMENT=off：所有連線（含旁觀與中途加入者）整場都沒收到 contest:comment', everyone.every((p) => p.comments.length === 0), j(everyone.map((p) => p.comments.length)));
 
   // ════════ 13. 不崩潰 ════════
   A2.s.emit('contest:submit', { png: ab(pngA1) });   // 不帶 ack

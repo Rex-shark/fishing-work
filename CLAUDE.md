@@ -66,7 +66,7 @@ fishing-work/
 
 ```bash
 npm install                 # 安裝三個 workspace 的相依
-npm run dev                 # 一次啟動 server（:3000，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:3001），並自動開瀏覽器到 http://localhost/（遊戲清單；兩款遊戲都是 HMR）
+npm run dev                 # 一次啟動 server（:5173，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:5174），並自動開瀏覽器到 http://localhost/（遊戲清單；兩款遊戲都是 HMR）
 npm run build               # 建置 draw-guess/dist/ 與 server/dist/index.js
 npm start                   # 正式：node server/dist/index.js（PORT 預設 80、HOST 預設 0.0.0.0；公司區網只放行標準埠）
 npm run typecheck           # 三個 workspace 的 tsc --noEmit
@@ -80,7 +80,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 ### 區網分享（同事連線）
 
-`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列兩款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3000 npm start` 避開 80。詳見 `spec/architecture.md` §3。
+`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列兩款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3100 npm start` 避開 80（5173／5174 是開發模式的內部埠，也避開）。詳見 `spec/architecture.md` §3。
 
 ### 外網分享（Cloudflare Tunnel，備用）
 
@@ -91,7 +91,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | 端點 | 說明 |
 |------|------|
 | `http://localhost/` | 遊戲清單（正式建置，:80） |
-| `http://localhost/draw-guess/` | 我畫你猜（正式建置）；`npm run dev` 時同一網址是 Vite 開發版（HMR，`/socket.io` proxy 到 :3000） |
+| `http://localhost/draw-guess/` | 我畫你猜（正式建置）；`npm run dev` 時同一網址是 Vite 開發版（HMR，`/socket.io` proxy 到 :5173） |
 | `http://localhost/healthz` | 健康檢查 |
 
 ---
@@ -117,6 +117,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | [plan/round-time.md](plan/round-time.md) | Epic 12 作畫時間改 2 分鐘（`ROUND_SECONDS` 唯一來源；改時間只動它＋說明文字） |
 | [plan/excel-theme.md](plan/excel-theme.md) | Epic 13 試算表偽裝主題（Excel 風格的第四套殼層 `excel`；DESIGN §17） |
 | [plan/draw-contest-mvp.md](plan/draw-contest-mvp.md) | Epic 14 繪圖比賽 MVP（第二款遊戲：出題→同時畫→評分器打分→投影片瀏覽揭曉；MVP 隨機評分，Phase 3 接 Clef／Ollama） |
+| [plan/contest-commentary.md](plan/contest-commentary.md) | Epic 15 繪圖比賽 AI 評語（揭曉卡片每張一句メスガキ評語：gemma4 經 Ollama `/api/chat`、`think: false`、自由發揮；評語不擋揭曉；順帶移除評分前縮圖） |
 
 ---
 
@@ -124,6 +125,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 - **所有實作必須由 `plan/` 驅動**：修改程式碼前後皆須同步對應 Epic 文件與 `backlog.md`。規範見 [plan/README.md](plan/README.md)。
 - **本專案無資料庫**，`spec/db/erd.mmd` 暫不維護；遊戲狀態模型寫在 `spec/architecture.md`（規劃中）。
+- **改畫面文字、無障礙標籤、殼層、畫布指標處理或滑桿換算前**，先 `grep -rn "UI-DEP\|CONST-DEP\|BUG-DEP" other/skills`：事務長（Purser）維護的 AI 代理遊玩技能依賴這些字串與行為，改動要知會事務長（2026-10-12）。
 - **`DESIGN.md`**：已建立（共通原則 ＋ 各偽裝主題章節：vscode §3–§5、ppt §13、meet §15、excel §17；首頁 §14 不偽裝、柔和 UI；說明 §16）。**產生任何畫面、元件、樣式前先讀 [DESIGN.md](DESIGN.md)**，色碼一律用 token，不得寫死；新主題只加 token 覆寫與殼層，不動功能元件。
 
 ---

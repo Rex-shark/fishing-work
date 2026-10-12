@@ -13,6 +13,7 @@ import {
   lastRoundSummary,
   myResult,
   notesText,
+  resultSummary,
   roundNotes,
   type NotesInput,
   submittedProgress,
@@ -29,6 +30,8 @@ const entry = (patch: Partial<ResultEntry>): ResultEntry => ({
   judgedBy: 'ai',
   submitted: true,
   submittedAt: 1,
+  comment: null,
+  commentPending: false,
   ...patch,
 })
 
@@ -160,10 +163,34 @@ describe('roundNotes：備忘稿列各階段文字（design §2 逐列）', () =
     )
   })
 
-  it('ended：「第一名：X（87 分）」；隨機評分加註；沒有人交卷', () => {
-    expect(text(input({ round: round({ phase: 'ended', results, lastTopic: '蘋果' }) }))).toBe('第一名：Alice（87 分）')
+  it('ended（2026-10-12 起帶題目）：「蘋果　第一名：X（87 分）」；隨機評分加註；沒有人交卷', () => {
+    expect(text(input({ round: round({ phase: 'ended', results, lastTopic: '蘋果' }) }))).toBe('蘋果　第一名：Alice（87 分）')
+    expect(text(input({ round: round({ phase: 'ended', results: randomResults, lastTopic: '蘋果' }) }))).toBe('蘋果　第一名：Alice（87 分）（隨機評分）')
+    expect(text(input({ round: round({ phase: 'ended', results: [], lastTopic: '貓' }) }))).toBe('貓　沒有人交卷')
+  })
+
+  it('ended 沒有題目（lastTopic 為 null，理論上不會）：退回只有第一名的那一句（同改版前）', () => {
+    expect(text(input({ round: round({ phase: 'ended', results }) }))).toBe('第一名：Alice（87 分）')
     expect(text(input({ round: round({ phase: 'ended', results: randomResults }) }))).toBe('第一名：Alice（87 分）（隨機評分）')
     expect(text(input({ round: round({ phase: 'ended', results: [] }) }))).toBe('沒有人交卷')
+  })
+
+  it('ended 與 idle（有結果）只差「上一回合：」前綴：分隔同為一個全形空白（U+3000），題目用 lastTopic 不是 topic', () => {
+    for (const r of [results, randomResults, []]) {
+      const ended = text(input({ round: round({ phase: 'ended', results: r, lastTopic: '蘋果' }) }))
+      const idle = text(input({ round: round({ phase: 'idle', results: r, lastTopic: '蘋果' }) }))
+      expect(idle).toBe(`上一回合：${ended}`)
+      expect(ended.startsWith('蘋果\u3000')).toBe(true)
+      expect(resultSummary({ results: r, lastTopic: '蘋果' })).toBe(ended)
+    }
+    // 契約上 ended 時 topic 仍是本回合題目、lastTopic 與 results 同進退；這裡故意給不同值，確認讀的是 lastTopic
+    expect(text(input({ round: round({ phase: 'ended', results, topic: '香蕉', lastTopic: '蘋果' }) }))).toBe('蘋果　第一名：Alice（87 分）')
+  })
+
+  it('ended：只有一段、不是可省略段（窄螢幕也顯示）、沒有倒數；results 為 null（理論上不會）顯示「—」', () => {
+    const segs = roundNotes(input({ round: round({ phase: 'ended', results, lastTopic: '蘋果' }) }), PPT_TERMS_VIEW)
+    expect(segs).toEqual([{ text: '蘋果　第一名：Alice（87 分）' }])
+    expect(text(input({ round: round({ phase: 'ended', results: null, lastTopic: null }) }))).toBe('—')
   })
 
   it('偽裝用語由殼層傳入（功能元件不寫死「標題」「儲存」）', () => {

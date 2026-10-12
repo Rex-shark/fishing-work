@@ -66,6 +66,48 @@ export function dialogKeyAction(key: string, isComposing: boolean): 'cancel' | n
   return key === 'Escape' ? 'cancel' : null
 }
 
+// ─── 對話框送出中（busy）結束後的焦點還原 ──────────────────────────────
+
+/** 對話框選項按鈕（右下按鈕、說明的主題清單）的標記（OfficeDialog 以字面值寫在 JSX，測試守門）；標題列的關閉鈕不是選項，不標 */
+export const DIALOG_OPTION_ATTR = 'data-dialog-option'
+
+/**
+ * busy 結束後焦點的落點，依序找第一個存在的：輸入框 → 第一個可用的選項（未停用；選項只設 aria-disabled，不用原生 disabled）。
+ * 輸入框在 busy 時是 readOnly（不是 disabled），這裡的 :not([disabled]) 只是防呆
+ */
+export const DIALOG_REFOCUS_SELECTORS = [
+  'input:not([disabled])',
+  `[${DIALOG_OPTION_ATTR}]:not([disabled]):not([aria-disabled="true"])`,
+] as const
+
+/** 焦點還原用到的最小 DOM 介面（元件以對話框根節點代入；測試以假物件代入） */
+export interface DialogFocusRoot {
+  /** 節點是否在對話框內（含對話框本身） */
+  contains(node: unknown): boolean
+  querySelector(selector: string): { focus(): void } | null
+}
+
+/** busy 是否剛結束（上一次渲染為 true、這一次不是） */
+export function busyEnded(wasBusy: boolean, busy: boolean): boolean {
+  return wasBusy && !busy
+}
+
+/**
+ * busy 結束後的保險：焦點不在對話框內（例如掉到 body）時放回輸入框，沒有輸入框就放回第一個可用選項；
+ * 焦點還在對話框內就不動（使用者可能已經 Tab 到別的按鈕）。回傳是否移動了焦點
+ */
+export function restoreDialogFocus(root: DialogFocusRoot, active: unknown): boolean {
+  if (active != null && root.contains(active)) return false
+  for (const selector of DIALOG_REFOCUS_SELECTORS) {
+    const target = root.querySelector(selector)
+    if (target !== null) {
+      target.focus()
+      return true
+    }
+  }
+  return false
+}
+
 // ─── 註解窗格 ────────────────────────────────────────────────────
 
 /** 註解輸入列送出鈕的名稱與提示 */

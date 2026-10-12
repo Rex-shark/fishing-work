@@ -4,15 +4,20 @@
 //   {save}＝交卷確認框的主要按鈕（交卷的叫法，ShellViews.terms.save）。
 // 本檔不得寫死任何殼層的名稱或路徑（shellBoundary 把關）。秒數、人數、字數一律由 shared 常數推導（DRAW_SECONDS 為作畫時間唯一來源）。
 // 六個主題（Phase 2 第二段正式文案）：如何出題、作畫、交卷、評分（含隨機評分）、排名與總分、聊天與重連。
+// Epic 15：「評分」說明誰評分、誰寫評語與退回隨機評分的情況；「排名與總分」講揭曉的地方加一段 AI 評語
+// （Phase 4：第一名的評語是稱讚版，揭曉後才重寫，所以那張一定先顯示產生中的文字；該文字讀 reveal 的 COMMENT_PENDING_TEXT，與卡片同一個來源）。
+// 評審名稱讀 shared 的 COMMENT_PERSONA_NAME（唯一來源，本檔不寫死）。
 import {
   CHAT_MAX,
   CHOOSING_SECONDS,
+  COMMENT_PERSONA_NAME,
   MIN_PLAYERS,
   RECONNECT_GRACE_SECONDS,
   SCORE_MAX,
   SUBMIT_GRACE_SECONDS,
   TOPIC_MAX,
 } from '@fishing-work/shared/draw-contest'
+import { COMMENT_PENDING_TEXT } from '../reveal/revealView'
 import { formatDuration } from './helpText'
 
 /** 說明主題 id */
@@ -65,9 +70,9 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     id: 'scoring',
     title: '評分',
     paragraphs: [
-      `每交一張就排隊評一張，評分器給 0–${SCORE_MAX} 分，畫面會顯示「正在評分」的進度。`,
-      '目前使用隨機評分：分數由圖片本身決定、和畫得像不像無關，同一張圖永遠同分；揭曉時分數旁會標示「隨機」。',
-      '日後改用 AI 評分；AI 出問題時本回合剩下的畫會退回隨機評分，畫面一樣會標示。',
+      `每交一張就排隊評一張，由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分，畫得越像題目分數越高；畫面會顯示「正在評分」的進度。`,
+      `評語由另一位評審「${COMMENT_PERSONA_NAME}」負責，每張交卷的畫一句；評語不影響分數與排名。`,
+      '連不上 Ollama（執行這兩個模型的服務）時，本回合剩下的畫會退回隨機評分，也不會有評語。隨機評分的分數由圖片本身決定、和畫得像不像無關，同一張圖永遠同分；揭曉時分數旁會標示「隨機」。',
     ],
   },
   {
@@ -75,6 +80,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     title: '排名與總分',
     paragraphs: [
       '全部評完就揭曉：每個人的畫依本回合分數由高到低排列，前三名加框；同分時先交卷的在前，未交卷的排最後、0 分。',
+      `揭曉時評審「${COMMENT_PERSONA_NAME}」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚。還沒寫好的先顯示「${COMMENT_PENDING_TEXT}」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。`,
       '本回合分數會累加到總分（顯示在玩家清單）；伺服器重新啟動後歸零。',
       '揭曉畫面會一直停著，直到有人按「{volunteer}」開始下一回合；點一張畫可以放大，再點一次或按 Esc 回到全部。',
     ],

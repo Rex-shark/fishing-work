@@ -197,7 +197,6 @@ describe('§3 評分器環境變數', () => {
       judge: 'ollama',
       ollamaUrl: 'http://127.0.0.1:11434',
       model: 'clef:27b-nvfp4',
-      imageWidth: 640,
       timeoutMs: 30_000,
       fakeDelayMs: 1500,
     });
@@ -212,21 +211,29 @@ describe('§3 評分器環境變數', () => {
           JUDGE: 'Random',
           OLLAMA_URL: 'http://host.docker.internal:11434',
           JUDGE_MODEL: 'clef-flash',
-          JUDGE_IMAGE_WIDTH: '320',
           JUDGE_TIMEOUT_MS: '5000',
           JUDGE_FAKE_DELAY_MS: '0',
         },
         warn,
       ),
-    ).toEqual({ judge: 'random', ollamaUrl: 'http://host.docker.internal:11434', model: 'clef-flash', imageWidth: 320, timeoutMs: 5000, fakeDelayMs: 0 });
+    ).toEqual({ judge: 'random', ollamaUrl: 'http://host.docker.internal:11434', model: 'clef-flash', timeoutMs: 5000, fakeDelayMs: 0 });
     expect(warn).not.toHaveBeenCalled();
-    const cfg = readJudgeConfig({ JUDGE: 'gpt', JUDGE_IMAGE_WIDTH: '0', JUDGE_TIMEOUT_MS: '0', JUDGE_FAKE_DELAY_MS: '-1' }, warn);
-    expect(cfg).toMatchObject({ judge: 'ollama', imageWidth: 640, timeoutMs: 30_000, fakeDelayMs: 1500 });
+    const cfg = readJudgeConfig({ JUDGE: 'gpt', JUDGE_TIMEOUT_MS: '0', JUDGE_FAKE_DELAY_MS: '-1' }, warn);
+    expect(cfg).toMatchObject({ judge: 'ollama', timeoutMs: 30_000, fakeDelayMs: 1500 });
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(readJudgeConfig({ JUDGE_TIMEOUT_MS: '500.5' }, warn).timeoutMs).toBe(30_000);
     expect(warn).toHaveBeenCalledTimes(4);
-    expect(readJudgeConfig({ JUDGE_IMAGE_WIDTH: '640.5' }, warn).imageWidth).toBe(640);
   });
 
-  it('JUDGE=random：主評分器與 fallback 皆 random、不探測、不 warn、timeoutMs 帶入', () => {
+  it('JUDGE_IMAGE_WIDTH 已移除（Epic 15 決策 12：原圖直送）：設了也不讀、不 warn，設定沒有 imageWidth', () => {
+    const warn = vi.fn();
+    const cfg = readJudgeConfig({ JUDGE_IMAGE_WIDTH: '320' }, warn);
+    expect(cfg).not.toHaveProperty('imageWidth');
+    expect(DEFAULT_JUDGE_CONFIG).not.toHaveProperty('imageWidth');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('JUDGE=random：主評分器與 fallback 皆 random、不探測、不暖機、不 warn、timeoutMs 帶入', () => {
     const warn = vi.fn();
     const fetch = vi.fn();
     const setup = createJudgeSetup({ ...readJudgeConfig({ JUDGE: 'random' }, () => {}), timeoutMs: 1234 }, { warn, fetch });
@@ -234,6 +241,7 @@ describe('§3 評分器環境變數', () => {
     expect(setup.fallback.mode).toBe('random');
     expect(setup.timeoutMs).toBe(1234);
     expect(setup.probe).toBeUndefined();
+    expect(setup.warmup).toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });

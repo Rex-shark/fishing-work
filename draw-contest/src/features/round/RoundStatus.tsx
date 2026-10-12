@@ -2,7 +2,7 @@
 // VolunteerStatus =「我出題」（idle／ended 且在線人數足夠時；文字與圖示由殼層決定，ShellViews.volunteer）；
 // RoundStatus = 回合狀態列：各階段的文字由 roundDisplay.roundNotes 產生（spec/draw-contest/design.md §2 對照表逐列），
 // 題目與交卷的叫法來自殼層（ShellViews.terms）。最後 10 秒倒數改 --sem-warning＋警示圖示（DESIGN §7，不閃爍）。
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RoundPublic } from '@fishing-work/shared/draw-contest'
 import { ErrorIcon, WarningIcon } from '../../layout/icons'
 import { StatusButton, StatusItem } from '../../layout/StatusItem'
@@ -25,11 +25,16 @@ export function VolunteerStatus() {
   return <VolunteerButton />
 }
 
-/** 「我出題」：錯誤（回合已開始的競態等）以錯誤圖示＋文字顯示在旁邊，4 秒或回合狀態改變後消失 */
-function VolunteerButton() {
+/**
+ * 「我出題」：錯誤（回合已開始的競態、人數不足等）以錯誤圖示＋文字顯示在旁邊，4 秒或回合狀態改變後消失。
+ * 送出中按鈕不是原生 disabled（StatusButton 的 busy：焦點留在按鈕上，失敗後可以直接再按），所以重複送出在這裡擋
+ */
+export function VolunteerButton() {
   const round = useGameStore((s) => s.round)
   const { label, icon: Icon } = useVolunteerView()
   const [busy, setBusy] = useState(false)
+  /** 送出中（等 ack）：用 ref 擋，連按兩下時第二下還看不到 busy 這個狀態的更新 */
+  const inFlight = useRef(false)
   const [error, setError] = useState<{ message: string; round: RoundPublic } | null>(null)
 
   useEffect(() => {
@@ -39,17 +44,19 @@ function VolunteerButton() {
   }, [error])
 
   async function handleClick() {
-    if (busy) return
+    if (inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     setError(null)
     const r = await volunteer()
+    inFlight.current = false
     setBusy(false)
     if (!r.ok) setError({ message: r.message, round })
   }
 
   return (
     <>
-      <StatusButton label={volunteerAriaLabel(label)} onClick={() => void handleClick()} disabled={busy}>
+      <StatusButton label={volunteerAriaLabel(label)} onClick={() => void handleClick()} busy={busy}>
         {Icon !== undefined && <Icon size={14} />}
         <span>{busy ? '請稍候…' : label}</span>
       </StatusButton>

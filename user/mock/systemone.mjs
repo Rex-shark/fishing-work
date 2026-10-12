@@ -1,22 +1,32 @@
 #!/usr/bin/env node
-// 假的 Ollama（繪圖比賽 AI 評分器測試用）：spec/draw-contest/architecture.md §6「假的 Ollama」
+// 假的 Ollama（繪圖比賽 AI 評分器與評語器測試用）：spec/draw-contest/architecture.md §6「假的 Ollama」、§6.1「假的 Ollama」
 //
-// 只實作兩個端點，格式與真 Ollama 0.40.0 相同（2026-10-07 以 clef:27b-q4_k_m 實測）：
+// 實作三個端點，格式與真 Ollama 相同（systemone：2026-10-07 以 0.40.0、clef:27b-q4_k_m 實測；chat：2026-10-12 以 0.40.3、gemma4:26b-mlx-bf16 實測）：
 //   POST /v1/systemone  { model, images?: [base64], state, questions: { 名稱: { type, criteria?, instructions? } } }
 //                       → 200 { model, answers: { 名稱: Answer }, usage: { input_tokens, output_tokens: 0 } }
 //                       score：{ type, score（期望等級）, legend, probabilities, confidence（1 − 熵／ln 等級數） }
 //                       noul ：{ type, noul（0..1） }
 //                       錯誤：400 { error }（缺 model／questions／state、type 不對、criteria 不是陣列、base64 壞）、
-//                             404 { error }（model 不在清單）
-//   GET  /api/tags      → { models: [{ name, model, ... }] }（只列 MOCK_MODEL 一個）
+//                             404 { error }（model 不是評分模型）
+//   POST /api/chat      { model, messages: [{ role, content, images?: [base64] }], stream?, think?, keep_alive?, options? }（Epic 15 評語器）
+//                       → 200 { model, message: { role: 'assistant', content }, done: true, done_reason, …_count／…_duration }
+//                       content 依「最後一則帶圖訊息的 images[0]」的雜湊從固定幾句挑一句（同一張圖永遠同一句）；沒有圖（暖機）時回固定短句。
+//                       第一名稱讚版（Epic 15 Phase 4）：最後一則 user 訊息的文案含「第一名」時，改從另一組稱讚句（MOCK_PRAISES）挑，
+//                       與批評句（MOCK_COMMENTS）沒有交集，測試才分得出這張有沒有被重做。
+//                       錯誤：400 { error }（缺 model、messages 不是陣列、base64 壞）、404 { error }（model 不是評語模型）
+//   GET  /api/tags      → { models: [{ name, model, ... }] }（列評分模型 MOCK_MODEL 與評語模型 MOCK_COMMENT_MODEL 兩個）
 // 分數由「images[0] 的 base64 字串＋題目名稱＋instructions」的 FNV-1a 雜湊決定：同一張圖永遠同分，換圖通常不同。
 //
 // 用法（專案根目錄）：
 //   node user/mock/systemone.mjs                                   # 預設 127.0.0.1:11435
 //   MOCK_PORT=11435 MOCK_DELAY_MS=800 MOCK_MODEL=clef:27b-nvfp4 node user/mock/systemone.mjs
-//   JUDGE=ollama OLLAMA_URL=http://127.0.0.1:11435 PORT=3211 node server/dist/index.js   # server 指向假 Ollama
+//   MOCK_PORT=11436 MOCK_CHAT_DELAY_MS=300 node user/mock/systemone.mjs    # 評語慢一點，揭曉後才陸續收到 contest:comment
+//   JUDGE=ollama OLLAMA_URL=http://127.0.0.1:11435 PORT=3211 node server/dist/index.js   # server 指向假 Ollama（評分與評語都走它）
 // 環境變數：MOCK_PORT（預設 11435）、MOCK_HOST（預設 127.0.0.1）、MOCK_DELAY_MS（每次 systemone 回應前的延遲，預設 0）、
-//           MOCK_MODEL（預設 clef:27b-nvfp4）。
+//           MOCK_MODEL（評分模型，預設 clef:27b-nvfp4）、MOCK_COMMENT_MODEL（評語模型，預設 gemma4:26b-mlx-bf16）、
+//           MOCK_CHAT_DELAY_MS（每次 chat 回應前的延遲，預設 0）、MOCK_CHAT_CONTENT（有設就每次 chat 都回這個字串；設成空字串可模擬「輸出空白」。
+//           **固定內容優先、不再區分批評／稱讚**：稱讚版請求也回同一個字串，暖機也是）、
+//           MOCK_PRAISE_CONTENT（有設就只有稱讚版請求回這個字串，優先於 MOCK_CHAT_CONTENT；設成空字串可模擬「其他人的評語成功、只有第一名稱讚版失敗」）。
 // 也可在程式內 import { startMockOllama } 啟動（測試用，回傳 { url, close, requests }）。
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
@@ -47,6 +57,56 @@ function rng(seed) {
 }
 
 const B64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** /api/chat 的固定評語（中性調侃；依圖片雜湊挑一句） */
+export const MOCK_COMMENTS = [
+  '就這？線條抖成這樣也敢交卷，勇氣可嘉呢～',
+  '嗯哼，勉強看得出來是什麼啦，下次再加油一點吧。',
+  '畫成這樣還想拿高分？想得真美呢～',
+  '欸，意外地不差嘛，可別太得意喔。',
+  '這是認真畫的嗎？算了，至少有交卷啦。',
+];
+/** 第一名稱讚版（user 文案含「第一名」）的固定稱讚句；與 MOCK_COMMENTS 沒有交集 */
+export const MOCK_PRAISES = [
+  '哼，這張居然還不錯嘛，第一名就勉強給你啦～',
+  '欸？畫得這麼好是想怎樣，才、才沒有在誇你喔！',
+  '嘛，這次算你厲害，下次也要這樣讓我驚訝才行喔～',
+  '居然真的被你拿到第一，好啦好啦，這張是真的很可以啦！',
+];
+/** 沒有圖的 chat（暖機）回的短句 */
+export const MOCK_WARMUP_REPLY = '嗨';
+
+/** 驗證 chat 請求；回 [status, error] 或 null */
+function validateChat(body, commentModel) {
+  if (typeof body !== 'object' || body === null) return [400, 'invalid request body'];
+  if (typeof body.model !== 'string' || body.model === '') return [400, 'model is required'];
+  if (body.model !== commentModel) return [404, `model "${body.model}" not found, try pulling it first`];
+  if (!Array.isArray(body.messages)) return [400, 'messages must be an array'];
+  for (const m of body.messages) {
+    if (typeof m !== 'object' || m === null || typeof m.role !== 'string') return [400, 'invalid message'];
+    if (m.images === undefined) continue;
+    if (!Array.isArray(m.images)) return [400, 'images must be an array'];
+    for (const img of m.images) if (typeof img !== 'string' || !B64.test(img)) return [400, 'illegal base64 data at input byte 0'];
+  }
+  return null;
+}
+
+/** 是否為第一名稱讚版：最後一則 user 訊息的文案含「第一名」（spec §6.1 稱讚版 user 文案） */
+function isPraiseChat(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return typeof messages[i].content === 'string' && messages[i].content.includes('第一名');
+  }
+  return false;
+}
+
+/** 最後一則帶圖訊息的第一張圖（base64）；沒有則 null */
+function chatImageKey(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const images = messages[i].images;
+    if (Array.isArray(images) && images.length > 0) return images[0];
+  }
+  return null;
+}
 
 function answerFor(name, q, imageKey) {
   const next = rng(fnv1a(`${name}\u0000${q.instructions ?? ''}`, fnv1a(imageKey)));
@@ -104,12 +164,16 @@ function send(res, status, obj) {
 
 /**
  * 啟動假 Ollama。
- * @param {{ port?: number, host?: string, delayMs?: number, model?: string }} [options]
+ * @param {{ port?: number, host?: string, delayMs?: number, model?: string, commentModel?: string, chatDelayMs?: number, chatContent?: string, praiseContent?: string }} [options]
+ *   model：評分模型；commentModel：評語模型；chatDelayMs：每次 chat 回應前的延遲；chatContent：有給就每次 chat 都回這個字串（不分批評／稱讚）；
+ *   praiseContent：有給就只有第一名稱讚版請求回這個字串（優先於 chatContent）
  * @returns {Promise<{ url: string, port: number, close: () => Promise<void>, requests: Array<{ method: string, path: string, body?: unknown }> }>}
  */
 export function startMockOllama(options = {}) {
   const model = options.model ?? 'clef:27b-nvfp4';
+  const commentModel = options.commentModel ?? 'gemma4:26b-mlx-bf16';
   const delayMs = options.delayMs ?? 0;
+  const chatDelayMs = options.chatDelayMs ?? 0;
   const host = options.host ?? '127.0.0.1';
   const requests = [];
   const server = createServer((req, res) => {
@@ -119,19 +183,71 @@ export function startMockOllama(options = {}) {
       const path = (req.url ?? '/').split('?')[0];
       if (req.method === 'GET' && path === '/api/tags') {
         requests.push({ method: 'GET', path });
-        send(res, 200, {
-          models: [
-            {
-              name: model,
-              model,
-              modified_at: new Date(0).toISOString(),
-              size: 0,
-              digest: 'mock',
-              details: { format: 'gguf', family: 'mock', parameter_size: '0B', quantization_level: 'mock' },
-              capabilities: ['decision', 'vision'],
-            },
-          ],
+        const entry = (name, capabilities) => ({
+          name,
+          model: name,
+          modified_at: new Date(0).toISOString(),
+          size: 0,
+          digest: 'mock',
+          details: { format: 'gguf', family: 'mock', parameter_size: '0B', quantization_level: 'mock' },
+          capabilities,
         });
+        // 評分模型與評語模型都列出（同名時只列一次）
+        const models = [entry(model, ['decision', 'vision'])];
+        if (commentModel !== model) models.push(entry(commentModel, ['completion', 'vision', 'thinking']));
+        send(res, 200, { models });
+        return;
+      }
+      if (path === '/api/chat') {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'text/plain' });
+          res.end('405 method not allowed');
+          return;
+        }
+        let body;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch (err) {
+          send(res, 400, { error: `invalid character in request body: ${String(err)}` });
+          return;
+        }
+        requests.push({ method: 'POST', path, body });
+        const bad = validateChat(body, commentModel);
+        if (bad) {
+          send(res, bad[0], { error: bad[1] });
+          return;
+        }
+        const imageKey = chatImageKey(body.messages);
+        const praise = isPraiseChat(body.messages);
+        // 優先序：稱讚版的固定內容 → 全部的固定內容 → 沒有圖（暖機）→ 依圖片雜湊從稱讚句或批評句挑一句
+        const pick = (lines) => lines[fnv1a(imageKey ?? '') % lines.length];
+        const content =
+          praise && options.praiseContent !== undefined
+            ? options.praiseContent
+            : options.chatContent !== undefined
+              ? options.chatContent
+              : praise
+                ? pick(MOCK_PRAISES)
+                : imageKey === null
+                  ? MOCK_WARMUP_REPLY
+                  : pick(MOCK_COMMENTS);
+        const promptTokens = 30 + Math.ceil((imageKey ?? '').length / 400);
+        const reply = () => {
+          if (res.destroyed) return;
+          send(res, 200, {
+            model: commentModel,
+            created_at: new Date().toISOString(),
+            message: { role: 'assistant', content },
+            done: true,
+            done_reason: 'stop',
+            total_duration: chatDelayMs * 1e6,
+            load_duration: 0,
+            prompt_eval_count: promptTokens,
+            eval_count: [...content].length,
+          });
+        };
+        if (chatDelayMs > 0) setTimeout(reply, chatDelayMs);
+        else reply();
         return;
       }
       if (path === '/v1/systemone') {
@@ -191,13 +307,18 @@ export function startMockOllama(options = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.MOCK_PORT ?? 11435);
   const delayMs = Number(process.env.MOCK_DELAY_MS ?? 0);
+  const chatDelayMs = Number(process.env.MOCK_CHAT_DELAY_MS ?? 0);
   const mock = await startMockOllama({
     port,
     host: process.env.MOCK_HOST ?? '127.0.0.1',
     delayMs,
     model: process.env.MOCK_MODEL ?? 'clef:27b-nvfp4',
+    commentModel: process.env.MOCK_COMMENT_MODEL ?? 'gemma4:26b-mlx-bf16',
+    chatDelayMs,
+    ...(process.env.MOCK_CHAT_CONTENT !== undefined ? { chatContent: process.env.MOCK_CHAT_CONTENT } : {}),
+    ...(process.env.MOCK_PRAISE_CONTENT !== undefined ? { praiseContent: process.env.MOCK_PRAISE_CONTENT } : {}),
   });
-  console.log(`假 Ollama 已啟動：${mock.url}（delay ${delayMs} ms）`);
+  console.log(`假 Ollama 已啟動：${mock.url}（systemone delay ${delayMs} ms、chat delay ${chatDelayMs} ms）`);
   const stop = () => mock.close().then(() => process.exit(0));
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

@@ -1,5 +1,6 @@
 // Clef 決策模型評分器：spec/draw-contest/architecture.md §3「評分器環境變數」、§6「ollama」
 // POST ${OLLAMA_URL}/v1/systemone，三題 likeness／is_topic／effort，合成 0..SCORE_MAX 的分數。
+// 圖片為交卷原 PNG 的 base64（2026-10-12 起不再縮圖：clef:27b-nvfp4 在 MLX 後端 1280×720 約 2.4 秒）。
 //
 // 真實 API 格式（2026-10-07 以 Ollama 0.40.0、clef:27b-q4_k_m 實測）：
 //   請求 { model, images: [base64], state: {...任意 JSON}, questions: { <名稱>: Question } }
@@ -11,7 +12,6 @@
 //               probabilities: { '0': p… }, confidence: 1 − 熵／ln(等級數) }
 //     noul  → { type: 'noul', noul: 0..1 }
 //   錯誤 4xx { error: '…' }（例：model 不存在 404、questions 為空或 base64 壞掉 400）
-import { PNG } from 'pngjs';
 import { SCORE_MAX } from '@fishing-work/shared/draw-contest';
 import { abortReason } from './random';
 import type { Judge, JudgeInput, JudgeOutput } from './types';
@@ -63,6 +63,31 @@ export function buildSystemOneRequest(model: string, topic: string, imageBase64:
       effort: { type: 'score', instructions: EFFORT_INSTRUCTIONS, criteria: [...EFFORT_CRITERIA] },
     },
   };
+}
+
+// ─── 暖機請求（§6.1「啟動」：Clef 也比照暖機）────────────────────
+
+/**
+ * 暖機用的 1×1 PNG（69 bytes，8-bit RGB、單一像素為畫布底色 #1E1E1E）。寫死位元組：server 不帶圖片函式庫（pngjs 已移除）。
+ * 2026-10-12 實測 Ollama 0.40.3 的 /v1/systemone 接受 1×1 圖（200）。
+ */
+export const WARMUP_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQk5MDAAC4AFuF/QUSAAAAAElFTkSuQmCC';
+/** 暖機請求的題目（state.topic 與題目文字裡的佔位字；結果不使用） */
+export const WARMUP_TOPIC = 'warmup';
+/**
+ * 暖機請求帶的 keep_alive：模型載入後常駐 30 分鐘（與評語器暖機相同）。
+ * 2026-10-12 實測：/v1/systemone 接受此欄位；設過一次後，之後不帶 keep_alive 的評分請求也沿用 30 分鐘（每次請求往後順延），
+ * 不帶的話是 Ollama 預設的 5 分鐘——啟動後 5 分鐘內沒人玩，暖機就白做了。
+ */
+export const WARMUP_KEEP_ALIVE = '30m';
+
+export interface SystemOneWarmupRequest extends SystemOneRequest {
+  keep_alive: string;
+}
+
+/** 暖機請求：與評分請求同一份 state／questions（同一條路徑、同樣的提示詞前綴），圖片換成 1×1 PNG，另帶 keep_alive */
+export function buildWarmupRequest(model: string): SystemOneWarmupRequest {
+  return { ...buildSystemOneRequest(model, WARMUP_TOPIC, WARMUP_PNG_BASE64), keep_alive: WARMUP_KEEP_ALIVE };
 }
 
 // ─── 回應解析與合成 ───────────────────────────────────────────────
@@ -121,58 +146,6 @@ export function combineScore(raw: SystemOneRaw): JudgeOutput {
   return { score, confidence };
 }
 
-// ─── 縮圖 ─────────────────────────────────────────────────────────
-
-/**
- * 把 PNG 等比縮到寬 targetWidth（只縮不放：原寬 ≤ targetWidth 時回傳原 bytes），重新編碼成 PNG。
- * 作法：box 平均。目標像素 (x, y) 取來源 [⌊x·sx⌋, ⌊(x+1)·sx⌋) × [⌊y·sy⌋, ⌊(y+1)·sy⌋) 這塊（至少 1×1）的平均，
- * sx = 原寬／目標寬、sy = 原高／目標高。整數倍（1280→640 為 2×2）時恰好是不重疊的 k×k box 平均；
- * 非整數倍時每塊大小在 ⌊s⌋ 與 ⌈s⌉ 之間交錯，邊界像素整顆歸給一側、不做分數權重——
- * 對評分用的縮圖誤差可忽略，換來單一簡單迴圈。
- * 顏色以 alpha 加權平均（避免透明像素的顏色滲入）；輸出 RGBA 8-bit。原 Buffer 不變。
- */
-export function downscalePng(png: Buffer, targetWidth: number): Buffer {
-  const src = PNG.sync.read(png);
-  const sw = src.width;
-  const sh = src.height;
-  if (!Number.isInteger(targetWidth) || targetWidth < 1) throw new Error(`縮圖寬度不合法：${targetWidth}`);
-  if (sw <= targetWidth) return png;
-  const dw = targetWidth;
-  const dh = Math.max(1, Math.round((sh * dw) / sw));
-  const dst = new PNG({ width: dw, height: dh });
-  const s = src.data;
-  const d = dst.data;
-  for (let y = 0; y < dh; y++) {
-    const y0 = Math.floor((y * sh) / dh);
-    const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * sh) / dh));
-    for (let x = 0; x < dw; x++) {
-      const x0 = Math.floor((x * sw) / dw);
-      const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * sw) / dw));
-      let r = 0;
-      let g = 0;
-      let b = 0;
-      let a = 0;
-      for (let yy = y0; yy < y1; yy++) {
-        let i = (yy * sw + x0) * 4;
-        for (let xx = x0; xx < x1; xx++, i += 4) {
-          const alpha = s[i + 3];
-          r += s[i] * alpha;
-          g += s[i + 1] * alpha;
-          b += s[i + 2] * alpha;
-          a += alpha;
-        }
-      }
-      const n = (y1 - y0) * (x1 - x0);
-      const o = (y * dw + x) * 4;
-      d[o] = a === 0 ? 0 : Math.round(r / a);
-      d[o + 1] = a === 0 ? 0 : Math.round(g / a);
-      d[o + 2] = a === 0 ? 0 : Math.round(b / a);
-      d[o + 3] = Math.round(a / n);
-    }
-  }
-  return PNG.sync.write(dst);
-}
-
 // ─── 評分器 ───────────────────────────────────────────────────────
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -182,8 +155,6 @@ export interface OllamaJudgeOptions {
   url: string;
   /** JUDGE_MODEL */
   model: string;
-  /** JUDGE_IMAGE_WIDTH */
-  imageWidth: number;
   /** 測試注入；預設全域 fetch */
   fetch?: FetchLike;
   /** 每張評分完成時回報原始三值與耗時（給 log） */
@@ -218,6 +189,35 @@ async function httpError(res: Response): Promise<Error> {
   return new Error(`systemone HTTP ${res.status}${detail ? `：${detail.slice(0, 200)}` : ''}`);
 }
 
+/** POST /v1/systemone 並回傳解析後的 JSON；連線失敗、非 2xx、壞 JSON 皆 throw；中止（逾時／丟棄）原樣拋出，讓佇列辨認 */
+async function postSystemOne(fetchImpl: FetchLike, endpoint: string, body: SystemOneRequest, signal: AbortSignal): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    // 中止原樣拋出；其餘補上原因
+    if (signal.aborted) throw abortReason(signal);
+    throw new Error(`連不上 Ollama：${describeFetchError(err)}`);
+  }
+  if (!res.ok) throw await httpError(res);
+  try {
+    return await res.json();
+  } catch (err) {
+    if (signal.aborted) throw abortReason(signal);
+    throw new Error(`systemone 回應不是合法 JSON：${String(err)}`);
+  }
+}
+
+function readInputTokens(json: unknown): number | undefined {
+  const usage = (json as { usage?: { input_tokens?: unknown } } | null)?.usage;
+  return typeof usage?.input_tokens === 'number' ? usage.input_tokens : undefined;
+}
+
 export function createOllamaJudge(options: OllamaJudgeOptions): Judge {
   const fetchImpl: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
   const endpoint = joinUrl(options.url, '/v1/systemone');
@@ -226,42 +226,44 @@ export function createOllamaJudge(options: OllamaJudgeOptions): Judge {
     async score(input: JudgeInput, signal: AbortSignal): Promise<JudgeOutput> {
       if (signal.aborted) throw abortReason(signal);
       const started = Date.now();
-      const small = downscalePng(input.png, options.imageWidth);
-      const body = buildSystemOneRequest(options.model, input.topic, small.toString('base64'));
-      let res: Response;
-      try {
-        res = await fetchImpl(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal,
-        });
-      } catch (err) {
-        // 中止（逾時／丟棄）原樣拋出，讓佇列辨認；其餘補上原因
-        if (signal.aborted) throw abortReason(signal);
-        throw new Error(`連不上 Ollama：${describeFetchError(err)}`);
-      }
-      if (!res.ok) throw await httpError(res);
-      let json: unknown;
-      try {
-        json = await res.json();
-      } catch (err) {
-        if (signal.aborted) throw abortReason(signal);
-        throw new Error(`systemone 回應不是合法 JSON：${String(err)}`);
-      }
+      // 交卷原圖（1280×720）直送，不縮圖（Epic 15 決策 12；spec §6）
+      const body = buildSystemOneRequest(options.model, input.topic, input.png.toString('base64'));
+      const json = await postSystemOne(fetchImpl, endpoint, body, signal);
       const raw = parseSystemOneResponse(json);
       const out = combineScore(raw);
-      const usage = (json as { usage?: { input_tokens?: unknown } }).usage;
+      const inputTokens = readInputTokens(json);
       options.onScored?.({
         topic: input.topic,
         raw,
         out,
         ms: Date.now() - started,
-        ...(typeof usage?.input_tokens === 'number' ? { inputTokens: usage.input_tokens } : {}),
+        ...(inputTokens !== undefined ? { inputTokens } : {}),
       });
       return out;
     },
   };
+}
+
+// ─── 暖機 ─────────────────────────────────────────────────────────
+
+export type JudgeWarmupResult = { ok: true; ms: number; inputTokens?: number } | { ok: false; ms: number; reason: string };
+
+/**
+ * 背景暖機（§6.1「啟動」）：送一張 1×1 PNG 的 systemone 請求把 Clef 載進記憶體（冷啟動第一張實測 13.4 秒）。
+ * 只用來 log；成功與否都不影響之後的評分（每回合仍先試 ollama，失敗由佇列退回 random）。不 throw。
+ */
+export async function warmupSystemOne(options: { url: string; model: string; timeoutMs: number; fetch?: FetchLike }): Promise<JudgeWarmupResult> {
+  const fetchImpl: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
+  const started = Date.now();
+  try {
+    const json = await postSystemOne(fetchImpl, joinUrl(options.url, '/v1/systemone'), buildWarmupRequest(options.model), AbortSignal.timeout(options.timeoutMs));
+    parseSystemOneResponse(json);
+    const inputTokens = readInputTokens(json);
+    return { ok: true, ms: Date.now() - started, ...(inputTokens !== undefined ? { inputTokens } : {}) };
+  } catch (err) {
+    const timedOut = (err as { name?: string } | null)?.name === 'TimeoutError';
+    return { ok: false, ms: Date.now() - started, reason: timedOut ? `暖機逾時（${options.timeoutMs} ms）` : String(err) };
+  }
 }
 
 // ─── 啟動探測 ─────────────────────────────────────────────────────

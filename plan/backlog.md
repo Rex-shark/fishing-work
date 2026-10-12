@@ -9,6 +9,7 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
+| 🔄 | Epic 15：繪圖比賽 AI 評語（メスガキ） | 2026-10-12 ~ — | [contest-commentary.md](contest-commentary.md)：揭曉卡片每張一句評語，本機 Ollama `gemma4:26b-mlx-bf16`、雌小鬼人格自由發揮（只限繁中台灣用語、一句 40 字內）、`think: false`、預設開（`COMMENT=off` 可關）；評語不擋揭曉、`contest:comment` 補送；順帶移除評分前縮圖與 `pngjs`（Clef nvfp4 MLX 原圖 2.4 秒）。Phase 0 規格 ✅（海圖），Phase 1／2 派水手長 |
 | ⏸ | Epic 8：語音輸入（語音轉文字） | 2026-09-29 ~ — | [voice-input.md](voice-input.md)：沿用 live2D 的 whisper.cpp 做法，按麥克風講話轉成正體文字填入聊天；Meet 麥克風按鈕、ppt「聽寫」、vscode 輸入列麥克風；**2026-09-29 暫緩**：只能用區網 IP，http 下瀏覽器不開放麥克風；需區網 HTTPS 通過可行性測試才恢復 |
 | 🔄 | Epic 9：Docker 部署 | 2026-09-29 ~ — | [docker-deploy.md](docker-deploy.md)：多階段 Dockerfile（node:24-slim、非 root、healthcheck）＋ docker-compose；容器內分享網址改由 `PUBLIC_URL` 或提示；換電腦 `docker compose up -d --build` 一行部署；Phase 1 完成、龍骨 docker 驗證通過（映像 362MB），待舵手協定測試 |
 

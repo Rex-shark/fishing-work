@@ -1,6 +1,7 @@
 // 繪圖比賽常數：spec/draw-contest/architecture.md §4「常數」表
 import { describe, expect, it } from 'vitest';
 import * as dc from '../src/draw-contest/constants';
+import * as entry from '../src/draw-contest';
 import * as dg from '../src/draw-guess/constants';
 
 describe('常數值與 spec 表一致', () => {
@@ -26,19 +27,25 @@ describe('常數值與 spec 表一致', () => {
     expect(dc.SCORE_MAX).toBe(100);
   });
 
+  it('評審名稱（Epic 15）：COMMENT_PERSONA_NAME 為唯一來源，且從 draw-contest 入口匯出', () => {
+    expect(dc.COMMENT_PERSONA_NAME).toBe('メスガキ');
+    expect(entry.COMMENT_PERSONA_NAME).toBe(dc.COMMENT_PERSONA_NAME);
+  });
+
   it('筆刷 1／64／4', () => {
     expect(dc.BRUSH_MIN).toBe(1);
     expect(dc.BRUSH_MAX).toBe(64);
     expect(dc.BRUSH_DEFAULT).toBe(4);
   });
 
-  it('只匯出 spec 表列的常數（不帶 draw-guess 才有的 IMAGE_*、ENDED_SECONDS、MAX_OPS_* 等）', () => {
+  it('只匯出 spec §4 常數小節列的常數（不帶 draw-guess 才有的 IMAGE_*、ENDED_SECONDS、MAX_OPS_* 等）', () => {
     expect(Object.keys(dc).sort()).toEqual(
       [
         'DRAW_SECONDS', 'CHOOSING_SECONDS', 'SUBMIT_GRACE_SECONDS', 'MIN_PLAYERS', 'MAX_PLAYERS',
         'NICKNAME_MAX', 'TOPIC_MAX', 'CHAT_MAX', 'CHAT_HISTORY', 'CHAT_MIN_INTERVAL_MS',
         'RECONNECT_GRACE_SECONDS', 'CANVAS_LOGICAL', 'CANVAS_BACKGROUND', 'MAX_SUBMISSION_BYTES',
         'SCORE_MAX', 'BRUSH_MIN', 'BRUSH_MAX', 'BRUSH_DEFAULT', 'PALETTE', 'COLOR_PATTERN',
+        'COMMENT_PERSONA_NAME',
       ].sort(),
     );
   });

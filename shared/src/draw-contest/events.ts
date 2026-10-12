@@ -1,5 +1,5 @@
 // shared/src/draw-contest/events.ts
-// 契約來源：spec/draw-contest/architecture.md §4（逐字照抄，修改需經羅盤定案並先改 spec）
+// 契約來源：spec/draw-contest/architecture.md §4（逐字照抄，修改需經架構師海圖定案並先改 spec）
 
 export const DRAW_CONTEST_NAMESPACE = '/draw-contest';
 
@@ -7,6 +7,8 @@ export type ContestPhase = 'idle' | 'choosing' | 'drawing' | 'judging' | 'ended'
 
 /** 評分器：ai = Clef 決策模型；random = 隨機（MVP 預設，或 AI 失敗退回） */
 export type JudgeMode = 'ai' | 'random';
+/** Epic 15：本回合評語器；'off' = 環境變數關閉或本回合已失敗跳過 */
+export type CommentMode = 'ai' | 'off';
 
 export interface PlayerPublic {
   id: string;             // server 產生的穩定 id（重連接管後不變）
@@ -29,6 +31,8 @@ export interface ResultEntry {
   judgedBy: JudgeMode | null;   // 這張用哪個評分器；未交卷 null
   submitted: boolean;
   submittedAt: number | null;   // epoch ms；同分者先交卷在前
+  comment: string | null;       // Epic 15：メスガキ評語；未交卷、關閉、失敗或尚未產生皆 null
+  commentPending: boolean;      // Epic 15：true = 評語還在產生中（之後會收到 contest:comment）；未交卷／off 一律 false
 }
 
 export interface RoundPublic {
@@ -42,6 +46,7 @@ export interface RoundPublic {
   submittedCount: number;       // 已交卷人數
   judgedCount: number;          // 已評分人數
   judgeMode: JudgeMode | null;  // 本回合評分器（judging 起；AI 失敗退回後為 'random'）
+  commentMode: CommentMode | null; // Epic 15：本回合評語器（judging 起；關閉或本回合失敗跳過後為 'off'）；生命週期同 judgeMode
   results: ResultEntry[] | null; // ended 才有；下一回合 drawing 開始時清空（idle／choosing 期間資料保留；畫面上 idle／ended 顯示畫廊，choosing 不顯示）
   lastTopic: string | null;     // results 對應的題目（揭曉畫面與中途加入者顯示用）；與 results 同生命週期
 }
@@ -68,6 +73,9 @@ export interface JoinResult { token: string; snapshot: RoomSnapshot }
 
 /** 揭曉時每位交卷者一則；round.results 有值時才會收到；中途加入者在 join ack 之後補收 */
 export interface GalleryImage { roundNo: number; playerId: string; png: ArrayBuffer }
+
+/** Epic 15：一張畫的評語完成（成功為字串、失敗為 null）；只在 ended 之後才發，ended 前完成的直接寫進 results */
+export interface CommentUpdate { roundNo: number; playerId: string; comment: string | null }
 
 export type ErrorCode =
   | 'NICKNAME_INVALID' | 'NICKNAME_TAKEN' | 'NOT_IN_ROOM' | 'ROOM_FULL'
@@ -97,5 +105,7 @@ export interface ServerToClientEvents {
   'round:update': (round: RoundPublic) => void;
   /** 揭曉：每位交卷者一則（ended 時廣播；join 時若 results 非 null 則補送） */
   'contest:gallery': (image: GalleryImage) => void;
+  /** Epic 15：ended 後評語陸續完成時廣播；收到即把 results 該筆的 comment 填入、commentPending 設 false */
+  'contest:comment': (update: CommentUpdate) => void;
   'chat:message': (message: ChatMessage) => void;
 }

@@ -2,7 +2,7 @@
 //
 // 繪圖比賽 Room 狀態機（純邏輯，不依賴 socket.io）：spec/draw-contest/architecture.md §5、§6
 // 每個方法回傳「要送出的效果」（Effect[]），由 register.ts 負責實際 emit / 斷線。
-// 計時器觸發的轉移（寬限期到期、出題期限、交卷期限、交卷寬限）與評分佇列的結果沒有呼叫端可回傳，改走建構子注入的 onAsyncEffects。
+// 計時器觸發的轉移（寬限期到期、出題期限、交卷期限、交卷寬限）與評分／評語佇列的結果沒有呼叫端可回傳，改走建構子注入的 onAsyncEffects。
 //
 // 回合：idle → choosing → drawing → judging → ended（ended 視同 idle，可再 volunteer）。
 // - choosing：出題期限計時；逾時／cancel／出題者離開 → idle（results、lastTopic 保留）。
@@ -10,6 +10,13 @@
 // - judging：endsAt 對外為 null，內部另存交卷期限（submitDeadline）做寬限判斷；
 //   佇列清空且（全員交卷 或 寬限已過）→ ended。
 // - ended：results（ranking.ts）、lastTopic＝本回合題目、總分累加、每位交卷者一則 contest:gallery。
+//
+// 評語（Epic 15，§5「評語」、§6.1）：每張評分完成的瞬間排進評語佇列（commentary/queue.ts，與評分佇列獨立）。
+// - ended **不等評語**：揭曉當下已完成的寫進 results.comment，未完成者 commentPending=true，
+//   之後每完成一張廣播 contest:comment 並同步更新 round.results（中途加入者的快照即為最新）。
+// - 第一名重做稱讚版（Phase 4）：名次到 ended 才有，所以揭曉時把第一名的評語重設為 pending、以稱讚版提示詞插隊重做。
+// - commentMode 生命週期同 judgeMode：judging 起有值，關閉或本回合失敗跳過後為 'off'。
+// - 丟棄只發生在 drawing／judging（參賽者離開）與換回合；ended 之後離開的人評語照常跑完並廣播。
 import { randomUUID } from 'node:crypto';
 import {
   CHAT_HISTORY,
@@ -28,6 +35,7 @@ import {
   type Ack,
   type ChatKind,
   type ChatMessage,
+  type CommentUpdate,
   type ErrorCode,
   type GalleryImage,
   type JoinResult,
@@ -38,6 +46,7 @@ import {
   type ServerToClientEvents,
 } from '@fishing-work/shared/draw-contest';
 import { CHAT_ERROR_MESSAGES, validateChatText } from './chat';
+import { CommentQueue, type CommentDone, type CommentFailureInfo, type Commentator } from './commentary/queue';
 import { JudgeQueue, type JudgeFallbackInfo, type JudgeJob, type JudgeResult } from './judge/queue';
 import { createRandomJudge } from './judge/random';
 import type { Judge } from './judge/types';
@@ -119,6 +128,12 @@ export interface RoomJudgeSetup {
   timeoutMs: number;
 }
 
+/** 評語器組合（commentary/index.ts 的 CommentSetup 同形）；commentator 為 null = 關閉（COMMENT=off） */
+export interface RoomCommentSetup {
+  commentator: Commentator | null;
+  timeoutMs: number;
+}
+
 export interface RoomOptions {
   clock?: Clock;
   /** 產生 player id 與 token（預設 crypto.randomUUID；測試注入可預期的值） */
@@ -131,6 +146,12 @@ export interface RoomOptions {
   judge?: RoomJudgeSetup;
   /** 主評分器失敗退回 random 時通知（register 記 log） */
   onJudgeFallback?: (info: JudgeFallbackInfo) => void;
+  /** 評語器（Epic 15；預設關閉，等同 COMMENT=off）；正式環境由 register 依環境變數建立 */
+  comment?: RoomCommentSetup;
+  /** 一張評語失敗（本回合剩餘各張因此跳過）時通知（register 記 log） */
+  onCommentFailure?: (info: CommentFailureInfo) => void;
+  /** 本回合已失敗後才評完的交卷直接跳過評語時通知（register 記 log） */
+  onCommentSkip?: (info: { playerId: string }) => void;
 }
 
 export interface JoinOutcome {
@@ -184,6 +205,10 @@ interface Submission {
   submittedAt: number;
   /** 評分結果；null = 尚在佇列 */
   result: JudgeResult | null;
+  /** 評語（Epic 15）：成功為字串；關閉、失敗、跳過或尚未產生為 null */
+  comment: string | null;
+  /** true = 已排進評語佇列、尚未完成 */
+  commentPending: boolean;
 }
 
 /** idle 回合；roundNo、results、lastTopic 沿用上一回合（畫廊停著，§5 欄位生命週期） */
@@ -199,6 +224,7 @@ function idleRound(roundNo: number, results: ResultEntry[] | null, lastTopic: st
     submittedCount: 0,
     judgedCount: 0,
     judgeMode: null,
+    commentMode: null,
     results,
     lastTopic,
   };
@@ -233,6 +259,9 @@ function defaultJudgeSetup(): RoomJudgeSetup {
   return { judge: random, fallback: random, timeoutMs: 30_000 };
 }
 
+/** Room 未注入評語器時的預設：關閉（不呼叫任何模型） */
+const DEFAULT_COMMENT_SETUP: RoomCommentSetup = { commentator: null, timeoutMs: 20_000 };
+
 // ─── Room ─────────────────────────────────────────────────────────
 
 export class Room {
@@ -241,6 +270,7 @@ export class Room {
   private readonly onAsyncEffects: (effects: Effect[]) => void;
   private readonly durations: RoomDurations;
   private readonly queue: JudgeQueue;
+  private readonly comments: CommentQueue;
 
   /** 依加入順序插入；playerList() 另依 joinedAt 排序 */
   protected readonly players = new Map<string, PlayerState>();
@@ -274,6 +304,18 @@ export class Room {
       clock: this.clock,
       onDone: (job, result) => this.onAsyncEffects(this.onJudged(job, result)),
       onFallback: options.onJudgeFallback,
+    });
+    const comment = options.comment ?? DEFAULT_COMMENT_SETUP;
+    this.comments = new CommentQueue({
+      commentator: comment.commentator,
+      timeoutMs: comment.timeoutMs,
+      clock: this.clock,
+      onDone: (batch) => {
+        const effects = this.onCommented(batch);
+        if (effects.length > 0) this.onAsyncEffects(effects);
+      },
+      onFailure: options.onCommentFailure,
+      onSkip: options.onCommentSkip,
     });
   }
 
@@ -402,9 +444,10 @@ export class Room {
     const check = validateTopic(rawTopic);
     if (!check.ok) return { ack: { ok: false, error: 'TOPIC_INVALID', message: TOPIC_INVALID_MESSAGE }, effects: [] };
 
-    // 新回合：清掉上回合的交卷與畫廊、評分佇列換回合
+    // 新回合：清掉上回合的交卷與畫廊、評分佇列換回合；上回合未完成的評語工作一併丟棄（不算失敗，§5 評語）
     this.submissions.clear();
     this.queue.reset();
+    this.comments.reset();
     const now = this.clock.now();
     const endsAt = now + this.durations.drawMs;
     this.submitDeadline = endsAt;
@@ -420,6 +463,7 @@ export class Room {
       submittedCount: 0,
       judgedCount: 0,
       judgeMode: null,
+      commentMode: null,
       results: null,
       lastTopic: null,
     };
@@ -457,7 +501,14 @@ export class Room {
     if (!check.ok) return submitFail('SUBMISSION_INVALID');
 
     const png = copyToArrayBuffer(check.png);
-    this.submissions.set(player.id, { playerId: player.id, png, submittedAt: this.clock.now(), result: null });
+    this.submissions.set(player.id, {
+      playerId: player.id,
+      png,
+      submittedAt: this.clock.now(),
+      result: null,
+      comment: null,
+      commentPending: false,
+    });
     this.syncCounts();
     this.queue.push({
       playerId: player.id,
@@ -486,11 +537,12 @@ export class Room {
     return { ack: OK, effects: [{ kind: 'emit', to: 'all', event: 'chat:message', payload: msg }] };
   }
 
-  /** 清掉所有計時器與評分佇列（伺服器關閉、測試收尾） */
+  /** 清掉所有計時器、評分佇列與評語佇列（伺服器關閉、測試收尾） */
   dispose(): void {
     for (const p of this.players.values()) this.cancelGrace(p);
     this.clearRoundTimer();
     this.queue.dispose();
+    this.comments.dispose();
   }
 
   // ─── 查詢與投影 ───────────────────────────────────────────────────
@@ -569,11 +621,11 @@ export class Room {
     this.round = { ...this.round, submittedCount: this.submissions.size, judgedCount: judged };
   }
 
-  /** drawing → judging（交卷期限到或全員交卷）：endsAt 對外為 null；起寬限計時；可能立即 ended */
+  /** drawing → judging（交卷期限到或全員交卷）：endsAt 對外為 null；judgeMode／commentMode 設為當下模式；起寬限計時；可能立即 ended */
   private toJudging(): Effect[] {
     if (this.round.phase !== 'drawing') return [];
     this.clearRoundTimer();
-    this.round = { ...this.round, phase: 'judging', endsAt: null, judgeMode: this.queue.mode };
+    this.round = { ...this.round, phase: 'judging', endsAt: null, judgeMode: this.queue.mode, commentMode: this.comments.mode };
     const deadline = this.submitDeadline ?? this.clock.now();
     // 「now > 交卷期限 + 寬限」才算寬限已過，故多 1 ms
     const wait = Math.max(0, deadline + this.durations.submitGraceMs + 1 - this.clock.now());
@@ -593,19 +645,63 @@ export class Room {
     return this.end();
   }
 
-  /** 評分佇列回報一張的結果 */
+  /** 評分佇列回報一張的結果；評完的瞬間排進評語佇列（§5 評語），之後才判斷是否 ended（ended 不等評語） */
   private onJudged(job: JudgeJob, result: JudgeResult): Effect[] {
     const { phase } = this.round;
     if (phase !== 'drawing' && phase !== 'judging') return [];
     const sub = this.submissions.get(job.playerId);
     if (sub === undefined || sub.result !== null) return [];
     sub.result = result;
+    // 送給評語器的是原圖、題目與該張最終分數（退回 random 時就是 random 的分數）；不給暱稱與名次。
+    // 關閉或本回合已失敗跳過時 push 回 false：這張沒有評語（comment null、commentPending false）
+    sub.commentPending = this.comments.push({
+      playerId: sub.playerId,
+      input: { png: Buffer.from(sub.png), topic: job.input.topic, score: result.score },
+    });
     this.syncCounts();
     if (phase === 'judging') this.round = { ...this.round, judgeMode: this.queue.mode };
     return [this.roundUpdate(), ...this.maybeEnd()];
   }
 
-  /** judging → ended：results、總分累加、round:update、players:update、揭曉訊息、每張 contest:gallery */
+  /**
+   * 評語佇列回報一批結果（成功：一筆；失敗：失敗那張＋當下排隊中而被跳過的各張），§5 評語、§6.1 事件規則：
+   * - ended 之前（results 尚未產生）：只記在交卷上，揭曉時寫進 results，**不發 contest:comment**。
+   * - ended 之後（results 已揭曉；含下一回合開始前的 idle／choosing）：更新 round.results 該筆並各廣播一則 contest:comment
+   *   （成功為字串、失敗或跳過為 null）。ended 後才離開的人交卷仍在，評語照常補上。
+   * - 這批有失敗且本回合 commentMode 為 'ai'（judging／ended）→ 改 'off' 並廣播一則 round:update，排在 contest:comment 之後。
+   *   drawing 中失敗時 commentMode 尚為 null，進 judging 時直接是 'off'。
+   */
+  private onCommented(batch: CommentDone[]): Effect[] {
+    const effects: Effect[] = [];
+    let failed = false;
+    for (const { job, result } of batch) {
+      if (result.status !== 'ok') failed = true;
+      const sub = this.submissions.get(job.playerId);
+      if (sub === undefined || !sub.commentPending) continue;
+      const comment = result.status === 'ok' ? result.comment : null;
+      sub.comment = comment;
+      sub.commentPending = false;
+      const { results, roundNo } = this.round;
+      if (results === null || !results.some((e) => e.playerId === sub.playerId)) continue;
+      this.round = {
+        ...this.round,
+        results: results.map((e) => (e.playerId === sub.playerId ? { ...e, comment, commentPending: false } : e)),
+      };
+      const update: CommentUpdate = { roundNo, playerId: sub.playerId, comment };
+      effects.push({ kind: 'emit', to: 'all', event: 'contest:comment', payload: update });
+    }
+    if (failed && this.round.commentMode === 'ai') {
+      this.round = { ...this.round, commentMode: 'off' };
+      effects.push(this.roundUpdate());
+    }
+    return effects;
+  }
+
+  /**
+   * judging → ended：results、總分累加、round:update、players:update、揭曉訊息、每張 contest:gallery。
+   * 不等評語：已完成的寫進 results.comment，還在佇列的 commentPending=true（之後由 contest:comment 補上）；
+   * 第一名另外重做稱讚版（redoWinnerComment）。
+   */
   private end(): Effect[] {
     this.clearRoundTimer();
     const judged = new Map<string, JudgedSubmission>();
@@ -616,6 +712,8 @@ export class Room {
         score: s.result.score,
         confidence: s.result.confidence,
         judgedBy: s.result.judgedBy,
+        comment: s.comment,
+        commentPending: s.commentPending,
       });
     }
     const results = rankResults(this.round.participantIds, judged, (id) => this.players.get(id)?.nickname ?? '');
@@ -623,11 +721,14 @@ export class Room {
       const p = this.players.get(r.playerId);
       if (p) p.score += r.score;
     }
+    const commentMode = this.round.commentMode ?? this.comments.mode;
+    if (commentMode === 'ai') this.redoWinnerComment(results);
     this.round = {
       ...this.round,
       phase: 'ended',
       endsAt: null,
       judgeMode: this.round.judgeMode ?? this.queue.mode,
+      commentMode,
       results,
       lastTopic: this.round.topic,
     };
@@ -644,6 +745,28 @@ export class Room {
       { kind: 'emit', to: 'all', event: 'chat:message', payload: msg },
       ...this.galleryEffects('all'),
     ];
+  }
+
+  /**
+   * 第一名重做稱讚版（§5 評語、§6.1，Epic 15 Phase 4）：只在本回合 commentMode 為 'ai' 時由 end() 呼叫。
+   * 取 rank 1 且有交卷者（§5.2 排名規則保證唯一；沒人交卷就沒有）：不論他的評語是否已完成，一律在交卷紀錄與 results 設回
+   * comment null、commentPending true（已產生的批評版不顯示，免得畫面從批評閃成稱讚），並以稱讚版提示詞插到評語佇列最前面
+   * （取代他原本排隊中或產生中的工作，見 CommentQueue.pushFront）。完成後照常經 onCommented 廣播 contest:comment；
+   * 稱讚版失敗時依失敗規則 (b) 收尾，第一名最終沒有評語。
+   */
+  private redoWinnerComment(results: ResultEntry[]): void {
+    const winner = results[0];
+    if (winner === undefined || winner.rank !== 1 || !winner.submitted) return;
+    const sub = this.submissions.get(winner.playerId);
+    if (sub === undefined || sub.result === null) return;
+    const queued = this.comments.pushFront({
+      playerId: sub.playerId,
+      input: { png: Buffer.from(sub.png), topic: this.round.topic ?? '', score: sub.result.score, praise: true },
+    });
+    if (!queued) return;
+    sub.comment = null;
+    sub.commentPending = true;
+    results[0] = { ...winner, comment: null, commentPending: true };
   }
 
   /** round.results 非 null 時，每位交卷者一則 contest:gallery（依 rank 順序） */
@@ -664,9 +787,9 @@ export class Room {
   /**
    * 玩家真正離開後的回合處理：
    * - 出題者在 choosing 離開 → idle。
-   * - drawing／judging 的參賽者離開 → 從 participantIds 移除、交卷移除並丟棄佇列工作、重算計數；
+   * - drawing／judging 的參賽者離開 → 從 participantIds 移除、交卷移除並丟棄評分與評語佇列的工作、重算計數；
    *   drawing 中剩餘全員已交卷（含空集合）→ judging；judging 中重新判斷是否 ended。
-   * - ended／idle：results 是已揭曉的紀錄，不變動。
+   * - ended／idle：results 是已揭曉的紀錄，不變動；交卷與評語工作都保留，評語照常跑完並廣播（§5 評語）。
    */
   private roundAfterLeave(left: PlayerState): Effect[] {
     const { phase, setterId, participantIds } = this.round;
@@ -675,6 +798,7 @@ export class Room {
 
     this.submissions.delete(left.id);
     this.queue.discard(left.id);
+    this.comments.discard(left.id);
     this.round = { ...this.round, participantIds: participantIds.filter((id) => id !== left.id) };
     this.syncCounts();
     const effects: Effect[] = [this.roundUpdate()];

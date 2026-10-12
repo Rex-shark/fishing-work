@@ -3,13 +3,19 @@
 //   卡片：標題列（名次記號、暱稱、分數 tabular-nums；隨機評分加小字「隨機」；未交卷「未儲存」）＋ 16:9 縮圖
 //   （白底 1px --border、與畫布相同的陰影；前三名外框 2px --accent；自己那張卡底 --bg-active）。
 //   圖片來自 store.gallery（contest:gallery 的 object URL）；交卷了但圖還沒到 → 灰底「載入中」；未交卷 → 空白。
-//   放大檢視（選做）：點縮圖（或 Enter／Space）放大到工作區中央，再點或 Esc 回網格，焦點還給原縮圖。
+//   評語行（Epic 15）：縮圖下方一行（標題列與縮圖位置固定，同一列的縮圖上緣對齊；評語行數只影響卡片底部高度）；
+//   評審名稱（shared 的 COMMENT_PERSONA_NAME）粗體 --fg 前綴＋冒號＋評語（12px 斜體 --fg-muted、完整顯示不截斷，卡片底部隨行數變高）；
+//   還在產生顯示「<評審名稱>：正在寫評語」（不用省略號，免得像被截斷）；沒有評語（未交卷、失敗、關閉）整行不渲染、卡片變矮。
+//   顯示與否只看該卡片自己的 comment／commentPending（revealView.revealComment），不看 round.commentMode。
+//   放大檢視（選做）：點縮圖（或 Enter／Space）放大到工作區中央，再點或 Esc 回網格，焦點還給原縮圖；
+//   評語與網格卡片一樣在圖片下方，完整顯示（不截斷；design §3，2026-10-12 定案與網格卡片一致）。
 // 殼層把本元件放在中央工作區（round.showReveal）；外層無障礙名稱與「未儲存」的叫法來自 ShellViews.terms，本檔不寫死偽裝字樣。
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { COMMENT_PERSONA_NAME } from '@fishing-work/shared/draw-contest'
 import { tip } from '../../layout/tooltipPlacement'
 import { useTermsView } from '../../shells/views'
 import { useGameStore } from '../../store/game'
-import { revealCards, type RevealCard, type RevealImage } from './revealView'
+import { COMMENT_PENDING_TEXT, revealCards, type RevealCard, type RevealComment, type RevealImage } from './revealView'
 
 export function Reveal() {
   const results = useGameStore((s) => s.round.results)
@@ -61,7 +67,7 @@ export function RevealView({ cards, label }: { cards: readonly RevealCard[]; lab
               type="button"
               data-reveal={card.playerId}
               aria-label={`${card.label}（放大）`}
-              {...tip(card.label, 'top')}
+              {...tip(card.summary, 'top')}
               onClick={() => setZoomed(card.playerId)}
               className={`block aspect-video w-full cursor-zoom-in overflow-hidden bg-slide shadow-slide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus ${
                 card.podium ? 'outline-2 outline-accent' : 'outline-1 outline-border'
@@ -69,6 +75,7 @@ export function RevealView({ cards, label }: { cards: readonly RevealCard[]; lab
             >
               <Thumb image={card.image} nickname={card.nickname} />
             </button>
+            {card.comment !== null && <CardComment comment={card.comment} />}
           </li>
         ))}
       </ol>
@@ -89,6 +96,20 @@ function CardTitle({ card }: { card: RevealCard }) {
   )
 }
 
+/**
+ * 評語行（design §3）：評審名稱粗體 --fg 作前綴、冒號後接評語（12px 斜體 --fg-muted）；產生中前綴照舊、評語的位置顯示「正在寫評語」。
+ * 網格卡片與放大檢視相同：在圖片下方（上方留 6px，讓出前三名 2px 外框與焦點外框）、完整顯示不截斷
+ * （2026-10-12 定案：截斷的「…」與產生中分不出來）。與標題列一樣 aria-hidden：評語文字已在縮圖按鈕的無障礙名稱裡
+ */
+function CardComment({ comment }: { comment: RevealComment }) {
+  return (
+    <p aria-hidden="true" data-reveal-comment={comment.kind} className="mt-1.5 text-[12px] leading-[18px] break-words text-fg-muted">
+      <span className="font-bold text-fg">{COMMENT_PERSONA_NAME}：</span>
+      <span className="italic">{comment.kind === 'pending' ? COMMENT_PENDING_TEXT : comment.text}</span>
+    </p>
+  )
+}
+
 /** 縮圖內容：圖片／灰底「載入中」／空白 */
 function Thumb({ image, nickname }: { image: RevealImage; nickname: string }) {
   if (image.kind === 'image') return <img src={image.url} alt={`${nickname} 的畫`} draggable={false} className="block h-full w-full object-contain" />
@@ -98,31 +119,45 @@ function Thumb({ image, nickname }: { image: RevealImage; nickname: string }) {
   return <span className="block h-full w-full" />
 }
 
-/** 放大檢視：同畫布尺寸置中（父層為 size container）；再點或 Esc 回網格 */
-function ZoomedCard({ card, onClose }: { card: RevealCard; onClose: () => void }) {
+/**
+ * 放大檢視的寬度：16:9 依剩餘寬高縮放，高度先扣掉圖片上下的文字列。
+ * 只有標題列（圖片上方）扣 28px；圖片下方多一行評語再扣 42px
+ * （6px 間距＋兩行 18px：高度受限時寬度夠，前綴加 40 字的評語兩行內放得下）
+ */
+const ZOOM_WIDTH = 'w-[min(100cqw,calc((100cqh-28px)*16/9))]'
+const ZOOM_WIDTH_WITH_COMMENT = 'w-[min(100cqw,calc((100cqh-70px)*16/9))]'
+
+/** 放大檢視：同畫布尺寸置中（父層為 size container）；順序同網格卡片（標題列 → 圖片 → 完整評語）；再點或 Esc 回網格 */
+export function ZoomedCard({ card, onClose }: { card: RevealCard; onClose: () => void }) {
   function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
     if (e.key === 'Escape') {
       e.preventDefault()
       onClose()
     }
   }
+  const width = card.comment === null ? ZOOM_WIDTH : ZOOM_WIDTH_WITH_COMMENT
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-2">
-      <div className="w-[min(100cqw,calc((100cqh-28px)*16/9))]">
+      <div className={width}>
         <CardTitle card={card} />
       </div>
-      <button
-        type="button"
-        autoFocus
-        aria-label={`${card.label}（回到全部）`}
-        onClick={onClose}
-        onKeyDown={handleKeyDown}
-        className={`block aspect-video w-[min(100cqw,calc((100cqh-28px)*16/9))] cursor-zoom-out overflow-hidden bg-slide shadow-slide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus ${
-          card.podium ? 'outline-2 outline-accent' : 'outline-1 outline-border'
-        }`}
-      >
-        <Thumb image={card.image} nickname={card.nickname} />
-      </button>
+      {/* 圖片與評語包成同一塊（同寬、左緣對齊）：外層 gap-2 只隔開標題列與圖片，
+          評語行上方只有自己的 6px（與網格卡片相同），不會再疊上 8px */}
+      <div className={width}>
+        <button
+          type="button"
+          autoFocus
+          aria-label={`${card.label}（回到全部）`}
+          onClick={onClose}
+          onKeyDown={handleKeyDown}
+          className={`block aspect-video w-full cursor-zoom-out overflow-hidden bg-slide shadow-slide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus ${
+            card.podium ? 'outline-2 outline-accent' : 'outline-1 outline-border'
+          }`}
+        >
+          <Thumb image={card.image} nickname={card.nickname} />
+        </button>
+        {card.comment !== null && <CardComment comment={card.comment} />}
+      </div>
     </div>
   )
 }
