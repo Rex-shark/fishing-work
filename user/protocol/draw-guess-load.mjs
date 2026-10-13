@@ -1,6 +1,6 @@
 // 我畫你猜壓測（Phase 5）：30 客戶端同時在線不掉訊息、筆跡／聊天延遲、中途加入、F5 重連、人數上限
 // 只依 spec/architecture.md §4/§5 打 Socket，不看實作。
-// 用法（專案根目錄，需先 npm run build；請用隔離埠加 HOST=127.0.0.1，桌面 app 的瀏覽器窗格會自動重連 5173）：
+// 用法（專案根目錄，需先 npm run build；請用隔離埠加 HOST=127.0.0.1，桌面 app 的瀏覽器窗格會自動重連 7180）：
 //   PORT=3180 HOST=127.0.0.1 node server/dist/index.js > /tmp/…/server.log 2>&1 &   # 記下 $!（node 本身的 pid）
 //   TEST_PORT=3180 SERVER_PID=<pid> node user/protocol/draw-guess-load.mjs
 // 環境變數：TEST_PORT（預設 3180）、HOST（目標主機，預設 127.0.0.1）、CLIENTS（預設 30）、ROUNDS（預設 1）、

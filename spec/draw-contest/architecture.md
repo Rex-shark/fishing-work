@@ -38,17 +38,17 @@ fishing-work/
 
 ## 2. 技術棧
 
-與平台相同（[../architecture.md](../architecture.md) §2）。客戶端 `draw-contest/` 的 `package.json`、`tsconfig`、`eslint.config.js`、`vite.config.ts` 以 `draw-guess/` 為範本；Vite `base: '/draw-contest/'`，**dev server 綁 5174**（80 已被 draw-guess 的 dev server 占用；開發只在 Rex 本機，不需區網；2026-10-12 Rex：內部埠改 5173／5174，不用 3000／3001），`/socket.io` proxy 到 `:5173`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:5173`、**`/draw-guess`** proxy（含 ws）到 draw-guess 的 Vite `:80`、**`/song-guess`** → `:5175`（Epic 16 起）（Vite 對 base 以外的根路徑會 302 到 `/draw-contest/`；加了之後直接開 `http://localhost:5174/` 也是遊戲清單；與 draw-guess 的 Vite 對稱，Rex 2026-10-12 要求、海圖定案）。
+與平台相同（[../architecture.md](../architecture.md) §2）。客戶端 `draw-contest/` 的 `package.json`、`tsconfig`、`eslint.config.js`、`vite.config.ts` 以 `draw-guess/` 為範本；Vite `base: '/draw-contest/'`，**dev server 綁 7181**（80 已被 draw-guess 的 dev server 占用；開發只在 Rex 本機，不需區網；2026-10-12 Rex：內部埠改 7180／7181，不用 3000／3001），`/socket.io` proxy 到 `:7180`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:7180`、**`/draw-guess`** proxy（含 ws）到 draw-guess 的 Vite `:80`、**`/song-guess`** → `:7182`（Epic 16 起）（Vite 對 base 以外的根路徑會 302 到 `/draw-contest/`；加了之後直接開 `http://localhost:7181/` 也是遊戲清單；與 draw-guess 的 Vite 對稱，Rex 2026-10-12 要求、海圖定案）。
 
 ## 3. 執行拓樸與部署
 
 ### 開發
 
 ```bash
-npm run dev     # concurrently：server（PORT=5173）＋ draw-guess Vite（:80）＋ draw-contest Vite（:5174）；自動開瀏覽器到 http://localhost/（遊戲清單）
+npm run dev     # concurrently：server（PORT=7180）＋ draw-guess Vite（:80）＋ draw-contest Vite（:7181）；自動開瀏覽器到 http://localhost/（遊戲清單）
 ```
 
-2026-10-12 起只有一條 dev 腳本（原 `dev:contest` 移除）：從遊戲清單點進 `http://localhost/draw-contest/` 即為本遊戲的 HMR 開發版（:80 的 draw-guess Vite 把 `/draw-contest` 含 ws 轉給 :5174）。:5174 只是轉發目標，不需直接開；開發只在 Rex 本機，不給區網同事連。細節見平台 spec §3「開發」。
+2026-10-12 起只有一條 dev 腳本（原 `dev:contest` 移除）：從遊戲清單點進 `http://localhost/draw-contest/` 即為本遊戲的 HMR 開發版（:80 的 draw-guess Vite 把 `/draw-contest` 含 ws 轉給 :7181）。:7181 只是轉發目標，不需直接開；開發只在 Rex 本機，不給區網同事連。細節見平台 spec §3「開發」。
 
 ### 正式
 

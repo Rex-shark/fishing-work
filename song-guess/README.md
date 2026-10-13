@@ -10,7 +10,7 @@ fishing-work 的「猜歌」客戶端：React 19 + Vite 8 + TypeScript + Tailwin
 
 | 指令 | 說明 |
 |------|------|
-| `npm run dev` | 根目錄：同時啟動 server（:5173）與三款遊戲的 Vite。猜歌的 Vite 綁 **5175**（`strictPort`，被占用就直接失敗）；平常從遊戲清單 http://localhost/ 點進 `http://localhost/song-guess/`（我畫你猜的 Vite 在 :80 把 `/song-guess` 轉到 :5175，HMR 可用），`/socket.io` 由 Vite proxy 到 `localhost:5173` |
+| `npm run dev` | 根目錄：同時啟動 server（:7180）與三款遊戲的 Vite。猜歌的 Vite 綁 **7182**（`strictPort`，被占用就直接失敗）；平常從遊戲清單 http://localhost/ 點進 `http://localhost/song-guess/`（我畫你猜的 Vite 在 :80 把 `/song-guess` 轉到 :7182，HMR 可用），`/socket.io` 由 Vite proxy 到 `localhost:7180` |
 | `npm run build` | 根目錄：建置各遊戲的 `dist/`（含 `song-guess/dist/`）與 `server/dist/index.js` |
 | `npm run typecheck -w @fishing-work/song-guess` | `tsc --noEmit`（app、`test/` 與 vite.config） |
 | `npm test -w @fishing-work/song-guess` | Vitest：`test/` 下的純函式測試、靜態渲染，以及掛在假 DOM 上的流程測試（見下方「測試」） |
@@ -23,7 +23,7 @@ fishing-work 的「猜歌」客戶端：React 19 + Vite 8 + TypeScript + Tailwin
 ```
 song-guess/
 ├── index.html              # 內嵌腳本：CSS 套用前先依 session 鍵設 data-theme（防閃爍）
-├── vite.config.ts          # base /song-guess/、port 5175、proxy
+├── vite.config.ts          # base /song-guess/、port 7182、proxy
 ├── src/
 │   ├── App.tsx             # 三分支：遊戲畫面（殼層＋插槽）／自動重連畫面／首頁；<audio> 掛在殼層之外
 │   ├── home/               # 首頁（不偽裝的紙張質感 UI）：暱稱＋風格卡片（只有「視訊會議」一張）

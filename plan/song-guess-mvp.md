@@ -45,7 +45,7 @@
 - 決策 11：**假 iTunes** `user/mock/itunes.mjs` 供協定測試與離線開發；協定測試用它回的短 `trackTimeMillis` 縮時，不加縮時環境變數。
 - 決策 13（水手長 Q1–Q9，2026-10-12）：`durationMs = min(trackTimeMillis ?? cap, cap)`；歌手過濾不足 5 首時以最多次 `artistName` 退回再抽（英文名、別名）；`artistDisplay` 取最多次者；去副標為空退回原名、純符號歌名排除；未猜對者訊息含歌名擋下（可多人得分，原文廣播＝送分）；`results` 進第 1 首才清；局中離開不進排名；`START_DELAY_MS` 1500 起播緩衝（客戶端先下載 1 MB 試聽再同時起播，計分從 `startedAt` 起算）。
 - 決策 14（水手長實作回報 1–12，2026-10-12）：feat. 字界規則；歌手比對不去標點；最多次 artistName 退回須佔原始結果過半；括號開頭歌名直接不抽、`titleLength` 不含空白標點；`lastArtist` 改正式名；揭曉卡歌手行用 `--fg`（DESIGN §15.1 優先）；音量滑桿浮在圖示上方等版面取捨照實作；遊戲清單不加簡介（比照既有）；補 `song-guess/README.md` 與 `user/lan-test-checklist.md` 猜歌段、README 舊敘述改三款。
-- 決策 12：共用層改動（海圖定案、同步平台 spec §1／§3）：`static.ts` 加 `/song-guess`、遊戲清單加一列、`shareLog` games 加一鍵、根 scripts 與 workspaces、`draw-guess/vite.config.ts` 加 `/song-guess` → `:5175`、Dockerfile 多一份 dist；開發埠 song-guess Vite **5175**。
+- 決策 12：共用層改動（海圖定案、同步平台 spec §1／§3）：`static.ts` 加 `/song-guess`、遊戲清單加一列、`shareLog` games 加一鍵、根 scripts 與 workspaces、`draw-guess/vite.config.ts` 加 `/song-guess` → `:7182`、Dockerfile 多一份 dist；開發埠 song-guess Vite **7182**。
 
 ---
 
@@ -57,7 +57,7 @@
 |------|------|------|
 | ✅ | spec/song-guess/overview.md、architecture.md（契約、狀態機、iTunes、答案判定）、design.md（Meet 對照） | 2026-10-12 |
 | ✅ | backlog、CLAUDE.md 目錄與規範表加本 Epic | |
-| ✅ | 平台 spec §1／§3 加第三款（static、清單、shareLog、dev 埠 5175、Docker） | 2026-10-12 海圖回寫 |
+| ✅ | 平台 spec §1／§3 加第三款（static、清單、shareLog、dev 埠 7182、Docker） | 2026-10-12 海圖回寫 |
 
 ### Phase 1：shared ＋ server（水手長派工）
 
@@ -74,7 +74,7 @@
 
 | 狀態 | 任務 | 備註 |
 |------|------|------|
-| ✅ | 建 `song-guess/`：複製 draw-guess 的首頁、meet 殼層、聊天、玩家、重連、說明；刪畫布／工具列／顏色面板／圖片／其他殼層；base `/song-guess/`、Vite 5175、proxy 對稱 | 首頁卡片只有「視訊會議」 |
+| ✅ | 建 `song-guess/`：複製 draw-guess 的首頁、meet 殼層、聊天、玩家、重連、說明；刪畫布／工具列／顏色面板／圖片／其他殼層；base `/song-guess/`、Vite 7182、proxy 對稱 | 首頁卡片只有「視訊會議」 |
 | ✅ | store 與 socket：`round:update`／`players:update`／`chat:message`，時鐘偏移 | |
 | ✅ | `features/player/`：`<audio>` 播放、定位、自動播放被擋的保險、音量滑桿（localStorage） | design §3 |
 | ✅ | `features/round/`：分享音訊對話框（歌手、搜尋中、錯誤）、字幕列（歌手、第 n / 5、字數提示、倒數） | design §2 |
@@ -87,7 +87,7 @@
 | 狀態 | 任務 | 備註 |
 |------|------|------|
 | ✅ | `server/src/static.ts` 加 `/song-guess`；`server/public/index.html` 加「猜歌」；`shareLog` games 加 `song-guess`（index.ts 傳入）＋測試 | 決策 12 |
-| ✅ | 根 `package.json`：workspaces、`build`、`lint`、`dev`（concurrently 第五個程序）；`draw-guess/vite.config.ts` 與 `draw-contest/vite.config.ts` 加 `/song-guess` → `:5175` | spec/architecture.md §3 |
+| ✅ | 根 `package.json`：workspaces、`build`、`lint`、`dev`（concurrently 第五個程序）；`draw-guess/vite.config.ts` 與 `draw-contest/vite.config.ts` 加 `/song-guess` → `:7182` | spec/architecture.md §3 |
 | ✅ | README 遊戲清單（水手長）；CLAUDE.md 目錄與開發指令（海圖） | 2026-10-12 |
 
 ### Phase 4：驗收

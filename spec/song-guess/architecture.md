@@ -27,7 +27,7 @@ fishing-work/
     └── protocol/song-guess-*.mjs
 ```
 
-共用層改動（海圖定案，同步平台 spec §1／§3）：`server/src/static.ts` 的 `games` 加 `/song-guess`；`server/public/index.html` 遊戲清單加一列；`shareLog` 的 `games` 加 `song-guess`；根 `package.json` workspaces 與 `build`／`lint`／`dev` 加 song-guess；`draw-guess/vite.config.ts` 加 `/song-guess` proxy → `:5175`；`Dockerfile` 多複製 `song-guess/package.json` 與 `song-guess/dist`。
+共用層改動（海圖定案，同步平台 spec §1／§3）：`server/src/static.ts` 的 `games` 加 `/song-guess`；`server/public/index.html` 遊戲清單加一列；`shareLog` 的 `games` 加 `song-guess`；根 `package.json` workspaces 與 `build`／`lint`／`dev` 加 song-guess；`draw-guess/vite.config.ts` 加 `/song-guess` proxy → `:7182`；`Dockerfile` 多複製 `song-guess/package.json` 與 `song-guess/dist`。
 
 ## 2. 技術棧
 
@@ -38,10 +38,10 @@ fishing-work/
 ### 開發
 
 ```bash
-npm run dev     # concurrently：server（:5173）＋ draw-guess Vite（:80）＋ draw-contest Vite（:5174）＋ song-guess Vite（:5175）＋ dev-open
+npm run dev     # concurrently：server（:7180）＋ draw-guess Vite（:80）＋ draw-contest Vite（:7181）＋ song-guess Vite（:7182）＋ dev-open
 ```
 
-`song-guess/vite.config.ts`：`base: '/song-guess/'`、`server.port: 5175`、`strictPort`；proxy `/socket.io`、`^/$`、`/healthz` → `:5173`，`/draw-guess` → `:80`、`/draw-contest` → `:5174`（與另兩款對稱）。從遊戲清單點進 `http://localhost/song-guess/` 即為 HMR 開發版。
+`song-guess/vite.config.ts`：`base: '/song-guess/'`、`server.port: 7182`、`strictPort`；proxy `/socket.io`、`^/$`、`/healthz` → `:7180`，`/draw-guess` → `:80`、`/draw-contest` → `:7181`（與另兩款對稱）。從遊戲清單點進 `http://localhost/song-guess/` 即為 HMR 開發版。
 
 ### 正式
 

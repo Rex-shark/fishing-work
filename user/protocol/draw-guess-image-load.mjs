@@ -7,7 +7,7 @@
 //     單傳送者（SENDERS=1）另判最後一輪 RSS 峰值 ≤ 第 1 輪峰值 × 1.1；多傳送者 RSS 比值只印出不判定（malloc 波動）。
 //     macOS malloc 不歸還大區塊，ps RSS 不回落不算洩漏。
 // 只依 spec/architecture.md §3/§4/§5「圖片訊息」/§9 打 Socket，不 import 實作；server 記憶體以 inspector（CDP）讀，不改 server 程式。
-// 用法（專案根目錄，需先 npm run build；請用隔離埠加 HOST=127.0.0.1，桌面 app 的瀏覽器窗格會自動重連 5173）：
+// 用法（專案根目錄，需先 npm run build；請用隔離埠加 HOST=127.0.0.1，桌面 app 的瀏覽器窗格會自動重連 7180）：
 //   PORT=3195 HOST=127.0.0.1 node --expose-gc --inspect=127.0.0.1:9295 server/dist/index.js > <scratchpad>/server.log 2>&1 &
 //   # 記下 $!（node 本身的 pid）
 //   TEST_PORT=3195 SERVER_PID=<pid> INSPECT_PORT=9295 ROUNDS=3 SENDERS=1 SLOW=1 node user/protocol/draw-guess-image-load.mjs

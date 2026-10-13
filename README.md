@@ -137,10 +137,10 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 **開發**：
 
 ```bash
-npm run dev  # 一次啟動 server（:5173）、我畫你猜的 Vite（:80）、繪圖比賽的 Vite（:5174）與猜歌的 Vite（:5175），並自動開瀏覽器到 http://localhost/（遊戲清單）
+npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、繪圖比賽的 Vite（:7181）與猜歌的 Vite（:7182），並自動開瀏覽器到 http://localhost/（遊戲清單）
 ```
 
-從遊戲清單點進 <http://localhost/draw-contest/> 就是 Vite 開發版（HMR；:80 的 Vite 把 `/draw-contest` 轉給 :5174，`/socket.io` 轉給 server :5173）。5173／5174／5175 只是內部轉發目標，不需要直接開，也不給區網同事連。
+從遊戲清單點進 <http://localhost/draw-contest/> 就是 Vite 開發版（HMR；:80 的 Vite 把 `/draw-contest` 轉給 :7181，`/socket.io` 轉給 server :7180）。7180／7181／7182 只是內部轉發目標，不需要直接開，也不給區網同事連。
 
 ## Ollama 連線
 
@@ -197,18 +197,18 @@ npm run dev  # 一次啟動 server（:5173）、我畫你猜的 Vite（:80）、
 | `ITUNES_CACHE_MS` | `600000` | 歌手搜尋結果快取（10 分鐘）；同一歌手再出題不重打 iTunes |
 | `SONG_PREVIEW_CAP_MS` | `30000` | 單首最長播放毫秒；一般歌曲恆為 30 秒，全長不到 30 秒的曲子才更短 |
 
-**開發**：`npm run dev` 會一併啟動猜歌的 Vite（:5175）；從遊戲清單點進 <http://localhost/song-guess/> 就是 HMR 開發版（:80 的 Vite 把 `/song-guess` 轉給 :5175）。
+**開發**：`npm run dev` 會一併啟動猜歌的 Vite（:7182）；從遊戲清單點進 <http://localhost/song-guess/> 就是 HMR 開發版（:80 的 Vite 把 `/song-guess` 轉給 :7182）。
 
 ## 開發
 
 ```bash
 npm install
-npm run dev          # 一次啟動五個程序：server（:5173，只當 proxy 目標）、我畫你猜 Vite（綁 :80，入口）、繪圖比賽 Vite（:5174）、猜歌 Vite（:5175）、scripts/dev-open.mjs（等 /healthz 通了自動開 http://localhost/）
+npm run dev          # 一次啟動五個程序：server（:7180，只當 proxy 目標）、我畫你猜 Vite（綁 :80，入口）、繪圖比賽 Vite（:7181）、猜歌 Vite（:7182）、scripts/dev-open.mjs（等 /healthz 通了自動開 http://localhost/）
 ```
 
-啟動後會自動開瀏覽器到 <http://localhost/>（遊戲清單），從清單點進三款遊戲都是 Vite 開發版（HMR），例如 <http://localhost/draw-guess/>。:80 的 Vite（我畫你猜）把 `/socket.io`、`/`（遊戲清單）、`/healthz` proxy 到 `localhost:5173` 的 server，`/draw-contest` 轉給 :5174、`/song-guess` 轉給 :5175；區網同事開 `http://<IP>/draw-guess/` 看到的也是開發版。
+啟動後會自動開瀏覽器到 <http://localhost/>（遊戲清單），從清單點進三款遊戲都是 Vite 開發版（HMR），例如 <http://localhost/draw-guess/>。:80 的 Vite（我畫你猜）把 `/socket.io`、`/`（遊戲清單）、`/healthz` proxy 到 `localhost:7180` 的 server，`/draw-contest` 轉給 :7181、`/song-guess` 轉給 :7182；區網同事開 `http://<IP>/draw-guess/` 看到的也是開發版。
 
-**正式與開發不能同時跑**：`npm run dev`（Vite）與 `npm start` 都占 80。要在開發時驗證建置結果，改用其他埠，例如 `PORT=3100 npm start`（dev 的 server 已占 5173、繪圖比賽 Vite 占 5174、猜歌 Vite 占 5175）。
+**正式與開發不能同時跑**：`npm run dev`（Vite）與 `npm start` 都占 80。要在開發時驗證建置結果，改用其他埠，例如 `PORT=3100 npm start`（dev 的 server 已占 7180、繪圖比賽 Vite 占 7181、猜歌 Vite 占 7182）。
 
 ## 驗證指令（根目錄，每條分開跑）
 

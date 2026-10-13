@@ -1,6 +1,6 @@
 // 我畫你猜協定符合性測試（Phase 3 範圍：聊天判定表、防洩題、計分、全員猜對結束、揭曉、間隔與長度限制）
 // 只依 spec/architecture.md §4/§5 打 Socket，不看實作。
-// 用法（專案根目錄，需先 npm run build；請用隔離埠，桌面 app 的瀏覽器窗格會自動重連 5173）：
+// 用法（專案根目錄，需先 npm run build；請用隔離埠，桌面 app 的瀏覽器窗格會自動重連 7180）：
 //   PORT=3180 node server/dist/index.js &
 //   TEST_PORT=3180 node --input-type=module < user/protocol/draw-guess-phase3.mjs
 // 會等真實的 5 秒揭曉停留，總時長約 8 秒；全部 PASS 時 exit 0。

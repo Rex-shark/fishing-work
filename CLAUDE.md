@@ -69,7 +69,7 @@ fishing-work/
 
 ```bash
 npm install                 # 安裝五個 workspace 的相依（shared、server、draw-guess、draw-contest、song-guess）
-npm run dev                 # 一次啟動 server（:5173，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:5174）、猜歌 Vite（:5175），並自動開瀏覽器到 http://localhost/（遊戲清單；三款遊戲都是 HMR）
+npm run dev                 # 一次啟動 server（:7180，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:7181）、猜歌 Vite（:7182），並自動開瀏覽器到 http://localhost/（遊戲清單；三款遊戲都是 HMR）
 npm run build               # 建置 draw-guess/dist/ 與 server/dist/index.js
 npm start                   # 正式：node server/dist/index.js（PORT 預設 80、HOST 預設 0.0.0.0；公司區網只放行標準埠）
 npm run typecheck           # 五個 workspace 的 tsc --noEmit
@@ -83,7 +83,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 ### 區網分享（同事連線）
 
-`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列三款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3100 npm start` 避開 80（5173／5174／5175 是開發模式的內部埠，也避開）。詳見 `spec/architecture.md` §3。
+`npm start` 後 log 會印出區網網址（`share` 形如 `http://192.168.x.x/`（遊戲清單），80 埠不帶埠號；`games` 另列三款遊戲的網址），直接分享給同事。首次啟動 macOS 若詢問是否允許 node 接受連入連線 → 允許；macOS 一般使用者即可綁 80，不需 sudo。驗證：另一台裝置開 `http://<Rex IP>/healthz` 回 `{"ok":true}`。驗證或測試時可用 `PORT=3100 npm start` 避開 80（7180／7181／7182 是開發模式的內部埠，也避開）。詳見 `spec/architecture.md` §3。
 
 ### 外網分享（Cloudflare Tunnel，備用）
 
@@ -94,7 +94,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | 端點 | 說明 |
 |------|------|
 | `http://localhost/` | 遊戲清單（正式建置，:80） |
-| `http://localhost/draw-guess/` | 我畫你猜（正式建置）；`npm run dev` 時同一網址是 Vite 開發版（HMR，`/socket.io` proxy 到 :5173） |
+| `http://localhost/draw-guess/` | 我畫你猜（正式建置）；`npm run dev` 時同一網址是 Vite 開發版（HMR，`/socket.io` proxy 到 :7180） |
 | `http://localhost/draw-contest/`、`http://localhost/song-guess/` | 繪圖比賽、猜歌（正式建置）；`npm run dev` 時同樣是各自 Vite 的開發版（經 :80 轉發） |
 | `http://localhost/healthz` | 健康檢查 |
 

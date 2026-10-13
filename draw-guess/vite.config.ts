@@ -15,14 +15,14 @@ export default defineConfig({
     // mDNS（<電腦名稱>.local）要明列，否則回 "Blocked request. This host is not allowed."
     allowedHosts: ['.trycloudflare.com', '.local'],
     proxy: {
-      '/socket.io': { target: 'http://localhost:5173', ws: true },
+      '/socket.io': { target: 'http://localhost:7180', ws: true },
       // 開發時 :80 是本 Vite，Vite 會把 / 302 到 base（/draw-guess/）；以下四條轉出去，
-      // 讓 http://localhost/ 跟正式一樣是遊戲清單（server :5173）、/draw-contest/ 是繪圖比賽的 Vite（:5174，HMR）、/healthz 可用（Rex 2026-10-12）
-      '^/$': { target: 'http://localhost:5173' },
-      '/draw-contest': { target: 'http://localhost:5174', ws: true },
-      // 猜歌的 Vite（:5175，HMR；Epic 16，spec/song-guess/architecture.md §3）
-      '/song-guess': { target: 'http://localhost:5175', ws: true },
-      '/healthz': { target: 'http://localhost:5173' },
+      // 讓 http://localhost/ 跟正式一樣是遊戲清單（server :7180）、/draw-contest/ 是繪圖比賽的 Vite（:7181，HMR）、/healthz 可用（Rex 2026-10-12）
+      '^/$': { target: 'http://localhost:7180' },
+      '/draw-contest': { target: 'http://localhost:7181', ws: true },
+      // 猜歌的 Vite（:7182，HMR；Epic 16，spec/song-guess/architecture.md §3）
+      '/song-guess': { target: 'http://localhost:7182', ws: true },
+      '/healthz': { target: 'http://localhost:7180' },
     },
   },
 });
