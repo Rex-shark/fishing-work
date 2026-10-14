@@ -40,6 +40,7 @@
 - 決策 4：**送給模型的資訊＝原圖、題目、Clef 分數**。不給暱稱、不給名次。原因：分數讓語氣與結果一致（高分不甘願、低分嘲笑）是模型自己決定的，不寫成規則；名次要等全部評完，違反決策 2；暱稱交給模型容易被亂改字。
 - 決策 5：**提示詞只有人設一句＋兩條規則**（Rex 要求自由發揮）。system：「你是メスガキ，繪圖比賽的評審。規則只有兩條：用繁體中文（台灣用語）；一句話，40 字內。」user：「題目「{topic}」，評分 {score} 分。這是參賽者的畫，給一句評語。」＋圖。不加禁詞、不加範例句。後處理只做：去頭尾空白、取第一行、空字串視為失敗；超過 40 個 code point 不截斷（由畫面 `line-clamp` 處理）。
 - 決策 6：Ollama 請求為 `POST /api/chat`，`think: false`、`stream: false`、`keep_alive: '30m'`、`options: { temperature: 0.9, num_predict: 80 }`，`images: [base64(原 PNG)]`。原因：思考模式必關（需求 6）；`keep_alive` 讓模型在一場遊戲裡常駐；80 token 足夠 40 字。
+- （決策 7、8、15 中的逾時 20000、「第一次失敗即跳過」、「稱讚版失敗不退回」已被決策 16 取代，原文保留為歷史。）
 - 決策 7：環境變數 `COMMENT`（預設 `ollama`；`off` 關閉）、`COMMENT_MODEL`（預設 `gemma4:26b-mlx-bf16`）、`COMMENT_TIMEOUT_MS`（預設 20000）；位址沿用 `OLLAMA_URL`。啟動時探測（同評分器：`GET /api/tags` 不阻塞），模型不在就 warn；**有模型時啟動後背景暖機一次**（送一則不帶圖的極短 chat 並 `keep_alive`），原因：冷啟動 9～17 秒，第一回合第一張不該等。
 - 決策 8：失敗處理有界：單張逾時或輸出空白 → 該張 `comment: null`、`commentPending: false`（卡片不顯示評語行）；**同一回合第一次失敗後，剩餘各張直接跳過**（不再呼叫模型），該回合 `commentMode` 改為 `'off'`。下一回合重新嘗試。原因：與評分器的退回策略對稱，最壞只多等一次逾時。
 - 決策 9：未交卷者沒有評語（`comment: null`、`commentPending: false`）。原因：沒有圖；罐頭句會重複，Rex 要的是模型自由發揮。
@@ -47,6 +48,7 @@
 - 決策 11：評審名稱放 `shared/src/draw-contest/constants.ts` 的 `COMMENT_PERSONA_NAME = 'メスガキ'`，server 提示詞與客戶端卡片都讀它。原因：唯一來源。
 - 決策 12：**移除縮圖**：刪 `JUDGE_IMAGE_WIDTH`、`downscalePng`（plan 初稿誤寫 `resizePng`）、`pngjs` 相依（Dockerfile／映像隨之變小）；spec §6 的「縮到 640」定案改寫為「原圖直送」並保留 2026-10-07 的實測為歷史。原因：需求 7；nvfp4 在 MLX 後端 1280 只要 2.4 秒。
 - 決策 13：假 Ollama（`user/mock/systemone.mjs`）加 `POST /api/chat`，回固定格式 `{ message: { role: 'assistant', content: '<依圖片雜湊挑一句>' }, done: true }`；協定測試用它驗 `contest:comment` 的流程，不碰真模型。
+- 決策 16（Phase 5，Rex 2026-10-13）：(1) 稱讚版失敗或被跳過時**退回批評版**（推翻決策 15 的「不退回」）；(2) 同回合**連續兩次失敗**才跳過剩餘（原第一次即跳過）；(3) `COMMENT_TIMEOUT_MS` 預設 20 → **30 秒**（Rex 由海圖建議的 60 改為 30）。原因：Rex 以 pi-agent＋qwen3.8 實測，三個大模型共 129 GB 超過 Metal 107 GB，Ollama 反覆換頁，評語 7～16 秒、兩局逾時後整回合空白；根本解法是 pi-agent 改用 gemma4，但規則也該撐得住暫時忙碌。
 - 決策 15（Phase 4，需求 5a）：**第一名的評語在 `ended` 時重做一次「稱讚版」**。原因：評語是交卷即評、不知道名次（決策 2、4），名次要到 `ended` 才有；為了不讓揭曉等評語，其他人維持原流程，只有第一名多打一次模型。做法：`ended` 計算 `results` 後，取 `rank === 1` 且有交卷者（排名規則保證唯一），把它的 `comment` 設回 `null`、`commentPending: true`（即使原本已有批評版也不顯示，避免畫面從批評閃成稱讚），其評語工作**插到評語佇列最前面**，user 提示詞換成稱讚版（逐字，2026-10-12 第二版）：`題目「{topic}」，評分 {score} 分，這張是本回合第一名。妳不甘心，但還是得承認它畫得好，用雌小鬼的口氣誇它，一句評語。`；system 不變。初稿「用雌小鬼的方式稱讚它」真模型 15 句幾乎都還在罵（「雖然畫得超爛，但勉強及格啦」），水手長比較四種寫法後採「告訴模型它畫得好、妳得承認」這版，5 句全有正面肯定。完成後照常發 `contest:comment`。`commentMode === 'off'`（關閉或本回合已失敗跳過）時不重做，第一名維持原值。單人回合的第一名也稱讚。假 Ollama 依 user 文案含「第一名」回不同句，協定測試驗第一名的評語與其他人不同且揭曉時第一名為 pending。
 - 決策 14：卡片顯示（design §3）：**縮圖下方**一行（初稿寫標題列下方；水手長實作後指出同列縮圖會高低不齊，2026-10-12 改到縮圖下方），`メスガキ` 以粗體前綴、評語 12px 斜體 `--fg-muted`，`line-clamp-2`；等待中顯示「メスガキ：…」（帶前綴）；放大檢視顯示完整句。**2026-10-12 再修（事務長實戰回報）**：卡片評語不截斷（移除 `line-clamp-2`）、等待中改顯示「メスガキ：正在寫評語」，避免截斷的「…」與產生中的「…」混淆。**顯示與否只看該卡片自己的欄位（`comment !== null` 或 `commentPending`），不看 `commentMode`**（水手長 Q1 修正：回合中途失敗時已產生的評語照常顯示）。偽裝語意＝投影片的「註解」。
 
@@ -101,6 +103,16 @@
 | ✅ | 假 Ollama：user 含「第一名」時回稱讚句；協定測試補第一名案例 | |
 | ✅ | 說明對話框「評語」句補「第一名會被稱讚」 | 2026-10-12 水手長複驗 Phase 4：根目錄四項 exit 0（server 600、draw-contest 608）；協定 comment 55/55、comment-fallback 38/38、contest phase1 106/106；真模型一回合：揭曉時第一名 pending、稱讚版 0.5 秒後插隊先到。**待定案**：現行稱讚版文案的真模型語氣仍偏批評（已附提示詞比較數據給海圖） |
 | ✅ | 驗收（acceptance-reviewer）＋ Rex 真模型目視第一名評語 | 2026-10-12 驗收通過：四項 exit 0（server 600、draw-contest 608）、協定 9 檔重跑全過＋新寫 `draw-contest-comment-praise.mjs` 36/36（單人回合中止在途、五人插隊順序、只有稱讚版失敗與下一回合重試）、真模型三回合第一名皆 pending→稱讚句（+536～1069 ms）、卡片無閃動。稱讚句原文：「嘖，雖然畫得還算及格，但這種程度也想當第一名，真是太沒出息了啦！」「嘖，這種程度居然拿第一？雖然畫得很不錯啦，但別以為這樣就贏定我了！」「嘖，這種程度也能拿第一？雖然畫得還算可以啦，但別以為我會認輸喔！」**語氣待 Rex 目視定案** |
+
+### Phase 5：評語韌性（Rex 2026-10-13 實測三局後定案；起因：pi-agent 的本地模型把 gemma4 擠出記憶體，評語 7～16 秒甚至逾時）
+
+| 狀態 | 任務 | 備註 |
+|------|------|------|
+| ✅ | spec §3／§5／§6.1 回寫（海圖） | 決策 16 |
+| ✅ | server：稱讚版失敗或被跳過 → 退回揭曉前已產生的批評版（`contest:comment` 送出；沒有則 null）；連續兩次失敗才跳過本回合剩餘（中間成功即歸零）；`COMMENT_TIMEOUT_MS` 預設 30000；單元測試（退回、兩次才跳過、一次失敗後成功不跳過、逾時預設）與 e2e；假 Ollama 已有 `MOCK_PRAISE_CONTENT` 與延遲可用 | 決策 16；2026-10-13 水手長派子代理完成：`queue.ts` 連續失敗計數（`COMMENT_MAX_CONSECUTIVE_FAILURES = 2`）、`pushFront` 不再中止同一玩家在途的工作（依海圖回寫的 §5：跑完當退路）；`room.ts` 交卷紀錄加 `praise.fallback`、`onCommented` 以 `job.input.praise` 分辨、log `comment.failed` 加 `consecutive` 與稱讚版的 `fallback`；根目錄四項 exit 0（server 27 檔 805 例）；假 Ollama 未改 |
+| ✅ | README／compose 的 `COMMENT_TIMEOUT_MS` 預設與說明；說明對話框若有提到「評語失敗就沒有」改成「稱讚版失敗會退回一般評語」 | 2026-10-13：README 環境變數表與「第一名會被稱讚」段、`docker-compose.yml`、`draw-contest/README.md` 已改；說明對話框「排名與總分」補「稱讚寫不出來時改顯示一般評語」（helpTopics／helpDialog 測試同步，draw-contest 32 檔 807 例） |
+| ✅ | 協定測試 `draw-contest-comment-praise.mjs`／`comment-fallback.mjs` 對應案例改寫（稱讚版失敗現在退回批評版；單次逾時不跳過） | 既有斷言依新定案改，加註日期；2026-10-13：praise 55/55（丙改四回合：通用、揭曉前已有批評版、排隊中被取代 → null、在途跑完當退路）、comment-fallback 51/51（乙改兩次逾時＋「第一次逾時不收尾」時間斷言；丙加「drawing 只失敗一次 → judging 仍 ai」回合）、comment 55/55（未改）、phase1 106/106；各跑兩次以上皆全過 |
+| ✅ | 驗收（acceptance-reviewer）＋ Rex 再玩一局 | 2026-10-13 驗收通過：四項 exit 0（server 805）、契約逐位元組相同、協定 7 支全過＋新寫 comment-resilience 35/35（六回合覆蓋連續計數每種情況）、真模型兩回合評語 0.45～2.6 秒（qwen3.8 未載入）、瀏覽器目視 PASS。真模型「稱讚版逾時→看到批評版」待 Rex 以 pi-agent 把 qwen3.8 載回來再玩一局 |
 
 ### Phase 3：驗收
 

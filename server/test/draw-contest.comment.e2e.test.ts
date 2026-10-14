@@ -1,5 +1,6 @@
 // 繪圖比賽評語 e2e（Epic 15）：起真正的 server（隨機埠），以 socket.io-client 打 /draw-contest，
 // 評語器連 user/mock/systemone.mjs 的 /api/chat（spec/draw-contest/architecture.md §5「評語」、§6.1、§8：不得打到真模型）。
+// Phase 5（Rex 2026-10-13）：連續兩次失敗才跳過、稱讚版失敗退回批評版、揭曉時第一名在途的批評版不中止；依新定案改寫處標「2026-10-13 Phase 5」。
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { io, type Socket } from 'socket.io-client';
 import {
@@ -14,6 +15,7 @@ import {
 import { createApp, type App, type AppOptions } from '../src/app';
 import { createCommentSetup, readCommentConfig } from '../src/games/draw-contest/commentary/index';
 import { buildChatRequest, buildWarmupRequest, createOllamaCommentator } from '../src/games/draw-contest/commentary/ollamaChat';
+import type { Commentator } from '../src/games/draw-contest/commentary/queue';
 import { createRandomJudge, randomScore } from '../src/games/draw-contest/judge/random';
 import { makePng } from './helpers/drawContest';
 
@@ -44,6 +46,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.mocked(console.error).mockClear();
   for (const s of sockets.splice(0)) s.disconnect();
   await app?.close();
   app = null;
@@ -95,6 +98,20 @@ function collect<T>(s: ClientSocket, event: string): T[] {
   return out;
 }
 
+/** 這個測試到目前為止 register 記的 draw-contest.comment.failed（log.warn 走 console.error，一行一筆 JSON） */
+function failedLogs(): Array<Record<string, unknown>> {
+  return vi
+    .mocked(console.error)
+    .mock.calls.map(([line]) => {
+      try {
+        return JSON.parse(String(line)) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    })
+    .filter((entry) => entry.event === 'draw-contest.comment.failed');
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 async function waitFor(cond: () => boolean, ms = 3000, label = 'condition'): Promise<void> {
   const t0 = Date.now();
@@ -116,10 +133,11 @@ function lowHighPngs(): { low: Uint8Array; high: Uint8Array } {
 
 /**
  * 兩人加入、A 出題「蘋果」、A 先交卷再換 B；回傳兩人的 id 與收集器。
- * winner 決定誰拿高分那張圖：預設 'second'（B 第一名：他的批評版還在排隊就被稱讚版取代，假 Ollama 收到的請求順序固定）；
- * 'first'（A 第一名：他的批評版正在產生，揭曉時被中止）。
+ * winner 決定誰拿高分那張圖：預設 'second'（B 第一名：他的批評版還在排隊就被稱讚版取代 → 沒有退路；假 Ollama 收到的請求順序固定）；
+ * 'first'（A 第一名：他的批評版正在產生，揭曉時讓它跑完當退路，稱讚版排在它後面）。
+ * beforeSecond：A 交卷後、B 交卷前要等的事（例如等 A 的批評版先完成，讓第一名在揭曉前就有批評版）。
  */
-async function playRound(winner: 'first' | 'second' = 'second') {
+async function playRound(winner: 'first' | 'second' = 'second', beforeSecond?: () => Promise<void>) {
   const A = await connect();
   const B = await connect();
   const a = (await joinOk(A, 'Alice')).snapshot.you;
@@ -133,6 +151,7 @@ async function playRound(winner: 'first' | 'second' = 'second') {
   const pngA = winner === 'first' ? high : low;
   const pngB = winner === 'first' ? low : high;
   expect(await request(A, 'contest:submit', { png: pngA })).toMatchObject({ ok: true });
+  await beforeSecond?.();
   expect(await request(B, 'contest:submit', { png: pngB })).toMatchObject({ ok: true });
   await waitFor(() => roundsA.at(-1)?.phase === 'ended', 3000, 'ended');
   return { A, B, a, b, roundsA, commentsA, commentsB, pngA, pngB };
@@ -194,33 +213,111 @@ describe('e2e /draw-contest 評語（假 Ollama /api/chat）', () => {
     expect(lateComments.every((c) => typeof c.comment === 'string' && c.comment.length > 0)).toBe(true);
   });
 
-  it('第一名的批評版正在產生時揭曉：中止它、改跑稱讚版；兩人最終各一則評語（第一名稱讚句、另一人批評句）', async () => {
+  /** 假 Ollama 收到的評語請求（不含暖機）：'praise'／'criticism' 依序 */
+  const chatKinds = (): string[] =>
+    (mock as MockOllama).requests
+      .filter((r) => r.path === '/api/chat' && JSON.stringify(r.body).includes('images'))
+      .map((r) => (JSON.stringify(r.body).includes('第一名') ? 'praise' : 'criticism'));
+
+  // 2026-10-13 Phase 5：原本在途的批評版被中止、模型只為第一名跑一次
+  it('第一名的批評版正在產生時揭曉：讓它跑完（不發事件）、稱讚版緊接著跑；兩人最終各一則評語（第一名稱讚句、另一人批評句）', async () => {
     await start({ chatDelayMs: 150 });
     const { a, b, roundsA, commentsA } = await playRound('first');
     const ended = roundsA.at(-1) as RoundPublic;
     expect(ended.results?.map((r) => [r.playerId, r.comment, r.commentPending])).toEqual([[a, null, true], [b, null, true]]);
     await waitFor(() => commentsA.length === 2, 3000, 'contest:comment');
-    await sleep(400); // 被中止的那張不會再冒出事件
+    await sleep(400); // 跑完的那句批評版不會冒出事件
     expect(commentsA).toHaveLength(2);
+    // 順序：A 的稱讚版（排在自己在途的批評版之後、B 之前）先到，再來才是 B
+    expect(commentsA.map((c) => c.playerId)).toEqual([a, b]);
     expect(MOCK_PRAISES).toContain(commentsA.find((c) => c.playerId === a)?.comment);
     expect(MOCK_COMMENTS).toContain(commentsA.find((c) => c.playerId === b)?.comment);
-    expect(roundsA.at(-1)).toBe(ended); // 中止不算失敗：沒有多出 commentMode off 的 round:update
-    const praises = (mock as MockOllama).requests.filter((r) => r.path === '/api/chat' && JSON.stringify(r.body).includes('第一名'));
-    expect(praises).toHaveLength(1);
+    expect(roundsA.at(-1)).toBe(ended); // 沒有多出 commentMode off 的 round:update
+    expect(chatKinds()).toEqual(['criticism', 'praise', 'criticism']);
   });
 
-  it('只有第一名的稱讚版失敗（輸出空白）：其他人的評語照常，第一名收到 contest:comment null，再一則 round:update commentMode off', async () => {
+  // 2026-10-13 Phase 5：原本第一名收到 null，並有一則 round:update commentMode off
+  it('只有第一名的稱讚版失敗（輸出空白）、第一名沒有批評版（排隊中被取代）：第一名收到 contest:comment null；單次失敗不發 round:update，其他人照常', async () => {
     await start({ chatDelayMs: 150, praiseContent: '' });
     const { a, b, roundsA, commentsA } = await playRound();
-    const endedIndex = roundsA.length - 1;
-    await waitFor(() => commentsA.length === 2 && roundsA.at(-1)?.commentMode === 'off', 3000, 'praise failure');
+    const ended = roundsA.at(-1) as RoundPublic;
+    await waitFor(() => commentsA.length === 2, 3000, 'praise failure');
+    await sleep(300);
     expect(MOCK_COMMENTS).toContain(commentsA.find((c) => c.playerId === a)?.comment);
     expect(commentsA.find((c) => c.playerId === b)?.comment).toBeNull();
-    expect(roundsA).toHaveLength(endedIndex + 2);
-    expect(roundsA.at(-1)?.results?.map((r) => [r.playerId, r.comment === null, r.commentPending])).toEqual([[b, true, false], [a, false, false]]);
+    expect(roundsA.at(-1)).toBe(ended); // commentMode 維持 ai
+    expect(chatKinds()).toEqual(['criticism', 'praise']); // 不補跑批評版
+    // log：稱讚版失敗、沒有退路 → fallback null；單次失敗 consecutive 1、skipped 空
+    expect(failedLogs()).toEqual([expect.objectContaining({ level: 'warn', playerId: b, reason: 'empty', consecutive: 1, skipped: [], praise: true, fallback: null })]);
+    const snap = (await joinOk(await connect(), 'Carol')).snapshot.round;
+    expect(snap.commentMode).toBe('ai');
+    expect(snap.results?.map((r) => [r.playerId, r.comment === null, r.commentPending])).toEqual([[b, true, false], [a, false, false]]);
   });
 
-  it('失敗在 ended 之後（模型輸出空白）：每張 pending 各一則 contest:comment null，再一則 round:update commentMode off；只呼叫模型一次', async () => {
+  it('稱讚版失敗、揭曉時第一名的批評版正在產生：跑完的那句當退路，第一名只收到一則 contest:comment，內容是批評句', async () => {
+    await start({ chatDelayMs: 150, praiseContent: '' });
+    const { a, b, roundsA, commentsA } = await playRound('first');
+    const ended = roundsA.at(-1) as RoundPublic;
+    expect(ended.results?.map((r) => [r.playerId, r.comment, r.commentPending])).toEqual([[a, null, true], [b, null, true]]);
+    await waitFor(() => commentsA.length === 2, 3000, 'fallback');
+    await sleep(300);
+    expect(commentsA.map((c) => c.playerId)).toEqual([a, b]);
+    expect(MOCK_COMMENTS).toContain(commentsA[0].comment);
+    expect(MOCK_COMMENTS).toContain(commentsA[1].comment);
+    expect(roundsA.at(-1)).toBe(ended);
+    expect(chatKinds()).toEqual(['criticism', 'praise', 'criticism']);
+    // log：稱讚版失敗、已退回批評版 → fallback 'criticism'
+    expect(failedLogs()).toEqual([expect.objectContaining({ playerId: a, reason: 'empty', consecutive: 1, skipped: [], praise: true, fallback: 'criticism' })]);
+    const snap = (await joinOk(await connect(), 'Carol')).snapshot.round;
+    expect(snap.results?.map((r) => [r.playerId, r.comment, r.commentPending])).toEqual([
+      [a, commentsA[0].comment, false],
+      [b, commentsA[1].comment, false],
+    ]);
+  });
+
+  it('稱讚版失敗、第一名的批評版在揭曉前就完成：揭曉時仍重設為 pending，稱讚版失敗後退回那句批評版', async () => {
+    await start({ chatDelayMs: 50, praiseContent: '' });
+    // A 交卷後等他的批評版回來（假 Ollama 已收到請求＋延遲），B 才交卷
+    const { a, b, roundsA, commentsA } = await playRound('first', async () => {
+      await waitFor(() => chatKinds().length === 1, 2000, 'A 的批評版請求');
+      await sleep(250);
+    });
+    const ended = roundsA.at(-1) as RoundPublic;
+    expect(ended.results?.map((r) => [r.playerId, r.comment, r.commentPending])).toEqual([[a, null, true], [b, null, true]]);
+    await waitFor(() => commentsA.length === 2, 3000, 'fallback');
+    // B 的批評版（揭曉時在途）先到，稱讚版失敗後 A 才拿到退路
+    expect(commentsA.map((c) => c.playerId)).toEqual([b, a]);
+    expect(MOCK_COMMENTS).toContain(commentsA.find((c) => c.playerId === a)?.comment);
+    expect(roundsA.at(-1)).toBe(ended);
+    expect(chatKinds()).toEqual(['criticism', 'criticism', 'praise']); // A 的批評版只跑過揭曉前那一次
+  });
+
+  it('單次失敗只影響該張：第一張評語器失敗 → 該張 contest:comment null，下一張照常；不發 round:update', async () => {
+    mock = await startMockOllama({ chatDelayMs: 100 });
+    const real = createOllamaCommentator({ url: mock.url, model: MODEL });
+    let calls = 0;
+    // 第一次呼叫（A 的批評版）150 ms 後才失敗：讓失敗落在 ended 之後，才會有 contest:comment
+    const flaky: Commentator = {
+      comment: (input, signal) =>
+        ++calls === 1
+          ? new Promise<string>((_, reject) => setTimeout(() => reject(new Error('模型被擠出記憶體')), 150))
+          : real.comment(input, signal),
+    };
+    const random = createRandomJudge({ delayMs: 0 });
+    app = createApp({ port: 0, host: '127.0.0.1', judge: { judge: random, fallback: random, timeoutMs: 1000 }, comment: { commentator: flaky, timeoutMs: 2000 } });
+    base = `http://127.0.0.1:${(await app.listen()).port}`;
+    const { a, b, roundsA, commentsA } = await playRound();
+    const ended = roundsA.at(-1) as RoundPublic;
+    await waitFor(() => commentsA.length === 2, 3000, 'comments');
+    await sleep(200);
+    expect(commentsA.find((c) => c.playerId === a)?.comment).toBeNull();
+    expect(MOCK_PRAISES).toContain(commentsA.find((c) => c.playerId === b)?.comment);
+    expect(roundsA.at(-1)).toBe(ended);
+    expect(calls).toBe(2);
+  });
+
+  // 2026-10-13 Phase 5：原本第一次失敗就收尾、只呼叫模型一次
+  it('連續兩次失敗在 ended 之後（模型輸出空白）：每張 pending 各一則 contest:comment null，再一則 round:update commentMode off；呼叫模型兩次', async () => {
     await start({ chatDelayMs: 150, chatContent: '   ' });
     const { roundsA, commentsA } = await playRound();
     const endedIndex = roundsA.length - 1;
@@ -229,11 +326,19 @@ describe('e2e /draw-contest 評語（假 Ollama /api/chat）', () => {
     expect(roundsA).toHaveLength(endedIndex + 2);
     expect(roundsA.at(-1)).toMatchObject({ phase: 'ended', commentMode: 'off' });
     expect(roundsA.at(-1)?.results?.map((r) => [r.comment, r.commentPending])).toEqual([[null, false], [null, false]]);
-    // 暖機一次＋評語一次（第二張直接跳過）
-    expect((mock as MockOllama).requests.filter((r) => r.path === '/api/chat')).toHaveLength(2);
+    // A 的批評版、B 的稱讚版各失敗一次
+    expect(chatKinds()).toEqual(['criticism', 'praise']);
+    // log：批評版失敗不帶 praise／fallback；第二筆是稱讚版（連續第二次、沒有退路）
+    const logs = failedLogs();
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toMatchObject({ reason: 'empty', consecutive: 1, skipped: [] });
+    expect(logs[0]).not.toHaveProperty('praise');
+    expect(logs[0]).not.toHaveProperty('fallback');
+    expect(logs[1]).toMatchObject({ reason: 'empty', consecutive: 2, skipped: [], praise: true, fallback: null });
   });
 
-  it('逾時（COMMENT_TIMEOUT_MS 小值、假 Ollama 延遲 5 秒）：有界，逾時後同樣收尾', async () => {
+  // 2026-10-13 Phase 5：原本一次逾時就收尾
+  it('逾時（COMMENT_TIMEOUT_MS 小值、假 Ollama 延遲 5 秒）：有界，連續兩次逾時後收尾', async () => {
     // 只取評語器、不經 createCommentSetup：它的暖機會先被 5 秒延遲卡住
     mock = await startMockOllama({ chatDelayMs: 5000 });
     const random = createRandomJudge({ delayMs: 0 });
@@ -249,7 +354,7 @@ describe('e2e /draw-contest 評語（假 Ollama /api/chat）', () => {
     await waitFor(() => commentsA.length === 2 && roundsA.at(-1)?.commentMode === 'off', 3000, 'timeout events');
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(commentsA.map((c) => c.comment)).toEqual([null, null]);
-    expect(mock.requests.filter((r) => r.path === '/api/chat')).toHaveLength(1);
+    expect(mock.requests.filter((r) => r.path === '/api/chat')).toHaveLength(2);
   });
 
   it('COMMENT=off（注入關閉的評語器）：commentMode off、沒有 pending、沒有 contest:comment、不碰 Ollama', async () => {

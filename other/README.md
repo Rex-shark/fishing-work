@@ -6,28 +6,33 @@
 
 | 路徑 | 說明 |
 |---|---|
-| [skills/play-draw-contest/](skills/play-draw-contest/SKILL.md) | 教 AI agent 用瀏覽器加入並玩「繪圖比賽」的技能：`SKILL.md` 是玩法，`scripts/draw-helper.js` 是注入頁面的作畫輔助（有註解的原始版），`scripts/draw-helper.min.js` 是 agent 實際貼進頁面的壓縮版 |
-| [skills/set-draw-contest-topic/](skills/set-draw-contest-topic/SKILL.md) | 教 AI agent 在「繪圖比賽」當出題者：何時出題、操作步驟、怎麼選題目、出題者的規矩。以 `play-draw-contest` 為前提（agent 要先在房間裡） |
+| [skills/play-draw-contest/](skills/play-draw-contest/SKILL.md) | 教 AI agent 用瀏覽器加入並玩「繪圖比賽」。`SKILL.md` 是以輔助腳本為主的玩法；`references/manual-ui.md` 是不用腳本時的手動操作；`scripts/draw-helper.min.js` 是 agent 裝進頁面的腳本，`scripts/draw-helper.js` 是它有註解的原始版 |
+| [skills/set-draw-contest-topic/](skills/set-draw-contest-topic/SKILL.md) | 教 AI agent 在「繪圖比賽」當出題者：何時出題、怎麼送出、怎麼選題目、出題者的規矩。以 `play-draw-contest` 為前提 |
+| [skills/MAINTENANCE.md](skills/MAINTENANCE.md) | 維護紀錄：技能依賴的畫面文字與常數（`UI-DEP`／`CONST-DEP`／`BUG-DEP`）、改腳本後要做的事、驗證方式、沿革 |
+| [skills/install.sh](skills/install.sh) | 把兩份技能安裝或更新到另一個專案的技能目錄 |
 
-## skills/ 怎麼用
+## 安裝到別的專案
 
-這裡的技能不會被 Claude Code 自動載入（自動載入的在 `.claude/skills/`），是給「被派去玩遊戲的 agent」讀的：
-
-- 派工時在 prompt 裡叫 agent 先讀 `other/skills/play-draw-contest/SKILL.md`，並給它遊戲網址與暱稱。
-- 要它負責出題時，再叫它讀 `other/skills/set-draw-contest-topic/SKILL.md`，並講清楚出幾題、有沒有指定主題或難度。
-- 不是 Claude 的 agent（只要能操作瀏覽器）也一樣，把 `SKILL.md` 和 `scripts/draw-helper.min.js` 的內容交給它即可。
-- 想讓本專案的 Claude Code session 能直接以 `/play-draw-contest` 呼叫，把整個資料夾複製或連結到 `.claude/skills/`。
-
-兩個技能都依賴遊戲畫面上的文字與無障礙標籤（「完成」「儲存」「備忘稿」「粗細」「從目前投影片開始」「輸入標題」等）。繪圖比賽改了這些字，或新增第二套偽裝主題時，要回來更新技能與輔助腳本。完整的依賴清單在各 `SKILL.md` 檔頭的註解裡，以 `UI-DEP`（畫面文字與標籤）、`CONST-DEP`（常數）、`BUG-DEP`（為了繞過已知問題而寫的說明）標記：
+這裡的技能不會被本專案的 Claude Code 自動載入，是給「被派去玩遊戲的 agent」讀的。
 
 ```bash
-grep -rn "UI-DEP\|CONST-DEP\|BUG-DEP" other/skills
+other/skills/install.sh /Users/liuyoucheng/IdeaProjects/pi-agent/.pi/skills
 ```
 
-## 改了 draw-helper.js 之後
+- 目標填對方的技能目錄：pi 是 `<專案>/.pi/skills`，Claude Code 是 `<專案>/.claude/skills`。
+- 只會帶 `SKILL.md`、`references/` 與壓縮版腳本；同名技能整個換掉，其他技能不動。
+- **改了這裡的技能或腳本之後要重跑一次**，安裝過去的是複本，不會自動更新。
 
-壓縮版要重新產生（在專案根目錄；結尾的分號要拿掉，agent 才能把內容包進 `() => { return (…) }`）：
+已安裝的地方：
 
-```bash
-node_modules/.bin/esbuild other/skills/play-draw-contest/scripts/draw-helper.js --minify --charset=utf8 | sed -e '$ s/;$//' > other/skills/play-draw-contest/scripts/draw-helper.min.js
-```
+| 專案 | 位置 | 最後安裝 |
+|---|---|---|
+| pi-agent（pi ＋ 本機 Ollama 模型 ＋ Playwright MCP） | `/Users/liuyoucheng/IdeaProjects/pi-agent/.pi/skills/` | 2026-10-13 |
+
+## 不安裝，直接派工
+
+在本專案裡派子代理時，在 prompt 裡叫它先讀 `other/skills/play-draw-contest/SKILL.md`（要出題再加 `other/skills/set-draw-contest-topic/SKILL.md`），並給它遊戲網址與暱稱。
+
+## 維護
+
+繪圖比賽改了畫面文字、無障礙標籤，或新增第二套偽裝主題時，要對照 [skills/MAINTENANCE.md](skills/MAINTENANCE.md) 的依賴清單更新技能與腳本，重產壓縮版，再重新安裝。

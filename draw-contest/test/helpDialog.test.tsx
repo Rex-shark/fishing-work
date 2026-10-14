@@ -90,21 +90,25 @@ describe('HelpDialog：清單 → 內文 → 返回 → 清單 → 關閉（決�
     expect(f.topic).toBeNull()
   })
 
-  it('佔位符取自目前殼層：{volunteer}＝volunteer.label、{switch}＝help.switchHint、{save}＝terms.save', () => {
+  it('佔位符取自目前殼層：{volunteer}＝volunteer.label、{switch}＝help.switchHint、{save}＝terms.save、{recent}＝help.recentHint', () => {
     const detail = (base: ShellViews, id: HelpTopicId) =>
       bodyText(captureWith(base).render(<HelpDialogView topicId={id} onNavigate={() => {}} onClose={() => {}} />))
     expect(detail(PPT_VIEWS, 'be-setter')).toContain('「從目前投影片開始」')
     expect(detail(PPT_VIEWS, 'chat-reconnect')).toContain('想換介面風格：檔案 → 切換偽裝。</p>')
     expect(detail(PPT_VIEWS, 'submit')).toContain('在確認框按「儲存」就交卷')
-    const other = { ...PPT_VIEWS, volunteer: { label: '開始' }, help: { switchHint: 'X' }, terms: { ...PPT_VIEWS.terms, save: 'S' } }
+    const other = { ...PPT_VIEWS, volunteer: { label: '開始' }, help: { switchHint: 'X', recentHint: 'R' }, terms: { ...PPT_VIEWS.terms, save: 'S' } }
     expect(detail(other, 'chat-reconnect')).toContain('想換介面風格：X。')
+    // Epic 17：回看最近幾場的路徑也由殼層給
+    expect(detail(PPT_VIEWS, 'ranking')).toContain('<p>最近 5 場可從「檔案 › 開啟最近的簡報」回看，只存在這台瀏覽器。</p>')
+    expect(detail(other, 'ranking')).toContain('<p>最近 5 場可從「R」回看，只存在這台瀏覽器。</p>')
     expect(detail(other, 'submit')).toContain('在確認框按「S」')
     expect(detail(other, 'ranking')).toContain('按「開始」開始下一回合')
     // Epic 15：揭曉的評語說明（評審名稱來自 shared 常數，不是殼層名稱，換殼層不變）
     expect(detail(PPT_VIEWS, 'ranking')).toContain('<p>揭曉時評審「メスガキ」會給每張交卷的畫一句評語')
     expect(detail(other, 'ranking')).toContain('揭曉時評審「メスガキ」')
     // Phase 4：第一名的評語是稱讚版
-    expect(detail(PPT_VIEWS, 'ranking')).toContain('寫在畫的下面，第一名會被稱讚。')
+    // 2026-10-13 Phase 5：稱讚版失敗時退回一般評語
+    expect(detail(PPT_VIEWS, 'ranking')).toContain('寫在畫的下面，第一名會被稱讚；稱讚寫不出來時改顯示一般評語。')
     expect(detail(PPT_VIEWS, 'scoring')).not.toContain('稱讚')
     for (const t of HELP_TOPICS) expect(detail(PPT_VIEWS, t.id), t.id).not.toContain('{')
   })

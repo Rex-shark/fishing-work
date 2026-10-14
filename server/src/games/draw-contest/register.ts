@@ -98,6 +98,8 @@ export function registerDrawContest(nsp: DrawContestNamespace, options: Register
     onJudgeFallback: (info) => log.warn('draw-contest.judge.fallback', { ...info }),
     comment: options.comment ?? commentSetupFromEnv(),
     // 評語成功的 log（題目、分數、字數、耗時）由評語器回報：commentary/index.ts 的 draw-contest.comment.done
+    // failed：consecutive 為本回合連續失敗次數（達 2 才跳過剩餘，skipped 列出被跳過者）；
+    // 第一名稱讚版（praise: true）多帶 fallback：'criticism' = 已退回批評版、null = 沒有退路（§5 評語，Phase 5）
     onCommentFailure: (info) => log.warn('draw-contest.comment.failed', { ...info }),
     onCommentSkip: (info) => log.info('draw-contest.comment.skipped', { ...info }),
     onAsyncEffects: (effects) => {

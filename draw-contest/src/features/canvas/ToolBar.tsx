@@ -1,12 +1,13 @@
-// 作畫工具列（殼層的 toolbar 插槽；複製自我畫你猜，DESIGN.md §5、§6「圖示按鈕」「滑桿」「顏色面板」「工具提示」）。
+// 作畫工具列（殼層的 toolbar 插槽；複製自我畫你猜：元件規格依 DESIGN.md §6「圖示按鈕」「滑桿」「顏色面板」「工具提示」，
+// 擺放位置依 spec/draw-contest/design.md §2 drawing 階段的「繪圖」分頁）。
 // 目前顏色鈕（開顏色面板）、10 個 16px 預設色塊（PALETTE）、粗細滑桿（1–64）、背景色／橡皮擦／復原／清空。
 // 「完成」（＝交卷）是另一個插槽 FinishButton：殼層把它固定在工具列外的右端（窄版工具列捲動或收合時仍看得到；design §4）。
 // 只在「自己是參賽者、phase = drawing、尚未交卷」時渲染。所有操作只改自己的本機畫布（不送出）。
 // 選色（色塊或顏色面板）即切回畫筆；橡皮擦再按一次也切回畫筆。
-// 視窗寬度小於殼層給的斷點（ShellViews.toolbar.compactBelowPx；省略時用 DEFAULT_TOOLBAR_VIEW）時粗細滑桿收進「⋯」彈出面板
+// 視窗寬度小於殼層給的斷點（ShellViews.toolbar.compactBelowPx；繪圖比賽的 ShellViews 欄位全部必填，沒有預設值）時粗細滑桿收進「⋯」彈出面板
 // （portal 到 body，不被外層的 overflow 容器裁掉；開關與定位同顏色面板，共用 useFloatingPanel）。
 // 「完成」先開確認框（features/round/SubmitConfirmDialog），確認才交卷；自動交卷不經確認框。
-// 按下狀態（bg-active）的字色與選中色塊外框用 --fg-on-active（深色主題為白、淺色主題為深色字），不借用狀態列的 --fg-statusbar。
+// 按下狀態（bg-active）的字色與選中色塊外框用 --fg-on-active（目前唯一的殼層是淺色底，為深色字；token 預設值為白），不借用狀態列的 --fg-statusbar。
 // 色塊、目前色的顏色是遊戲資料（畫筆色），以 style 帶入，不是樣式 token（DESIGN §10 只約束介面色）。
 import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
@@ -145,7 +146,7 @@ function FinishControl() {
 }
 
 /**
- * 目前顏色鈕（決策 1；DESIGN §5）：22×22 圖示按鈕，內為 14px 目前色圓點（1px --border 外框）；點擊開關顏色面板。
+ * 目前顏色鈕（DESIGN.md §6「顏色面板」）：22×22 圖示按鈕，內為 14px 目前色圓點（1px --border 外框）；點擊開關顏色面板。
  * 橡皮擦中仍顯示切回畫筆後的顏色
  */
 function CurrentColor() {
@@ -163,7 +164,7 @@ function CurrentColor() {
   )
 }
 
-/** 10 個預設色塊（spec §4 PALETTE）：選色即切回畫筆 */
+/** 10 個預設色塊（spec/draw-contest/architecture.md §4 常數 PALETTE）：選色即切回畫筆 */
 function Swatches() {
   const tool = useGameStore((s) => s.brush.tool)
   const current = useGameStore((s) => s.brush.color)
@@ -205,7 +206,7 @@ function SizeControl() {
 }
 
 /**
- * 窄版「⋯」：彈出面板只放粗細滑桿（Epic 11 起色相改在顏色面板）。
+ * 窄版「⋯」：彈出面板只放粗細滑桿（色相在顏色面板裡選）。
  * 面板 portal 到 body、position: fixed，定位在按鈕下方；點面板外、Esc（focus 回到按鈕）、視窗縮放時關閉（useFloatingPanel）。
  */
 function MoreBrushMenu() {

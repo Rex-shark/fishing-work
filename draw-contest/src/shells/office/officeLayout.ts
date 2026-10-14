@@ -133,6 +133,35 @@ export function stepMenuItem(count: number, current: number, key: string): numbe
   }
 }
 
+/**
+ * 「檔案」選單含一層子清單時的按鍵（Epic 17 的最近清單；spec/draw-contest/design.md §3.1）：
+ * - Tab：關閉整個選單（焦點還給「檔案」）；
+ * - Esc：焦點在子清單裡 → 只收起子清單（焦點回到展開它的那一項）；否則關閉整個選單；
+ * - ←：在子清單裡 → 收起子清單；→：焦點在可展開（且未灰化）的那一項上 → 展開；
+ * - ↑↓／Home／End：在焦點所在的那一層循環（stepMenuItem）；其餘按鍵 null（Enter／Space 走按鈕的原生 click）
+ */
+export type FileMenuKeyAction = { type: 'close' } | { type: 'close-sub' } | { type: 'open-sub' } | { type: 'focus'; index: number }
+
+export function fileMenuKeyAction(input: {
+  key: string
+  /** 焦點在子清單裡 */
+  inSub: boolean
+  /** 焦點在可展開的那一項上，而且它可用（沒有灰化） */
+  onExpandable: boolean
+  /** 焦點所在那一層的可操作項目數 */
+  count: number
+  /** 焦點在那一層的第幾項；-1＝不在項目上 */
+  current: number
+}): FileMenuKeyAction | null {
+  const { key, inSub, onExpandable, count, current } = input
+  if (key === 'Tab') return { type: 'close' }
+  if (key === 'Escape') return { type: inSub ? 'close-sub' : 'close' }
+  if (key === 'ArrowLeft') return inSub ? { type: 'close-sub' } : null
+  if (key === 'ArrowRight') return !inSub && onExpandable ? { type: 'open-sub' } : null
+  const index = stepMenuItem(count, current, key)
+  return index === null ? null : { type: 'focus', index }
+}
+
 export const THEME_CURRENT_NOTE = '目前使用'
 export const THEME_UPCOMING_NOTE = '即將推出'
 

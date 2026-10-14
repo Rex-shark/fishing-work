@@ -6,6 +6,7 @@ import type { ShellDefinition, ShellId } from './types'
 export type {
   ShellDefinition,
   ShellHelp,
+  ShellHistory,
   ShellId,
   ShellPlayerCounts,
   ShellProps,

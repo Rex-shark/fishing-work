@@ -1,14 +1,20 @@
 // 評語佇列（Epic 15）：spec/draw-contest/architecture.md §6.1「佇列」、§5「評語」
 // - 一次一張、依加入順序；與評分佇列（judge/queue.ts）獨立，寫法比照它。
-// - 每張以 COMMENT_TIMEOUT_MS 逾時（AbortSignal 中止）。失敗（逾時、評語器 reject、輸出空白）→ 該張沒有評語，
-//   **本回合剩餘各張直接跳過**（不呼叫模型）：當下排隊中的與失敗那張同一批回報，之後 push 的直接回 false。
-//   有界：最壞只多等一次逾時。評語沒有退回用的替代品（評分才有 random）。
-// - discard(playerId)：丟棄該玩家的工作（排隊中直接移除；產生中則中止並忽略結果），**不算失敗**。
-// - reset()：換回合時整批清空（中止在途的那張，不算失敗）、模式回到 'ai'。
-// - pushFront(job)：第一名重做稱讚版（§5 評語，Phase 4）用。插到佇列最前面並取代同一玩家既有的工作：
-//   排隊中的直接換掉；正在產生的中止（不算失敗、結果忽略），新工作立即接著跑；在途的是別人的就等它跑完才輪到。
+// - 每張以 COMMENT_TIMEOUT_MS 逾時（AbortSignal 中止）。失敗（逾時、評語器 reject、輸出空白）→ 該張沒有評語。
+// - 失敗規則（Phase 5，Rex 2026-10-13）：單次失敗只影響該張，下一張照常呼叫模型；
+//   **同一回合連續兩次失敗（中間沒有成功）** 才把本回合剩餘各張直接跳過（不呼叫模型）：當下排隊中的與第二次失敗那張
+//   同一批回報，之後 push 的直接回 false，模式變 'off'。有界：最壞多等兩次逾時。
+//   連續失敗的計數：成功歸零；失敗 +1（第一名稱讚版失敗也算）；被取消的（discard、排隊中被 pushFront 取代、reset）不加也不歸零；
+//   reset（換回合）歸零。
+// - discard(playerId)：丟棄該玩家的所有工作（排隊中直接移除；產生中則中止並忽略結果），**不算失敗**。
+// - reset()：換回合時整批清空（中止在途的那張，不算失敗）、連續失敗計數歸零、模式回到 'ai'。
+// - pushFront(job)：第一名重做稱讚版（§5 評語，Phase 4）用。插到佇列最前面：同一玩家**排隊中**的工作直接換掉；
+//   **在途的那張一律讓它跑完**（不論是別人的還是同一玩家的，Phase 5 改：原本同一玩家在途的會被中止），新工作緊接著跑。
+//   所以佇列裡可能同時有同一玩家的兩個工作（在途的批評版＋排隊的稱讚版），兩者各自回報、各自計入成功或失敗；
+//   以 job.input.praise 分辨。
 // 結果經建構子注入的 onDone 非同步回報（Room 再轉成 onAsyncEffects）；一次回報一批，
-// 讓 Room 把「失敗那張＋被跳過的各張」併成同一組效果（§6.1 事件規則 (b)）。
+// 讓 Room 把「第二次失敗那張＋被跳過的各張」併成同一組效果（§6.1 事件規則 (b)）。
+// 佇列只回報「失敗／跳過」，不決定該張最後顯示什麼：第一名稱讚版失敗或被跳過時退回批評版是 Room 的事（room.ts onCommented）。
 import type { CommentMode } from '@fishing-work/shared/draw-contest';
 import type { Clock, TimerHandle } from '../room';
 
@@ -34,10 +40,13 @@ export interface CommentJob {
 
 export type CommentFailureReason = 'timeout' | 'error' | 'empty';
 
+/** 同一回合連續失敗達此次數（中間沒有成功）才跳過剩餘各張（§6.1 佇列，Phase 5 由 1 放寬為 2） */
+export const COMMENT_MAX_CONSECUTIVE_FAILURES = 2;
+
 export type CommentResult =
   | { status: 'ok'; comment: string }
   | { status: 'failed'; reason: CommentFailureReason; error?: string }
-  /** 同一回合前面有一張失敗，這張沒有呼叫模型 */
+  /** 本回合已連續兩次失敗，這張沒有呼叫模型 */
   | { status: 'skipped' };
 
 export interface CommentDone {
@@ -45,11 +54,17 @@ export interface CommentDone {
   result: CommentResult;
 }
 
-/** 一張評語失敗的資訊（給 register 記 log）；skipped 為因此被跳過的排隊中玩家；praise 只在失敗的是第一名稱讚版時出現 */
+/**
+ * 一張評語失敗的資訊（給 register 記 log）。
+ * consecutive：含這張在內，本回合連續失敗的次數（1 = 單次失敗，只影響這張；達 COMMENT_MAX_CONSECUTIVE_FAILURES = 本回合到此為止）。
+ * skipped：因此被跳過的排隊中玩家——單次失敗時一律為空陣列，連續第二次失敗時才可能有。
+ * praise 只在失敗的是第一名稱讚版時出現。
+ */
 export interface CommentFailureInfo {
   playerId: string;
   reason: CommentFailureReason;
   error?: string;
+  consecutive: number;
   skipped: string[];
   praise?: true;
 }
@@ -60,10 +75,13 @@ export interface CommentQueueOptions {
   /** 單張逾時（毫秒） */
   timeoutMs: number;
   clock: Pick<Clock, 'setTimeout' | 'clearTimeout'>;
-  /** 成功：一筆；失敗：失敗那張在前，其後為當下排隊中而被跳過的各張（依排隊順序） */
+  /**
+   * 成功：一筆；單次失敗：失敗那張一筆；連續第二次失敗：失敗那張在前，其後為當下排隊中而被跳過的各張（依排隊順序）。
+   * 呼叫當下 mode 已是最新（連續第二次失敗的那一批，mode 已為 'off'）。
+   */
   onDone: (batch: CommentDone[]) => void;
   onFailure?: (info: CommentFailureInfo) => void;
-  /** 本回合已失敗後才 push 進來而直接跳過的工作 */
+  /** 本回合已連續兩次失敗後才 push 進來而直接跳過的工作 */
   onSkip?: (info: { playerId: string }) => void;
 }
 
@@ -80,8 +98,8 @@ export class CommentQueue {
   private readonly opts: CommentQueueOptions;
   private pending: Entry[] = [];
   private current: Entry | null = null;
-  /** 本回合是否已有一張失敗（之後各張直接跳過） */
-  private failed = false;
+  /** 本回合目前連續失敗的次數（成功歸零；取消不動；reset 歸零） */
+  private failures = 0;
   private disposed = false;
 
   constructor(options: CommentQueueOptions) {
@@ -93,9 +111,14 @@ export class CommentQueue {
     return this.opts.commentator !== null;
   }
 
-  /** 本回合目前的評語器模式：關閉，或本回合已失敗跳過 → 'off' */
+  /** 本回合是否已連續兩次失敗（之後各張直接跳過） */
+  private get tripped(): boolean {
+    return this.failures >= COMMENT_MAX_CONSECUTIVE_FAILURES;
+  }
+
+  /** 本回合目前的評語器模式：關閉，或本回合已連續兩次失敗 → 'off'；只失敗一次仍是 'ai' */
   get mode(): CommentMode {
-    return this.enabled && !this.failed ? 'ai' : 'off';
+    return this.enabled && !this.tripped ? 'ai' : 'off';
   }
 
   /** 排隊中＋產生中的張數 */
@@ -104,12 +127,12 @@ export class CommentQueue {
   }
 
   /**
-   * 排進佇列；回傳是否已排入。false＝這張不會有評語也不會有 onDone（關閉、本回合已失敗跳過、或已 dispose），
+   * 排進佇列；回傳是否已排入。false＝這張不會有評語也不會有 onDone（關閉、本回合已連續兩次失敗、或已 dispose），
    * 呼叫端當場就能把該張定為「沒有評語」（§6.1 事件規則 (a)）。
    */
   push(job: CommentJob): boolean {
     if (this.disposed || !this.enabled) return false;
-    if (this.failed) {
+    if (this.tripped) {
       this.opts.onSkip?.({ playerId: job.playerId });
       return false;
     }
@@ -119,26 +142,26 @@ export class CommentQueue {
   }
 
   /**
-   * 插到佇列最前面，並取代同一玩家既有的工作（第一名重做稱讚版用，§5 評語）；回傳是否已排入（false 的條件與 push 相同）。
-   * - 該玩家原本的工作還在排隊 → 換掉（模型只會為他跑新的這一次）。
-   * - 該玩家原本的工作正在產生 → 中止（不算失敗、結果忽略、不回報 onDone），新工作立即接著跑：結果反正要丟，不必多等一次模型。
-   * - 正在產生的是別人的 → 讓它跑完，新工作排下一個（在其他排隊者之前）。
+   * 插到佇列最前面（第一名重做稱讚版用，§5 評語）；回傳是否已排入（false 的條件與 push 相同）。
+   * - 該玩家原本的工作還在排隊 → 換掉（模型只會為他跑新的這一次；被換掉的不回報、不計入連續失敗）。
+   * - 該玩家原本的工作正在產生 → **讓它跑完**（Phase 5，Rex 2026-10-13：那句批評版留給 Room 當稱讚版失敗的退路），
+   *   照常經 onDone 回報、照常計入成功或失敗；新工作排下一個。
+   * - 正在產生的是別人的 → 同樣讓它跑完，新工作排下一個（在其他排隊者之前）。
    */
   pushFront(job: CommentJob): boolean {
     if (this.disposed || !this.enabled) return false;
-    if (this.failed) {
+    if (this.tripped) {
       this.opts.onSkip?.({ playerId: job.playerId });
       return false;
     }
     this.pending = this.pending.filter((e) => e.job.playerId !== job.playerId);
     this.pending.unshift({ job, cancelled: false, controller: null });
-    // 先插隊再中止：cancel 會讓出位置並立刻 pump，取到的就是剛插進來的這張
-    if (this.current !== null && this.current.job.playerId === job.playerId) this.cancel(this.current);
-    else this.pump();
+    // 有在途的就等它跑完（pump 不動）；佇列閒置則立即開始
+    this.pump();
     return true;
   }
 
-  /** 丟棄指定玩家的工作（排隊中與產生中皆是，不算失敗）；回傳是否有丟棄 */
+  /** 丟棄指定玩家的所有工作（排隊中與產生中皆是——第一名可能兩者各有一張；不算失敗）；回傳是否有丟棄 */
   discard(playerId: string): boolean {
     let found = false;
     this.pending = this.pending.filter((e) => {
@@ -153,11 +176,11 @@ export class CommentQueue {
     return found;
   }
 
-  /** 換回合：清空排隊、中止產生中的那張（不算失敗）、模式回到 'ai' */
+  /** 換回合：清空排隊、中止產生中的那張（不算失敗）、連續失敗計數歸零（模式回到 'ai'） */
   reset(): void {
     this.pending = [];
     if (this.current !== null) this.cancel(this.current);
-    this.failed = false;
+    this.failures = 0;
   }
 
   dispose(): void {
@@ -187,16 +210,21 @@ export class CommentQueue {
 
   private async run(entry: Entry): Promise<void> {
     const attempt = await this.attempt(entry);
+    // 被取消的（discard、reset）到此為止：不回報，連續失敗計數不加也不歸零
     if (attempt.kind === 'cancelled' || entry.cancelled) return;
     this.current = null;
     const batch: CommentDone[] = [];
     if (attempt.kind === 'ok') {
+      this.failures = 0;
       batch.push({ job: entry.job, result: { status: 'ok', comment: attempt.comment } });
     } else {
-      // 首次失敗：本回合到此為止，排隊中的各張不再呼叫模型
-      this.failed = true;
-      const skipped = this.pending;
-      this.pending = [];
+      this.failures += 1;
+      // 單次失敗只影響這張，排隊中的照常跑；連續第二次失敗：本回合到此為止，排隊中的各張不再呼叫模型
+      let skipped: Entry[] = [];
+      if (this.tripped) {
+        skipped = this.pending;
+        this.pending = [];
+      }
       const detail = attempt.error === undefined ? {} : { error: attempt.error };
       batch.push({ job: entry.job, result: { status: 'failed', reason: attempt.reason, ...detail } });
       for (const e of skipped) batch.push({ job: e.job, result: { status: 'skipped' } });
@@ -204,6 +232,7 @@ export class CommentQueue {
         playerId: entry.job.playerId,
         reason: attempt.reason,
         ...detail,
+        consecutive: this.failures,
         skipped: skipped.map((e) => e.job.playerId),
         ...(entry.job.input.praise === true ? { praise: true as const } : {}),
       });

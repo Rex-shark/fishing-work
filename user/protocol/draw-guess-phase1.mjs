@@ -1,6 +1,6 @@
 // 我畫你猜協定符合性測試（Phase 1 範圍）：只依 spec/architecture.md §4/§5/§9 打 Socket，不看實作。
 // 用法（專案根目錄，需先 npm run build）：
-//   PORT=3178 node server/dist/index.js &   # 另開終端或背景
+//   COMMENT=off JUDGE=random PORT=3178 node server/dist/index.js &   # 另開終端或背景（帶 COMMENT=off JUDGE=random 免得啟動探測對真模型暖機，2026-10-13）
 //   TEST_PORT=3178 node --input-type=module < user/protocol/draw-guess-phase1.mjs
 // 會等真實的 15 秒寬限期，總時長約 20 秒；全部 PASS 時 exit 0。
 // 舵手（Helm）2026-09-24 Phase 1 驗收用；Phase 2 起可擴充回合／畫布／聊天案例，或改寫成 server/test/e2e 的 Vitest。

@@ -2,14 +2,18 @@
 // 功能元件（src/features/**）、App 與首頁（src/home/**）不得出現偽裝字樣或引用特定殼層；偽裝都在 src/shells/<主題>/。
 // 繪圖比賽只有 ppt 殼層：沿用我畫你猜的禁用字樣（日後加主題時規則已就位），正向對照改以字串樣本驗證規則本身；
 // 另加：整個 src 不得殘留我畫你猜專屬的事件與玩法（draw:op、chat:image、猜題、畫師…）。
+// Epic 17（比賽歷史）：features/history 不含偽裝字樣（「簡報」「檔案」等由殼層或 ShellViews.terms 給），殼層不碰歷史的 store 與 IndexedDB。
 import { describe, expect, it } from 'vitest'
 import { CANVAS_BACKGROUND, COMMENT_PERSONA_NAME } from '@fishing-work/shared/draw-contest'
 import { applyCanvasBackground } from '../src/features/canvas/canvasBackground'
 import { SHELLS } from '../src/shells'
 import { PLANNED_THEMES } from '../src/shells/catalog'
+import { PPT_RECENT_CLOSE, PPT_RECENT_EMPTY, PPT_RECENT_HINT, PPT_RECENT_LABEL } from '../src/shells/ppt/pptLayout'
 import { PPT_VIEWS } from '../src/shells/ppt/pptViews'
 
 const featureSources = import.meta.glob<string>('../src/features/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
+// 比賽歷史（Epic 17）：存放、時序、呈現、檢視元件
+const historySources = import.meta.glob<string>('../src/features/history/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 // 遊戲說明（Epic 6）：內容與對話框共用，殼層名稱一律來自 ShellViews
 const helpSources = import.meta.glob<string>('../src/features/help/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 const appSources = import.meta.glob<string>('../src/App.tsx', { query: '?raw', import: 'default', eager: true })
@@ -145,7 +149,7 @@ describe('功能元件不含 VS Code 字樣與版面假設', () => {
     expect(files.some((f) => f.endsWith('/help/helpTopics.ts'))).toBe(true)
     expect(files.some((f) => f.endsWith('/help/HelpDialog.tsx'))).toBe(true)
     for (const f of files) expect(entries.some(([file]) => file === f), f).toBe(true)
-    const names = [PPT_VIEWS.help.switchHint, PPT_VIEWS.volunteer.label, `「${PPT_VIEWS.terms.save}」`]
+    const names = [PPT_VIEWS.help.switchHint, PPT_VIEWS.help.recentHint, PPT_VIEWS.volunteer.label, `「${PPT_VIEWS.terms.save}」`]
     for (const [file, src] of Object.entries(helpSources)) {
       expect(names.filter((n) => src.includes(n)), file).toEqual([])
       expect(importPaths(src).filter((p) => /\/shells\//.test(p) && !p.endsWith('/shells/views')), file).toEqual([])
@@ -294,6 +298,59 @@ describe('殼層不讀遊戲 store（資料一律經 ShellProps）', () => {
     expect(STORE_IMPORT.test("import type { ConnectionState } from '../store/game'")).toBe(true)
     // 不誤判其他 store 名稱
     expect(STORE_IMPORT.test("import { x } from '../../store/gameExtra'")).toBe(false)
+  })
+})
+
+/** 比賽歷史的偽裝字樣（ppt：歷史＝最近的「簡報」、入口在「檔案」選單）：功能元件、App、首頁連註解都不得出現 */
+const HISTORY_DISGUISE_PATTERN = /簡報|檔案/
+/** 殼層不得 import 的歷史模組：store（狀態與時序）、db（IndexedDB）、檢視元件；只可用 historyDisplay 的型別 */
+const historyInternals = (src: string) => importPaths(src).filter((p) => /\/history\/(?:historyStore|historyDb|HistoryView)$/.test(p))
+
+describe('比賽歷史（Epic 17；plan/contest-history.md 決策 10）：殼層分界', () => {
+  it('掃描到 features/history 的四個檔案，且都在功能元件的掃描範圍內', () => {
+    const files = Object.keys(historySources).map((f) => f.replace('../src/features/history/', '')).sort()
+    expect(files).toEqual(['HistoryView.tsx', 'historyDb.ts', 'historyDisplay.ts', 'historyStore.ts'])
+    for (const f of Object.keys(historySources)) expect(entries.some(([file]) => file === f), f).toBe(true)
+  })
+
+  it('功能元件、App、首頁（含註解）不出現「簡報」「檔案」：入口與檢視的字樣都由殼層或 ShellViews.terms 給', () => {
+    const hits = entries.filter(([, src]) => HISTORY_DISGUISE_PATTERN.test(src)).map(([file]) => file)
+    expect(hits).toEqual([])
+    // 正向對照：規則抓得到殼層的每一個字樣，且 ppt 殼層確實提供了它們
+    for (const text of [PPT_RECENT_LABEL, PPT_RECENT_EMPTY, PPT_RECENT_CLOSE, PPT_RECENT_HINT, PPT_VIEWS.terms.recent, PPT_VIEWS.help.recentHint]) {
+      expect(HISTORY_DISGUISE_PATTERN.test(text), text).toBe(true)
+    }
+    expect(HISTORY_DISGUISE_PATTERN.test(Object.values(pptSources).join('\n'))).toBe(true)
+  })
+
+  it('features/history 不寫死殼層的字樣（開啟最近的…、沒有最近的…、關閉…、最近的…）', () => {
+    const texts = [PPT_RECENT_LABEL, PPT_RECENT_EMPTY, PPT_RECENT_CLOSE, PPT_RECENT_HINT, PPT_VIEWS.terms.recent]
+    for (const [file, src] of Object.entries(historySources)) expect(texts.filter((t) => src.includes(t)), file).toEqual([])
+  })
+
+  it('features/history 只經 shells/views 取得殼層的東西（不引用特定殼層）', () => {
+    for (const [file, src] of Object.entries(historySources)) {
+      expect(importPaths(src).filter((p) => p.includes('/shells/') && !p.endsWith('/shells/views')), file).toEqual([])
+    }
+  })
+
+  it('殼層不讀歷史的 store、不碰 IndexedDB、不直接放檢視元件：資料與動作經 ShellProps.history、畫面經插槽', () => {
+    for (const [file, src] of Object.entries(allShellSources)) {
+      expect(historyInternals(src), file).toEqual([])
+      expect(src, file).not.toMatch(/indexedDB|IDBFactory|useHistoryStore/)
+    }
+    // 正向對照
+    expect(historyInternals("import { useHistoryStore } from '../../features/history/historyStore'")).toHaveLength(1)
+    expect(historyInternals("import { createIndexedDbHistory } from '../../features/history/historyDb'")).toHaveLength(1)
+    expect(historyInternals("import { HistoryView } from '../../features/history/HistoryView'")).toHaveLength(1)
+    expect(historyInternals("import type { HistoryMenuEntry } from '../features/history/historyDisplay'")).toEqual([])
+  })
+
+  it('只有 historyDb 碰 IndexedDB（其餘功能元件經它的介面，測試才能注入記憶體假實作）', () => {
+    const users = Object.entries(allSources)
+      .filter(([, src]) => /\bindexedDB\b|\bIDB[A-Z]\w+/.test(stripComments(src)))
+      .map(([file]) => file.replace('../src/', ''))
+    expect(users).toEqual(['features/history/historyDb.ts'])
   })
 })
 

@@ -1,6 +1,7 @@
 // socket/client 的重連憑證與 resuming（plan/home-page.md 決策 4）：hasSavedSession、啟動時的 resuming、清掉憑證的路徑。
 // 以假的 location／sessionStorage 載入模組（socket 為 autoConnect: false，不會真的連線）；socket.connect／timeout 以 spy 取代。
-// 同一套載入方式順帶驗 Epic 15 的 contest:comment 有接到 store（未加入時忽略）。
+// 同一套載入方式順帶驗 Epic 15 的 contest:comment 有接到 store（未加入時忽略）、
+// Epic 17 的 contest:gallery 有把原始 PNG 交給比賽歷史（features/history/historyStore；未加入時忽略）。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const SESSION_KEY = 'fishing-work:draw-contest:session'
@@ -189,5 +190,64 @@ describe('contest:comment 接到 store（Epic 15；architecture §4）', () => {
   it('只註冊一個 contest:comment 處理', async () => {
     const { client } = await load(fakeSessionStorage())
     expect((client.socket as unknown as { listeners(e: string): unknown[] }).listeners('contest:comment')).toHaveLength(1)
+  })
+})
+
+describe('contest:gallery 交給比賽歷史（Epic 17；plan/contest-history.md 決策 4）', () => {
+  const entry = (playerId: string, rank: number) => ({
+    playerId,
+    nickname: playerId,
+    rank,
+    score: 90 - rank,
+    confidence: 0.5,
+    judgedBy: 'ai' as const,
+    submitted: true,
+    submittedAt: rank,
+    comment: null,
+    commentPending: false,
+  })
+  const png = () => new Uint8Array(8).fill(1).buffer
+
+  /** 載入 client 後，以記憶體假 DB 啟動同一份模組實例的歷史 */
+  async function loadWithHistory() {
+    const loaded = await load(fakeSessionStorage())
+    const history = await import('../src/features/history/historyStore')
+    const { createMemoryHistoryDb } = await import('../src/features/history/historyDb')
+    const db = createMemoryHistoryDb()
+    const stop = history.startHistory({ db, now: () => 5000, warn: () => {} })
+    return { ...loaded, history, db, stop }
+  }
+
+  it('已加入：round:update（ended）建檔，之後的 contest:gallery 把圖存進那一筆；store 的畫廊照舊', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:test/1')
+    const { client, useGameStore, history, db, stop } = await loadWithHistory()
+    useGameStore.setState({ me: 'p1' })
+    const round = { ...useGameStore.getState().round, roundNo: 2, phase: 'ended' as const, startedAt: 2000, lastTopic: '蘋果', results: [entry('a', 1), entry('p1', 2)] }
+    fire(client.socket, 'round:update', round)
+    fire(client.socket, 'contest:gallery', { roundNo: 2, playerId: 'a', png: png() })
+    // 別的回合的圖：store 與歷史都不收
+    fire(client.socket, 'contest:gallery', { roundNo: 1, playerId: 'p1', png: png() })
+    await history.historySettled()
+    const rows = await db.getAll()
+    expect(rows.map((r) => [r.id, r.roundNo, r.topic, r.me, Object.keys(r.images)])).toEqual([[2000, 2, '蘋果', 'p1', ['a']]])
+    expect(rows[0]?.images.a?.type).toBe('image/png')
+    expect([...useGameStore.getState().gallery.keys()]).toEqual(['a'])
+    stop()
+  })
+
+  it('未加入（me 為 null）：忽略，不建檔也不存圖', async () => {
+    const { client, useGameStore, history, db, stop } = await loadWithHistory()
+    const round = { ...useGameStore.getState().round, roundNo: 2, phase: 'ended' as const, startedAt: 2000, lastTopic: '蘋果', results: [entry('a', 1)] }
+    fire(client.socket, 'round:update', round)
+    fire(client.socket, 'contest:gallery', { roundNo: 2, playerId: 'a', png: png() })
+    await history.historySettled()
+    expect(await db.getAll()).toEqual([])
+    expect(useGameStore.getState().gallery.size).toBe(0)
+    stop()
+  })
+
+  it('只註冊一個 contest:gallery 處理', async () => {
+    const { client } = await load(fakeSessionStorage())
+    expect((client.socket as unknown as { listeners(e: string): unknown[] }).listeners('contest:gallery')).toHaveLength(1)
   })
 })

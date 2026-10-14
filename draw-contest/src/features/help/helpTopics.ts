@@ -1,12 +1,15 @@
 // 遊戲說明的內容（複製自我畫你猜 features/help；DESIGN.md §16；spec/draw-contest/overview.md v1 規則）：主題清單＋佔位符代入的純函式。
 // 內文一份、所有偽裝共用；與偽裝相關的名稱用佔位符，由目前殼層的 ShellViews 提供：
 //   {volunteer}＝「我出題」按鈕的可見文字（ShellViews.volunteer.label）、{switch}＝切換偽裝的操作路徑（ShellViews.help.switchHint）、
-//   {save}＝交卷確認框的主要按鈕（交卷的叫法，ShellViews.terms.save）。
-// 本檔不得寫死任何殼層的名稱或路徑（shellBoundary 把關）。秒數、人數、字數一律由 shared 常數推導（DRAW_SECONDS 為作畫時間唯一來源）。
+//   {save}＝交卷確認框的主要按鈕（交卷的叫法，ShellViews.terms.save）、{recent}＝回看最近幾場的操作路徑（ShellViews.help.recentHint；Epic 17）。
+// 本檔不得寫死任何殼層的名稱或路徑（shellBoundary 把關）。秒數、人數、字數一律由 shared 常數推導（DRAW_SECONDS 為作畫時間唯一來源）；
+// 回看的場數讀 features/history 的 HISTORY_MAX（客戶端常數）。
 // 六個主題（Phase 2 第二段正式文案）：如何出題、作畫、交卷、評分（含隨機評分）、排名與總分、聊天與重連。
 // Epic 15：「評分」說明誰評分、誰寫評語與退回隨機評分的情況；「排名與總分」講揭曉的地方加一段 AI 評語
-// （Phase 4：第一名的評語是稱讚版，揭曉後才重寫，所以那張一定先顯示產生中的文字；該文字讀 reveal 的 COMMENT_PENDING_TEXT，與卡片同一個來源）。
+// （Phase 4：第一名的評語是稱讚版，揭曉後才重寫，所以那張一定先顯示產生中的文字；該文字讀 reveal 的 COMMENT_PENDING_TEXT，與卡片同一個來源；
+// Phase 5：稱讚版失敗時 server 退回一般評語，說明補一句）。
 // 評審名稱讀 shared 的 COMMENT_PERSONA_NAME（唯一來源，本檔不寫死）。
+// Epic 17：「排名與總分」最後補一段，說明最近幾場可以回看、只存在這台瀏覽器（plan/contest-history.md 任務表）。
 import {
   CHAT_MAX,
   CHOOSING_SECONDS,
@@ -17,6 +20,7 @@ import {
   SUBMIT_GRACE_SECONDS,
   TOPIC_MAX,
 } from '@fishing-work/shared/draw-contest'
+import { HISTORY_MAX } from '../history/historyDb'
 import { COMMENT_PENDING_TEXT } from '../reveal/revealView'
 import { formatDuration } from './helpText'
 
@@ -27,7 +31,7 @@ export interface HelpTopic {
   id: HelpTopicId
   /** 清單上的名稱，也是第二步的標題 */
   title: string
-  /** 段落（含佔位符 {volunteer}、{switch}、{save}） */
+  /** 段落（含佔位符 {volunteer}、{switch}、{save}、{recent}） */
   paragraphs: readonly string[]
 }
 
@@ -80,9 +84,10 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     title: '排名與總分',
     paragraphs: [
       '全部評完就揭曉：每個人的畫依本回合分數由高到低排列，前三名加框；同分時先交卷的在前，未交卷的排最後、0 分。',
-      `揭曉時評審「${COMMENT_PERSONA_NAME}」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚。還沒寫好的先顯示「${COMMENT_PENDING_TEXT}」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。`,
+      `揭曉時評審「${COMMENT_PERSONA_NAME}」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚；稱讚寫不出來時改顯示一般評語。還沒寫好的先顯示「${COMMENT_PENDING_TEXT}」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。`,
       '本回合分數會累加到總分（顯示在玩家清單）；伺服器重新啟動後歸零。',
       '揭曉畫面會一直停著，直到有人按「{volunteer}」開始下一回合；點一張畫可以放大，再點一次或按 Esc 回到全部。',
+      `最近 ${HISTORY_MAX} 場可從「{recent}」回看，只存在這台瀏覽器。`,
     ],
   },
   {
@@ -105,6 +110,8 @@ export interface HelpNames {
   switch: string
   /** 交卷確認框的主要按鈕（交卷的叫法） */
   save: string
+  /** 回看最近幾場的操作路徑 */
+  recent: string
 }
 
 /** 依 id 找主題；不存在回 undefined */
@@ -115,6 +122,10 @@ export function findHelpTopic(id: string): HelpTopic | undefined {
 /** 代入佔位符，回傳要顯示的段落（每個佔位符都代入；其餘文字原樣） */
 export function renderTopic(topic: Pick<HelpTopic, 'paragraphs'>, names: HelpNames): string[] {
   return topic.paragraphs.map((p) =>
-    p.replaceAll('{volunteer}', names.volunteer).replaceAll('{switch}', names.switch).replaceAll('{save}', names.save),
+    p
+      .replaceAll('{volunteer}', names.volunteer)
+      .replaceAll('{switch}', names.switch)
+      .replaceAll('{save}', names.save)
+      .replaceAll('{recent}', names.recent),
   )
 }

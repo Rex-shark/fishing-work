@@ -21,8 +21,8 @@ services:
       COMMENT: ${COMMENT:-ollama}
       # 評語用的 Ollama 模型 tag（位址同 OLLAMA_URL）
       COMMENT_MODEL: ${COMMENT_MODEL:-gemma4:26b-mlx-bf16}
-      # 單張評語逾時（毫秒）；逾時那張沒有評語，本回合剩餘各張跳過
-      COMMENT_TIMEOUT_MS: ${COMMENT_TIMEOUT_MS:-20000}
+      # 單張評語逾時（毫秒）；逾時只影響那一張，同一回合連續兩次失敗才跳過本回合剩餘各張；第一名稱讚版失敗時退回一般評語
+      COMMENT_TIMEOUT_MS: ${COMMENT_TIMEOUT_MS:-30000}
       # 猜歌的題庫（Epic 16，spec/song-guess/architecture.md §3）：server 向 Apple iTunes Search API 搜尋歌手（免金鑰）
       # 容器必須能連外網到 itunes.apple.com（https）；連不上時出題回「搜尋失敗」，其他兩款遊戲不受影響
       # 試聽檔由每位玩家的瀏覽器直接向 Apple 取，不經容器：同事的電腦也要能連到 Apple 的試聽檔網域

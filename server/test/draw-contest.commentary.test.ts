@@ -344,8 +344,10 @@ describe('§6.1 評語佇列', () => {
     expect(manual.calls[0].input).toBe(input);
   });
 
-  it('逾時：AbortSignal 中止、該張失敗；排隊中的各張同一批回報為 skipped、不呼叫模型；模式變 off', async () => {
-    const { clock, manual, batches, failures, queue, job, flat } = setup(1000);
+  // ── 失敗規則（2026-10-13 Phase 5，Rex 定案）：單次失敗只影響該張；連續兩次失敗（中間沒有成功）才跳過本回合剩餘 ──
+
+  it('單次逾時：AbortSignal 中止、只有該張失敗（一筆一批、skipped 為空）；模式仍 ai，下一張照常呼叫模型', async () => {
+    const { clock, manual, batches, failures, skips, queue, job, flat } = setup(1000);
     queue.push(job('a'));
     queue.push(job('b'));
     queue.push(job('c'));
@@ -355,59 +357,184 @@ describe('§6.1 評語佇列', () => {
     clock.advance(1);
     expect(manual.calls[0].signal.aborted).toBe(true);
     await flush();
-    expect(queue.mode).toBe('off');
+    // 2026-10-13 Phase 5：原本這裡 b、c 同批 skipped、模式 off
+    expect(queue.mode).toBe('ai');
     expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(1);
+    expect(batches[0][0].result).toEqual({ status: 'failed', reason: 'timeout' });
+    expect(failures).toEqual([{ playerId: 'a', reason: 'timeout', consecutive: 1, skipped: [] }]);
+    expect(manual.calls).toHaveLength(2); // b 照常開始
+    expect(queue.size).toBe(2);
+    expect(queue.push(job('d'))).toBe(true); // 失敗一次後 push 照常排入
+    manual.resolveCall(1, '二');
+    await flush();
+    manual.resolveCall(2, '三');
+    await flush();
+    manual.resolveCall(3, '四');
+    await flush();
     expect(flat()).toEqual([
       ['a', 'failed', null],
-      ['b', 'skipped', null],
-      ['c', 'skipped', null],
+      ['b', 'ok', '二'],
+      ['c', 'ok', '三'],
+      ['d', 'ok', '四'],
     ]);
-    expect(batches[0][0].result).toEqual({ status: 'failed', reason: 'timeout' });
-    expect(failures).toEqual([{ playerId: 'a', reason: 'timeout', skipped: ['b', 'c'] }]);
-    expect(manual.calls).toHaveLength(1);
+    expect(skips).toEqual([]);
+    expect(queue.mode).toBe('ai');
+    expect(clock.timers.size).toBe(0);
+  });
+
+  it('連續兩次失敗：第二次失敗那張與當下排隊中的各張同一批回報（skipped、不呼叫模型）；模式變 off；有界＝最壞兩次逾時', async () => {
+    const { clock, manual, batches, failures, queue, job, flat } = setup(1000);
+    for (const id of ['a', 'b', 'c', 'd']) queue.push(job(id));
+    clock.advance(1000); // a 逾時
+    await flush();
+    expect(queue.mode).toBe('ai');
+    expect(manual.calls).toHaveLength(2);
+    clock.advance(999); // b 的逾時從它開始產生時起算
+    await flush();
+    expect(batches).toHaveLength(1);
+    clock.advance(1); // b 逾時 → 連續第二次
+    expect(manual.calls[1].signal.aborted).toBe(true);
+    await flush();
+    expect(queue.mode).toBe('off');
+    expect(batches.map((x) => x.length)).toEqual([1, 3]);
+    expect(flat()).toEqual([
+      ['a', 'failed', null],
+      ['b', 'failed', null],
+      ['c', 'skipped', null],
+      ['d', 'skipped', null],
+    ]);
+    expect(failures).toEqual([
+      { playerId: 'a', reason: 'timeout', consecutive: 1, skipped: [] },
+      { playerId: 'b', reason: 'timeout', consecutive: 2, skipped: ['c', 'd'] },
+    ]);
+    expect(manual.calls).toHaveLength(2); // 兩次逾時後不再呼叫模型
     expect(queue.size).toBe(0);
     expect(clock.timers.size).toBe(0);
   });
 
-  it('首次失敗後才 push 的：直接回 false（不排入、不呼叫模型、不回報 onDone），onSkip 通知', async () => {
+  it('連續兩次失敗後才 push 的：直接回 false（不排入、不呼叫模型、不回報 onDone），onSkip 通知；只失敗一次不會', async () => {
     const { manual, batches, failures, skips, queue, job } = setup();
     queue.push(job('a'));
     manual.rejectCall(0, new Error('連不上'));
     await flush();
-    expect(failures).toEqual([{ playerId: 'a', reason: 'error', error: 'Error: 連不上', skipped: [] }]);
-    expect(queue.push(job('b'))).toBe(false);
-    expect(queue.push(job('c'))).toBe(false);
+    expect(failures).toEqual([{ playerId: 'a', reason: 'error', error: 'Error: 連不上', consecutive: 1, skipped: [] }]);
+    expect(queue.push(job('b'))).toBe(true); // 2026-10-13 Phase 5：原本第一次失敗後就回 false
+    expect(skips).toEqual([]);
+    manual.rejectCall(1, new Error('還是連不上'));
     await flush();
-    expect(skips).toEqual(['b', 'c']);
-    expect(manual.calls).toHaveLength(1);
-    expect(batches).toHaveLength(1);
+    expect(failures.at(-1)).toEqual({ playerId: 'b', reason: 'error', error: 'Error: 還是連不上', consecutive: 2, skipped: [] });
+    expect(queue.mode).toBe('off');
+    expect(queue.push(job('c'))).toBe(false);
+    expect(queue.push(job('d'))).toBe(false);
+    await flush();
+    expect(skips).toEqual(['c', 'd']);
+    expect(manual.calls).toHaveLength(2);
+    expect(batches).toHaveLength(2);
     expect(queue.size).toBe(0);
   });
 
-  it('輸出空白或不是字串 → 失敗（reason empty）', async () => {
+  it('輸出空白或不是字串 → 失敗（reason empty）；單次不關、連續兩次才 off', async () => {
     for (const out of ['', '   ', 42 as unknown as string]) {
       const s = setup(1000, new FnCommentator(() => out));
       s.queue.push(s.job('x'));
       await flush();
       expect(s.batches[0][0].result).toEqual({ status: 'failed', reason: 'empty' });
+      expect(s.queue.mode).toBe('ai'); // 2026-10-13 Phase 5：原本一次就 off
+      s.queue.push(s.job('y'));
+      await flush();
+      expect(s.batches[1][0].result).toEqual({ status: 'failed', reason: 'empty' });
       expect(s.queue.mode).toBe('off');
     }
   });
 
-  it('成功的不受之後的失敗影響：前兩張 ok、第三張失敗、第四張跳過', async () => {
-    const { manual, queue, job, flat } = setup();
+  it('一次失敗後成功：計數歸零，之後再失敗一次仍不跳過（失敗、成功、失敗、成功、連兩次失敗才跳過）', async () => {
+    const { manual, failures, queue, job, flat } = setup();
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) queue.push(job(id));
+    manual.rejectCall(0);
+    await flush();
+    manual.resolveCall(1, '二');
+    await flush();
+    manual.rejectCall(2);
+    await flush();
+    expect(queue.mode).toBe('ai'); // 累計兩次失敗但不連續
+    manual.resolveCall(3, '四');
+    await flush();
+    manual.rejectCall(4);
+    await flush();
+    expect(queue.mode).toBe('ai');
+    manual.rejectCall(5);
+    await flush();
+    expect(queue.mode).toBe('off');
+    expect(flat()).toEqual([
+      ['a', 'failed', null],
+      ['b', 'ok', '二'],
+      ['c', 'failed', null],
+      ['d', 'ok', '四'],
+      ['e', 'failed', null],
+      ['f', 'failed', null],
+      ['g', 'skipped', null],
+    ]);
+    expect(failures.map((f) => [f.playerId, f.consecutive, f.skipped])).toEqual([
+      ['a', 1, []],
+      ['c', 1, []],
+      ['e', 1, []],
+      ['f', 2, ['g']],
+    ]);
+    expect(manual.calls).toHaveLength(6);
+  });
+
+  it('被取消的不計也不歸零：失敗一次 → discard 產生中的一張 → 再失敗一次即為連續第二次', async () => {
+    const { manual, failures, queue, job, flat } = setup();
     for (const id of ['a', 'b', 'c', 'd']) queue.push(job(id));
+    manual.rejectCall(0);
+    await flush();
+    expect(queue.discard('b')).toBe(true); // b 產生中 → 中止（不計、不歸零），c 接著跑
+    expect(manual.calls[1].signal.aborted).toBe(true);
+    manual.calls[1].resolve('太晚了'); // 被取消的就算成功回來也不歸零
+    await flush();
+    expect(queue.mode).toBe('ai');
+    expect(manual.calls).toHaveLength(3);
+    manual.rejectCall(2);
+    await flush();
+    expect(queue.mode).toBe('off');
+    expect(flat()).toEqual([
+      ['a', 'failed', null],
+      ['c', 'failed', null],
+      ['d', 'skipped', null],
+    ]);
+    expect(failures.map((f) => [f.playerId, f.consecutive])).toEqual([['a', 1], ['c', 2]]);
+  });
+
+  it('被取消的不加計數：discard 產生中的兩張後仍是 ai，之後照常呼叫模型', async () => {
+    const { manual, failures, queue, job } = setup();
+    for (const id of ['a', 'b', 'c']) queue.push(job(id));
+    queue.discard('a');
+    queue.discard('b');
+    await flush();
+    expect(failures).toEqual([]);
+    expect(queue.mode).toBe('ai');
+    expect(manual.calls).toHaveLength(3);
+    expect(queue.push(job('d'))).toBe(true);
+  });
+
+  it('成功的不受之後的失敗影響：前兩張 ok、第三、四張連續失敗、第五張跳過', async () => {
+    const { manual, queue, job, flat } = setup();
+    for (const id of ['a', 'b', 'c', 'd', 'e']) queue.push(job(id));
     manual.resolveCall(0, '一');
     await flush();
     manual.resolveCall(1, '二');
     await flush();
     manual.rejectCall(2);
     await flush();
+    manual.rejectCall(3);
+    await flush();
     expect(flat()).toEqual([
       ['a', 'ok', '一'],
       ['b', 'ok', '二'],
       ['c', 'failed', null],
-      ['d', 'skipped', null],
+      ['d', 'failed', null],
+      ['e', 'skipped', null],
     ]);
   });
 
@@ -429,7 +556,7 @@ describe('§6.1 評語佇列', () => {
     expect(queue.discard('zzz')).toBe(false);
   });
 
-  it('reset（換回合）：整批清空、中止在途的那張且**不算失敗**；失敗過的回合 reset 後模式回到 ai', async () => {
+  it('reset（換回合）：整批清空、中止在途的那張且**不算失敗**；連續失敗計數歸零（已 off 的回合 reset 後回到 ai；只失敗一次的也歸零）', async () => {
     const { clock, manual, batches, failures, queue, job } = setup(1000);
     queue.push(job('a'));
     queue.push(job('b'));
@@ -442,18 +569,34 @@ describe('§6.1 評語佇列', () => {
     expect(queue.size).toBe(0);
     expect(clock.timers.size).toBe(0);
 
-    // 這回合失敗 → off；下一回合重新嘗試
+    // 這回合連續兩次失敗 → off；下一回合重新嘗試（2026-10-13 Phase 5：原本一次就 off）
     queue.push(job('c'));
+    queue.push(job('c2'));
+    clock.advance(1000);
+    await flush();
+    expect(queue.mode).toBe('ai');
     clock.advance(1000);
     await flush();
     expect(queue.mode).toBe('off');
     queue.reset();
     expect(queue.mode).toBe('ai');
     expect(queue.push(job('d'))).toBe(true);
-    expect(manual.calls).toHaveLength(3);
-    manual.resolveCall(2, '新回合');
+    expect(manual.calls).toHaveLength(4);
+    manual.resolveCall(3, '新回合');
     await flush();
     expect(batches.at(-1)).toEqual([{ job: expect.objectContaining({ playerId: 'd' }), result: { status: 'ok', comment: '新回合' } }]);
+
+    // 上回合只失敗一次就換回合：計數歸零，新回合要再連續兩次才跳過
+    queue.push(job('e'));
+    manual.rejectCall(4);
+    await flush();
+    queue.reset();
+    queue.push(job('f'));
+    manual.rejectCall(5);
+    await flush();
+    expect(failures.at(-1)).toMatchObject({ playerId: 'f', consecutive: 1 });
+    expect(queue.mode).toBe('ai');
+    expect(queue.push(job('g'))).toBe(true);
   });
 
   it('pushFront（第一名重做）：插到最前面、取代同一玩家排隊中的工作；在途的別人那張先跑完', async () => {
@@ -482,28 +625,34 @@ describe('§6.1 評語佇列', () => {
     ]);
   });
 
-  it('pushFront：同一玩家的工作正在產生 → 中止它（不算失敗、結果忽略），新工作立即開始；佇列閒置時也是立即開始', async () => {
+  // 2026-10-13 Phase 5：原本同一玩家在途的工作會被中止、新工作立即開始；改為讓它跑完（那句批評版留給 Room 當退路）
+  it('pushFront：同一玩家的工作正在產生 → 讓它跑完並照常回報，新工作排在它之後、其他排隊者之前；佇列閒置時立即開始', async () => {
     const { clock, manual, batches, failures, queue, job, flat } = setup();
     queue.push(job('a', 90));
     queue.push(job('b'));
     const praise: CommentJob = { playerId: 'a', input: { png: png(), topic: 't', score: 90, praise: true } };
     expect(queue.pushFront(praise)).toBe(true);
-    expect(manual.calls[0].signal.aborted).toBe(true);
+    expect(manual.calls[0].signal.aborted).toBe(false);
+    expect(manual.calls).toHaveLength(1); // 稱讚版要等在途的批評版跑完
+    expect(queue.size).toBe(3); // 同一玩家兩個工作：在途的批評版＋排隊的稱讚版
+    manual.resolveCall(0, 'a 的批評版');
+    await flush();
+    expect(batches).toHaveLength(1);
+    expect(batches[0][0]).toMatchObject({ job: { playerId: 'a' }, result: { status: 'ok', comment: 'a 的批評版' } });
+    expect(batches[0][0].job.input.praise).toBeUndefined();
     expect(manual.calls).toHaveLength(2);
     expect(manual.calls[1].input).toBe(praise.input);
-    manual.calls[0].resolve('被中止的那張');
-    await flush();
-    expect(batches).toEqual([]);
-    expect(failures).toEqual([]);
-    expect(queue.mode).toBe('ai');
     manual.resolveCall(1, '稱讚 a');
     await flush();
     manual.resolveCall(2, '給 b');
     await flush();
     expect(flat()).toEqual([
+      ['a', 'ok', 'a 的批評版'],
       ['a', 'ok', '稱讚 a'],
       ['b', 'ok', '給 b'],
     ]);
+    expect(failures).toEqual([]);
+    expect(queue.mode).toBe('ai');
     expect(clock.timers.size).toBe(0);
 
     // 佇列閒置、該玩家沒有既有工作：直接開始
@@ -512,17 +661,73 @@ describe('§6.1 評語佇列', () => {
     expect(manual.calls[3].input.praise).toBe(true);
   });
 
-  it('pushFront 的工作失敗：onFailure 帶 praise: true；本回合已失敗、關閉或 dispose 後 pushFront 回 false', async () => {
+  it('pushFront：同一玩家在途的那張失敗照常計入——單次失敗時稱讚版照跑；已失敗過一次則為連續第二次，稱讚版同批 skipped', async () => {
+    const one = setup();
+    one.queue.push(one.job('a', 90));
+    one.queue.pushFront({ playerId: 'a', input: { png: png(), topic: 't', score: 90, praise: true } });
+    one.manual.rejectCall(0);
+    await flush();
+    expect(one.queue.mode).toBe('ai');
+    expect(one.manual.calls).toHaveLength(2);
+    expect(one.manual.calls[1].input.praise).toBe(true);
+    expect(one.failures).toEqual([{ playerId: 'a', reason: 'error', error: 'Error: boom', consecutive: 1, skipped: [] }]);
+
+    const two = setup();
+    two.queue.push(two.job('x'));
+    two.queue.push(two.job('a', 90));
+    two.queue.push(two.job('b'));
+    two.manual.rejectCall(0); // x 失敗（第一次）
+    await flush();
+    two.queue.pushFront({ playerId: 'a', input: { png: png(), topic: 't', score: 90, praise: true } }); // a 的批評版在途
+    two.manual.rejectCall(1); // 連續第二次
+    await flush();
+    expect(two.queue.mode).toBe('off');
+    expect(two.batches.at(-1)?.map((d) => [d.job.playerId, d.job.input.praise === true, d.result.status])).toEqual([
+      ['a', false, 'failed'],
+      ['a', true, 'skipped'],
+      ['b', false, 'skipped'],
+    ]);
+    expect(two.manual.calls).toHaveLength(2);
+  });
+
+  it('discard：同一玩家在途的批評版與排隊的稱讚版一起丟棄（不算失敗）', async () => {
+    const { manual, batches, failures, queue, job, flat } = setup();
+    queue.push(job('a', 90));
+    queue.push(job('b'));
+    queue.pushFront({ playerId: 'a', input: { png: png(), topic: 't', score: 90, praise: true } });
+    expect(queue.discard('a')).toBe(true);
+    expect(manual.calls[0].signal.aborted).toBe(true);
+    expect(queue.size).toBe(1);
+    manual.calls[0].resolve('太晚了');
+    await flush();
+    expect(batches).toEqual([]);
+    expect(manual.calls).toHaveLength(2);
+    expect(manual.calls[1].input.praise).toBeUndefined(); // 接著跑的是 b，不是 a 的稱讚版
+    manual.resolveCall(1, '給 b');
+    await flush();
+    expect(flat()).toEqual([['b', 'ok', '給 b']]);
+    expect(failures).toEqual([]);
+  });
+
+  it('pushFront 的工作失敗：onFailure 帶 praise: true、照常計入連續失敗；連續兩次失敗、關閉或 dispose 後 pushFront 回 false', async () => {
     const a = setup();
     a.queue.push(a.job('x'));
     a.queue.pushFront({ playerId: 'w', input: { png: png(), topic: 't', score: 99, praise: true } });
+    a.queue.push(a.job('v'));
     a.manual.resolveCall(0, '給 x');
     await flush();
     a.manual.rejectCall(1, new Error('boom'));
     await flush();
-    expect(a.failures).toEqual([{ playerId: 'w', reason: 'error', error: 'Error: boom', skipped: [], praise: true }]);
-    expect(a.queue.pushFront(a.job('y'))).toBe(false); // 已失敗：跳過
-    expect(a.skips).toEqual(['y']);
+    expect(a.failures).toEqual([{ playerId: 'w', reason: 'error', error: 'Error: boom', consecutive: 1, skipped: [], praise: true }]);
+    expect(a.queue.mode).toBe('ai'); // 2026-10-13 Phase 5：稱讚版單次失敗不關
+    expect(a.manual.calls).toHaveLength(3); // v 照常開始
+    expect(a.queue.pushFront(a.job('y'))).toBe(true);
+    a.manual.rejectCall(2); // v 失敗 → 稱讚版那次＋這次＝連續兩次
+    await flush();
+    expect(a.queue.mode).toBe('off');
+    expect(a.failures.at(-1)).toEqual({ playerId: 'v', reason: 'error', error: 'Error: boom', consecutive: 2, skipped: ['y'] });
+    expect(a.queue.pushFront(a.job('z'))).toBe(false); // 已連續兩次失敗：跳過
+    expect(a.skips).toEqual(['z']);
 
     const off = setup(1000, null);
     expect(off.queue.pushFront(off.job('y'))).toBe(false);
@@ -557,7 +762,8 @@ describe('§6.1 評語佇列', () => {
     expect(skips).toEqual([]);
   });
 
-  it('真實計時器＋假 Ollama 延遲：COMMENT_TIMEOUT_MS 逾時 → 該張失敗、剩餘跳過', async () => {
+  // 2026-10-13 Phase 5：原本第一次逾時就把 p2 一起 skipped、只打一次模型
+  it('真實計時器＋假 Ollama 延遲：COMMENT_TIMEOUT_MS 逾時 → 第一張只失敗自己，第二張照打模型；連續兩次逾時後剩餘跳過', async () => {
     const m = await mock({ chatDelayMs: 5000 });
     const batches: CommentDone[][] = [];
     const queue = new CommentQueue({
@@ -566,12 +772,20 @@ describe('§6.1 評語佇列', () => {
       clock: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) },
       onDone: (batch) => batches.push(batch),
     });
+    const t0 = Date.now();
     queue.push({ playerId: 'p1', input: { png: png(1), topic: '蘋果', score: 60 } });
     queue.push({ playerId: 'p2', input: { png: png(2), topic: '蘋果', score: 40 } });
-    await vi.waitFor(() => expect(batches).toHaveLength(1), { timeout: 2000 });
-    expect(batches[0].map((d) => [d.job.playerId, d.result.status])).toEqual([['p1', 'failed'], ['p2', 'skipped']]);
+    queue.push({ playerId: 'p3', input: { png: png(3), topic: '蘋果', score: 20 } });
+    await vi.waitFor(() => expect(batches).toHaveLength(2), { timeout: 3000 });
+    expect(Date.now() - t0).toBeLessThan(2500); // 有界：兩次逾時（各 150 ms），不是三次、更不是假 Ollama 的 5 秒
+    expect(batches.map((b) => b.map((d) => [d.job.playerId, d.result.status]))).toEqual([
+      [['p1', 'failed']],
+      [['p2', 'failed'], ['p3', 'skipped']],
+    ]);
     expect(batches[0][0].result).toMatchObject({ reason: 'timeout' });
-    expect(m.requests.filter((r) => r.path === '/api/chat')).toHaveLength(1);
+    expect(batches[1][0].result).toMatchObject({ reason: 'timeout' });
+    expect(queue.mode).toBe('off');
+    expect(m.requests.filter((r) => r.path === '/api/chat')).toHaveLength(2);
     queue.dispose();
   });
 });
@@ -579,14 +793,16 @@ describe('§6.1 評語佇列', () => {
 // ─── 設定 ─────────────────────────────────────────────────────────
 
 describe('§3 評語器環境變數', () => {
-  it('預設值：COMMENT ollama（Rex 2026-10-12 定案）、gemma4:26b-mlx-bf16、20 秒、位址沿用 OLLAMA_URL 的預設', () => {
+  // 2026-10-13 Phase 5：COMMENT_TIMEOUT_MS 預設 20000 → 30000
+  it('預設值：COMMENT ollama（Rex 2026-10-12 定案）、gemma4:26b-mlx-bf16、30 秒、位址沿用 OLLAMA_URL 的預設', () => {
     expect(readCommentConfig({}, () => {})).toEqual({
       comment: 'ollama',
       ollamaUrl: 'http://127.0.0.1:11434',
       model: 'gemma4:26b-mlx-bf16',
-      timeoutMs: 20_000,
+      timeoutMs: 30_000,
     });
     expect(DEFAULT_COMMENT_CONFIG.comment).toBe('ollama');
+    expect(DEFAULT_COMMENT_CONFIG.timeoutMs).toBe(30_000);
   });
 
   it('讀取各變數（大小寫、頭尾空白不拘）；位址讀 OLLAMA_URL', () => {
@@ -600,11 +816,11 @@ describe('§3 評語器環境變數', () => {
 
   it('不合法的值退回預設並 warn；空字串視為未設', () => {
     const warn = vi.fn();
-    expect(readCommentConfig({ COMMENT: 'gpt', COMMENT_TIMEOUT_MS: '0' }, warn)).toMatchObject({ comment: 'ollama', timeoutMs: 20_000 });
+    expect(readCommentConfig({ COMMENT: 'gpt', COMMENT_TIMEOUT_MS: '0' }, warn)).toMatchObject({ comment: 'ollama', timeoutMs: 30_000 });
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledWith('draw-contest.comment.envInvalid', { name: 'COMMENT', value: 'gpt', using: 'ollama' });
-    expect(warn).toHaveBeenCalledWith('draw-contest.comment.envInvalid', { name: 'COMMENT_TIMEOUT_MS', value: '0', using: 20_000 });
-    for (const bad of ['-5', '1.5', 'abc']) expect(readCommentConfig({ COMMENT_TIMEOUT_MS: bad }, warn).timeoutMs).toBe(20_000);
+    expect(warn).toHaveBeenCalledWith('draw-contest.comment.envInvalid', { name: 'COMMENT_TIMEOUT_MS', value: '0', using: 30_000 });
+    for (const bad of ['-5', '1.5', 'abc']) expect(readCommentConfig({ COMMENT_TIMEOUT_MS: bad }, warn).timeoutMs).toBe(30_000);
     expect(warn).toHaveBeenCalledTimes(5);
     expect(readCommentConfig({ COMMENT: '', COMMENT_MODEL: '  ', COMMENT_TIMEOUT_MS: ' ', OLLAMA_URL: '' }, warn)).toEqual(readCommentConfig({}, warn));
     expect(warn).toHaveBeenCalledTimes(5);

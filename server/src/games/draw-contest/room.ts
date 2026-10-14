@@ -15,7 +15,10 @@
 // - ended **不等評語**：揭曉當下已完成的寫進 results.comment，未完成者 commentPending=true，
 //   之後每完成一張廣播 contest:comment 並同步更新 round.results（中途加入者的快照即為最新）。
 // - 第一名重做稱讚版（Phase 4）：名次到 ended 才有，所以揭曉時把第一名的評語重設為 pending、以稱讚版提示詞插隊重做。
-// - commentMode 生命週期同 judgeMode：judging 起有值，關閉或本回合失敗跳過後為 'off'。
+//   稱讚版失敗或被跳過時退回他原本的批評版（Phase 5，Rex 2026-10-13）：揭曉當下已產生的那句，或揭曉時在途、之後跑完的那句；
+//   都沒有（原工作仍在排隊而被稱讚版取代、或批評版自己也失敗）才是 null，不補跑批評版。
+// - 失敗規則（Phase 5）：單張失敗只影響該張；同一回合連續兩次失敗才跳過剩餘各張並把 commentMode 改 'off'。
+// - commentMode 生命週期同 judgeMode：judging 起有值，關閉或本回合已連續兩次失敗後為 'off'。
 // - 丟棄只發生在 drawing／judging（參賽者離開）與換回合；ended 之後離開的人評語照常跑完並廣播。
 import { randomUUID } from 'node:crypto';
 import {
@@ -46,7 +49,7 @@ import {
   type ServerToClientEvents,
 } from '@fishing-work/shared/draw-contest';
 import { CHAT_ERROR_MESSAGES, validateChatText } from './chat';
-import { CommentQueue, type CommentDone, type CommentFailureInfo, type Commentator } from './commentary/queue';
+import { CommentQueue, type CommentDone, type CommentFailureInfo, type CommentJob, type Commentator } from './commentary/queue';
 import { JudgeQueue, type JudgeFallbackInfo, type JudgeJob, type JudgeResult } from './judge/queue';
 import { createRandomJudge } from './judge/random';
 import type { Judge } from './judge/types';
@@ -134,6 +137,12 @@ export interface RoomCommentSetup {
   timeoutMs: number;
 }
 
+/**
+ * 一張評語失敗的通知（register 記 log `draw-contest.comment.failed`）：佇列的失敗資訊，
+ * 失敗的是第一名稱讚版（praise: true）時多帶 fallback——'criticism' = 已退回批評版，null = 沒有退路（§5 評語，Phase 5）。
+ */
+export type RoomCommentFailureInfo = CommentFailureInfo & { fallback?: 'criticism' | null };
+
 export interface RoomOptions {
   clock?: Clock;
   /** 產生 player id 與 token（預設 crypto.randomUUID；測試注入可預期的值） */
@@ -148,9 +157,9 @@ export interface RoomOptions {
   onJudgeFallback?: (info: JudgeFallbackInfo) => void;
   /** 評語器（Epic 15；預設關閉，等同 COMMENT=off）；正式環境由 register 依環境變數建立 */
   comment?: RoomCommentSetup;
-  /** 一張評語失敗（本回合剩餘各張因此跳過）時通知（register 記 log） */
-  onCommentFailure?: (info: CommentFailureInfo) => void;
-  /** 本回合已失敗後才評完的交卷直接跳過評語時通知（register 記 log） */
+  /** 一張評語失敗時通知（register 記 log）；連續第二次失敗時 info.skipped 為因此被跳過的各張，單次失敗為空陣列 */
+  onCommentFailure?: (info: RoomCommentFailureInfo) => void;
+  /** 本回合已連續兩次失敗後才評完的交卷直接跳過評語時通知（register 記 log） */
   onCommentSkip?: (info: { playerId: string }) => void;
 }
 
@@ -209,6 +218,12 @@ interface Submission {
   comment: string | null;
   /** true = 已排進評語佇列、尚未完成 */
   commentPending: boolean;
+  /**
+   * 第一名稱讚版（§5 評語）：非 null = 揭曉時已排進稱讚版、尚未有結果；其餘（含稱讚版已完成）為 null。
+   * fallback 是稱讚版失敗或被跳過時要退回的批評版（Phase 5）：揭曉當下 comment 已是字串就是那句；
+   * 揭曉時批評版正在產生，則等它跑完由 onCommented 補上；都沒有為 null。
+   */
+  praise: { fallback: string | null } | null;
 }
 
 /** idle 回合；roundNo、results、lastTopic 沿用上一回合（畫廊停著，§5 欄位生命週期） */
@@ -260,7 +275,7 @@ function defaultJudgeSetup(): RoomJudgeSetup {
 }
 
 /** Room 未注入評語器時的預設：關閉（不呼叫任何模型） */
-const DEFAULT_COMMENT_SETUP: RoomCommentSetup = { commentator: null, timeoutMs: 20_000 };
+const DEFAULT_COMMENT_SETUP: RoomCommentSetup = { commentator: null, timeoutMs: 30_000 };
 
 // ─── Room ─────────────────────────────────────────────────────────
 
@@ -314,7 +329,7 @@ export class Room {
         const effects = this.onCommented(batch);
         if (effects.length > 0) this.onAsyncEffects(effects);
       },
-      onFailure: options.onCommentFailure,
+      onFailure: (info) => options.onCommentFailure?.(this.withPraiseFallback(info)),
       onSkip: options.onCommentSkip,
     });
   }
@@ -508,6 +523,7 @@ export class Room {
       result: null,
       comment: null,
       commentPending: false,
+      praise: null,
     });
     this.syncCounts();
     this.queue.push({
@@ -653,7 +669,7 @@ export class Room {
     if (sub === undefined || sub.result !== null) return [];
     sub.result = result;
     // 送給評語器的是原圖、題目與該張最終分數（退回 random 時就是 random 的分數）；不給暱稱與名次。
-    // 關閉或本回合已失敗跳過時 push 回 false：這張沒有評語（comment null、commentPending false）
+    // 關閉或本回合已連續兩次失敗時 push 回 false：這張沒有評語（comment null、commentPending false）
     sub.commentPending = this.comments.push({
       playerId: sub.playerId,
       input: { png: Buffer.from(sub.png), topic: job.input.topic, score: result.score },
@@ -664,23 +680,32 @@ export class Room {
   }
 
   /**
-   * 評語佇列回報一批結果（成功：一筆；失敗：失敗那張＋當下排隊中而被跳過的各張），§5 評語、§6.1 事件規則：
+   * 評語佇列回報一批結果（成功或單次失敗：一筆；連續第二次失敗：失敗那張＋當下排隊中而被跳過的各張），§5 評語、§6.1 事件規則：
    * - ended 之前（results 尚未產生）：只記在交卷上，揭曉時寫進 results，**不發 contest:comment**。
    * - ended 之後（results 已揭曉；含下一回合開始前的 idle／choosing）：更新 round.results 該筆並各廣播一則 contest:comment
    *   （成功為字串、失敗或跳過為 null）。ended 後才離開的人交卷仍在，評語照常補上。
-   * - 這批有失敗且本回合 commentMode 為 'ai'（judging／ended）→ 改 'off' 並廣播一則 round:update，排在 contest:comment 之後。
-   *   drawing 中失敗時 commentMode 尚為 null，進 judging 時直接是 'off'。
+   * - 第一名（揭曉時已排稱讚版，sub.praise 非 null）以 job.input.praise 分辨兩種結果：
+   *   批評版（揭曉時在途、現在才跑完）→ 不顯示、不發事件，成功就存成退路；
+   *   稱讚版 → 成功用稱讚句，失敗或被跳過退回批評版（沒有才 null），只發這一則。
+   * - 單次失敗不動 commentMode、不發 round:update。佇列已連續兩次失敗（mode 'off'）且本回合 commentMode 為 'ai'（judging／ended）
+   *   → 改 'off' 並廣播一則 round:update，排在 contest:comment 之後；已進下一回合 choosing（commentMode 為 null）則不發。
+   *   drawing 中 commentMode 尚為 null，進 judging 時才依佇列當下模式設定（只失敗一次仍是 'ai'，連續兩次直接 'off'）。
    */
   private onCommented(batch: CommentDone[]): Effect[] {
     const effects: Effect[] = [];
-    let failed = false;
     for (const { job, result } of batch) {
-      if (result.status !== 'ok') failed = true;
       const sub = this.submissions.get(job.playerId);
-      if (sub === undefined || !sub.commentPending) continue;
-      const comment = result.status === 'ok' ? result.comment : null;
+      if (sub === undefined) continue;
+      const isPraise = job.input.praise === true;
+      if (sub.praise !== null && !isPraise) {
+        if (result.status === 'ok') sub.praise.fallback = result.comment;
+        continue;
+      }
+      if (!sub.commentPending) continue;
+      const comment = result.status === 'ok' ? result.comment : isPraise ? (sub.praise?.fallback ?? null) : null;
       sub.comment = comment;
       sub.commentPending = false;
+      if (isPraise) sub.praise = null;
       const { results, roundNo } = this.round;
       if (results === null || !results.some((e) => e.playerId === sub.playerId)) continue;
       this.round = {
@@ -690,11 +715,18 @@ export class Room {
       const update: CommentUpdate = { roundNo, playerId: sub.playerId, comment };
       effects.push({ kind: 'emit', to: 'all', event: 'contest:comment', payload: update });
     }
-    if (failed && this.round.commentMode === 'ai') {
+    if (this.comments.mode === 'off' && this.round.commentMode === 'ai') {
       this.round = { ...this.round, commentMode: 'off' };
       effects.push(this.roundUpdate());
     }
     return effects;
+  }
+
+  /** 失敗的是第一名稱讚版時，在失敗通知補上有沒有退路（log 用；此時在途的批評版早已跑完，退路已定） */
+  private withPraiseFallback(info: CommentFailureInfo): RoomCommentFailureInfo {
+    if (info.praise !== true) return info;
+    const fallback = this.submissions.get(info.playerId)?.praise?.fallback ?? null;
+    return { ...info, fallback: fallback === null ? null : 'criticism' };
   }
 
   /**
@@ -748,22 +780,23 @@ export class Room {
   }
 
   /**
-   * 第一名重做稱讚版（§5 評語、§6.1，Epic 15 Phase 4）：只在本回合 commentMode 為 'ai' 時由 end() 呼叫。
+   * 第一名重做稱讚版（§5 評語、§6.1，Epic 15 Phase 4；退路為 Phase 5）：只在本回合 commentMode 為 'ai' 時由 end() 呼叫。
    * 取 rank 1 且有交卷者（§5.2 排名規則保證唯一；沒人交卷就沒有）：不論他的評語是否已完成，一律在交卷紀錄與 results 設回
    * comment null、commentPending true（已產生的批評版不顯示，免得畫面從批評閃成稱讚），並以稱讚版提示詞插到評語佇列最前面
-   * （取代他原本排隊中或產生中的工作，見 CommentQueue.pushFront）。完成後照常經 onCommented 廣播 contest:comment；
-   * 稱讚版失敗時依失敗規則 (b) 收尾，第一名最終沒有評語。
+   * （他原本排隊中的工作被取代；正在產生中的讓它跑完，見 CommentQueue.pushFront）。完成後照常經 onCommented 廣播 contest:comment。
+   * 設回 null 之前先把已產生的批評版記成退路（sub.praise.fallback）：稱讚版失敗或被跳過時第一名顯示它，沒有退路才沒有評語。
    */
   private redoWinnerComment(results: ResultEntry[]): void {
     const winner = results[0];
     if (winner === undefined || winner.rank !== 1 || !winner.submitted) return;
     const sub = this.submissions.get(winner.playerId);
     if (sub === undefined || sub.result === null) return;
-    const queued = this.comments.pushFront({
+    const job: CommentJob = {
       playerId: sub.playerId,
       input: { png: Buffer.from(sub.png), topic: this.round.topic ?? '', score: sub.result.score, praise: true },
-    });
-    if (!queued) return;
+    };
+    if (!this.comments.pushFront(job)) return;
+    sub.praise = { fallback: sub.comment };
     sub.comment = null;
     sub.commentPending = true;
     results[0] = { ...winner, comment: null, commentPending: true };

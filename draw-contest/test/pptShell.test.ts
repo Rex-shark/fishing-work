@@ -201,9 +201,11 @@ describe('ppt 殼層分界', () => {
     expect(shell).not.toContain('data-chat-drop-zone')
   })
 
-  it('投影片區：交給 SlideArea（showReveal → 投影片瀏覽、showCanvas → 自己的畫布、其餘空白投影片；行為見 slideArea 測試）', () => {
+  it('投影片區：交給 SlideArea（看比賽歷史 → 存檔的投影片瀏覽、showReveal → 投影片瀏覽、showCanvas → 自己的畫布、其餘空白投影片；行為見 slideArea 與 history 測試）', () => {
     const shell = Object.entries(pptSources).find(([f]) => f.endsWith('/PptShell.tsx'))?.[1] ?? ''
-    expect(shell).toContain('slide={<SlideArea round={round} canvas={canvas} reveal={reveal} />}')
+    // Epic 17 起多一個 recent（history.openId 非 null 時＝historyView 插槽）；round、canvas、reveal 的傳法不變
+    expect(shell).toContain('slide={<SlideArea round={round} canvas={canvas} reveal={reveal} recent={viewing ? historyView : null} />}')
+    expect(shell).toContain('const viewing = history.openId !== null')
   })
 })
 

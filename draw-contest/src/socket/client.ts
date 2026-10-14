@@ -10,6 +10,7 @@ import {
   type JoinResult,
   type ServerToClientEvents,
 } from '@fishing-work/shared/draw-contest'
+import { recordGalleryImage } from '../features/history/historyStore'
 import { useGameStore } from '../store/game'
 
 export type DrawContestSocket = Socket<ServerToClientEvents, ClientToServerEvents>
@@ -202,9 +203,12 @@ socket.on('chat:message', (m) => {
   if (store().me !== null) store().appendChat(m)
 })
 
-// 揭曉畫廊：ended 時每位交卷者一則；中途加入者在 join ack 之後補收（store 只收 roundNo 相符的）
+// 揭曉畫廊：ended 時每位交卷者一則；中途加入者在 join ack 之後補收（store 只收 roundNo 相符的）。
+// 比賽歷史（Epic 17）：store 只留 object URL，原始 PNG 在這裡順手交給歷史（只收它記著的那一回合；其餘的回合狀態它自己訂閱 store）
 socket.on('contest:gallery', (image) => {
-  if (store().me !== null) store().addGalleryImage(image)
+  if (store().me === null) return
+  store().addGalleryImage(image)
+  recordGalleryImage(image)
 })
 
 // 評語（Epic 15）：ended 之後才完成的評語逐張補上（成功為字串、失敗為 null）；store 只收 roundNo 相符且 results 裡有的那一筆。

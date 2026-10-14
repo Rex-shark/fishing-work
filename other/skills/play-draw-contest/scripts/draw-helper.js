@@ -1,7 +1,8 @@
-// 繪圖比賽（draw-contest）作畫輔助：在遊戲分頁裡執行一次，會安裝 window.dc。
-// 用法見同目錄上一層的 SKILL.md「畫法 A」。座標一律是邏輯畫布像素：寬 1280、高 720，原點在左上角。
+// 繪圖比賽（draw-contest）輔助腳本：在遊戲分頁裡執行一次，會安裝 window.dc（加入、聊天、出題、作畫、交卷、讀結果）。
+// 用法見同目錄上一層的 SKILL.md。座標一律是邏輯畫布像素：寬 1280、高 720，原點在左上角。
+// 在首頁就可以先裝（加入房間不會換頁，裝好的 dc 會留著）。
 // 只透過頁面上的元件操作（對畫布送指標事件、點工具列按鈕），不碰連線與遊戲狀態；重新整理頁面後要再執行一次。
-// 依賴的畫面文字與無障礙標籤列在 SKILL.md 檔頭的 UI-DEP／CONST-DEP（grep 這兩個字）；遊戲改了那些字，這裡的選擇器要跟著改。
+// 依賴的畫面文字與無障礙標籤列在 other/skills/MAINTENANCE.md 的 UI-DEP／CONST-DEP；遊戲改了那些字，這裡的選擇器要跟著改。
 (() => {
   'use strict'
   const W = 1280
@@ -429,6 +430,84 @@
     }))
   }
 
+  // ─── 加入、聊天、出題（填輸入框、送出表單、按按鈕；跟用鍵盤滑鼠操作是同一條路） ───────────
+
+  /** 設定輸入框的值並通知頁面（React 的受控輸入框要走原生 setter 加 input 事件才收得到） */
+  function setInput(el, value) {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, String(value))
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  const alertText = (root = document) => q('[role="alert"]', root)?.textContent.trim() ?? null
+  /** 每 100ms 檢查一次，成立就回 true；seconds 秒內沒成立回 false */
+  async function until(test, seconds) {
+    const end = Date.now() + seconds * 1000
+    for (;;) {
+      if (test()) return true
+      if (Date.now() >= end) return false
+      await sleep(100)
+    }
+  }
+
+  /** 在首頁輸入暱稱加入房間；回 { ok, error, status }。暱稱重複等錯誤會在 error 裡，換一個再呼叫即可 */
+  async function join(nickname) {
+    const input = q('input[name="nickname"]')
+    if (!input) return { ok: status().phase !== 'unknown', error: '不在首頁（已經在房間裡了？）', status: status() }
+    setInput(input, nickname)
+    await sleep(TICK)
+    input.form.requestSubmit()
+    // 上一次失敗的錯誤訊息還在畫面上：先等它被清掉，才不會把舊訊息當成這一次的結果
+    await until(() => !q('input[name="nickname"]') || alertText() === null, 1)
+    await until(() => !q('input[name="nickname"]') || alertText() !== null, 8)
+    const joined = !q('input[name="nickname"]')
+    if (joined) await until(() => status().phase !== 'unknown', 3)
+    return joined ? { ok: true, status: status() } : { ok: false, error: alertText() ?? '沒有加入成功，看首頁上的訊息', status: status() }
+  }
+
+  /** 在聊天室送出一則訊息（最多 200 字）；回 { ok, error } */
+  async function say(text) {
+    const input = q('[aria-label="聊天輸入"]')
+    if (!input) return { ok: false, error: '找不到聊天輸入框（還沒加入房間？）' }
+    const count = () => document.querySelectorAll('[aria-label="聊天訊息"] > li[data-kind="chat"]').length
+    const before = count()
+    setInput(input, text)
+    await sleep(TICK)
+    input.form.requestSubmit()
+    const sent = await until(() => count() > before || alertText(input.form) !== null, 4)
+    return count() > before ? { ok: true } : { ok: false, error: (sent && alertText(input.form)) || '訊息沒有送出' }
+  }
+
+  /** 按「我出題」；成功時你成為出題者、出題對話框已出現。回 { ok, error, status } */
+  async function volunteer() {
+    const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.getAttribute('aria-label') ?? '').endsWith('：我出題'))
+    if (!btn) return { ok: false, error: '現在不能出題（有回合在進行，或在線不到 2 人）', status: status() }
+    btn.click()
+    const opened = await until(() => q('[role="dialog"] input') !== null, 5)
+    return opened ? { ok: true, status: status() } : { ok: false, error: alertText() ?? '出題對話框沒有出現（可能被別人搶先）', status: status() }
+  }
+
+  /** 在出題對話框輸入題目並送出（1–20 字）；成功時作畫已經開始，接著呼叫 draw。回 { ok, error, status } */
+  async function setTopic(topic) {
+    const input = q('[role="dialog"] input')
+    if (!input) return { ok: false, error: '出題對話框不在畫面上（你不是出題者，或還沒呼叫 volunteer）', status: status() }
+    setInput(input, topic)
+    await sleep(TICK)
+    input.form.requestSubmit()
+    await until(() => q('[role="dialog"] input') === null || alertText(q('[role="dialog"]')) !== null, 6)
+    if (q('[role="dialog"] input') !== null) return { ok: false, error: alertText(q('[role="dialog"]')) ?? '題目沒有送出', status: status() }
+    await until(() => status().phase === 'drawing', 3)
+    return { ok: status().phase === 'drawing', status: status() }
+  }
+
+  /** 放棄出題（按出題對話框的「取消」）；回 { ok, status } */
+  async function cancelTopic() {
+    const btn = Array.from(document.querySelectorAll('[role="dialog"] button')).find((b) => b.textContent.trim() === '取消')
+    if (!btn) return { ok: false, error: '出題對話框不在畫面上', status: status() }
+    btn.click()
+    const closed = await until(() => q('[role="dialog"] input') === null, 4)
+    return { ok: closed, status: status() }
+  }
+
   /** 等揭曉且每張畫的評語都寫完（或確定沒有評語）才回傳；最多等 seconds 秒。回 { done, results } */
   async function waitForComments(seconds = 25) {
     const until = Date.now() + seconds * 1000
@@ -440,6 +519,6 @@
     }
   }
 
-  window.dc = { draw, submit, status, waitFor, waitForComments, results, chat, topics, W, H, PALETTE }
+  window.dc = { join, say, volunteer, setTopic, cancelTopic, draw, submit, status, waitFor, waitForComments, results, chat, topics, W, H, PALETTE }
   return `dc 已安裝（畫布 ${W}×${H}）：${JSON.stringify(status())}`
 })()

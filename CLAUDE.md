@@ -16,7 +16,7 @@
 
 特殊需求：首頁為不偽裝的柔和紙張質感 UI（輸入暱稱、以卡片選介面風格，各人本機偏好），選好才進偽裝殼層：程式編輯器（VS Code 深色）、PowerPoint、Google Meet 視訊會議或 Excel 試算表，上班偷玩不被發現；有聊天室（可拖曳傳圖，不保留）；畫師自訂題目；畫布預設黑底白筆不隨主題，畫師可換背景色並同步給所有人。
 
-目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」（`plan/meet-theme.md`）、Epic 6「遊戲說明」（`plan/help-topics.md`）、Epic 7「畫布背景色與新色塊」（`plan/canvas-background.md`）**全部完成**（舵手驗收、Rex 目視 2026-09-29 通過）。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。**Epic 14「繪圖比賽 MVP」**（第二款遊戲 `draw-contest/`，羅盤 × 帆；`plan/draw-contest-mvp.md`、`spec/draw-contest/`）**完成**（2026-10-09）：驗收子代理三次驗收通過、Rex 真模型目視與區網實機通過；評分器預設 `JUDGE=ollama`（Clef 決策模型，本機 Ollama；連不上自動退回隨機）。**Epic 15「繪圖比賽 AI 評語（メスガキ）」**（`plan/contest-commentary.md`）**完成**（2026-10-12）：gemma4 經 Ollama 產一句評語放揭曉卡片、第一名稱讚版、Clef 原圖直送不縮圖；兩次驗收通過、Rex 實戰目視通過。**Epic 16「猜歌 MVP」**（第三款遊戲 `song-guess/`，Meet 偽裝；`plan/song-guess-mvp.md`、`spec/song-guess/`）**完成**（2026-10-12）：出題者填歌手、server 從 Apple iTunes Search API（免金鑰）抽 5 首 30 秒試聽、各客戶端同步播、聊天室打字猜歌名；驗收通過、Rex 實機通過。進度見 [plan/backlog.md](plan/backlog.md)。
+目前狀態（2026-09-29）：Epic 1「我畫你猜 MVP」、Epic 2「聊天室圖片」、Epic 3「多偽裝主題（vscode／ppt）」、Epic 4「首頁（柔和 UI 選介面風格）」**全部完成**：工程、舵手驗收、Rex 目視與實機（區網、拖圖）皆通過。Epic 5「視訊會議偽裝主題（Google Meet 風格）」（`plan/meet-theme.md`）、Epic 6「遊戲說明」（`plan/help-topics.md`）、Epic 7「畫布背景色與新色塊」（`plan/canvas-background.md`）**全部完成**（舵手驗收、Rex 目視 2026-09-29 通過）。Epic 8「語音輸入」⏸ 暫緩（區網 http 無法用麥克風）。Epic 9「Docker 部署」工程完成、驗收子代理驗收通過（`plan/docker-deploy.md`），待 Rex 在新電腦實機部署。Epic 10「首頁紙張質感」Rex 採用、驗收子代理驗收通過（2026-10-07，`plan/home-paper.md`，DESIGN §14）。Epic 11「顏色面板」（取代工具列色相條，`plan/color-picker.md`）、Epic 12「作畫時間改 2 分鐘」（`ROUND_SECONDS` 120，`plan/round-time.md`）、Epic 13「試算表偽裝主題（Excel）」（`plan/excel-theme.md`、DESIGN §17）**全部完成**：驗收子代理驗收通過、Rex 目視通過（2026-10-07）。**Epic 14「繪圖比賽 MVP」**（第二款遊戲 `draw-contest/`，羅盤 × 帆；`plan/draw-contest-mvp.md`、`spec/draw-contest/`）**完成**（2026-10-09）：驗收子代理三次驗收通過、Rex 真模型目視與區網實機通過；評分器預設 `JUDGE=ollama`（Clef 決策模型，本機 Ollama；連不上自動退回隨機）。**Epic 15「繪圖比賽 AI 評語（メスガキ）」**（`plan/contest-commentary.md`）**完成**（2026-10-12）：gemma4 經 Ollama 產一句評語放揭曉卡片、第一名稱讚版、Clef 原圖直送不縮圖；兩次驗收通過、Rex 實戰目視通過。**Epic 16「猜歌 MVP」**（第三款遊戲 `song-guess/`，Meet 偽裝；`plan/song-guess-mvp.md`、`spec/song-guess/`）**完成**（2026-10-12）：出題者填歌手、server 從 Apple iTunes Search API（免金鑰）抽 5 首 30 秒試聽、各客戶端同步播、聊天室打字猜歌名；驗收通過、Rex 實機通過。**Epic 17「繪圖比賽歷史」**（`plan/contest-history.md`）**完成**（2026-10-14）：最近 5 場存瀏覽器 IndexedDB、「檔案 › 開啟最近的簡報」回看；同日 Epic 15 Phase 5 評語韌性（稱讚版失敗退回批評版、連續兩次失敗才跳過、逾時 30 秒）驗收與 Rex 實測通過。進度見 [plan/backlog.md](plan/backlog.md)。
 
 ---
 
@@ -70,10 +70,10 @@ fishing-work/
 ```bash
 npm install                 # 安裝五個 workspace 的相依（shared、server、draw-guess、draw-contest、song-guess）
 npm run dev                 # 一次啟動 server（:7180，只當 proxy 目標）、我畫你猜 Vite（:80）、繪圖比賽 Vite（:7181）、猜歌 Vite（:7182），並自動開瀏覽器到 http://localhost/（遊戲清單；三款遊戲都是 HMR）
-npm run build               # 建置 draw-guess/dist/ 與 server/dist/index.js
+npm run build               # 建置 draw-guess/dist/、draw-contest/dist/、song-guess/dist/ 與 server/dist/index.js
 npm start                   # 正式：node server/dist/index.js（PORT 預設 80、HOST 預設 0.0.0.0；公司區網只放行標準埠）
 npm run typecheck           # 五個 workspace 的 tsc --noEmit
-npm test                    # Vitest（shared、server）
+npm test                    # Vitest（五個 workspace：shared、server、draw-guess、draw-contest、song-guess）
 npm run lint                # ESLint（三個客戶端：draw-guess、draw-contest、song-guess；server／shared 無 lint，見 improvements）
 npm run tunnel              # Cloudflare 快速通道（需先 brew install cloudflared），指向 :80，印出 https://xxx.trycloudflare.com
 docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建置映像並在背景啟動，:80；停止用 docker compose down
@@ -123,6 +123,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 | [plan/excel-theme.md](plan/excel-theme.md) | Epic 13 試算表偽裝主題（Excel 風格的第四套殼層 `excel`；DESIGN §17） |
 | [plan/draw-contest-mvp.md](plan/draw-contest-mvp.md) | Epic 14 繪圖比賽 MVP（第二款遊戲：出題→同時畫→評分器打分→投影片瀏覽揭曉；MVP 隨機評分，Phase 3 接 Clef／Ollama） |
 | [plan/song-guess-mvp.md](plan/song-guess-mvp.md) | Epic 16 猜歌 MVP（第三款遊戲：出題者填歌手 → server 從 iTunes 抽 5 首試聽 → 同步播、打字猜 → 逐首揭曉 → 本局排名；Meet 偽裝） |
+| [plan/contest-history.md](plan/contest-history.md) | Epic 17 繪圖比賽歷史（最近 5 場只存瀏覽器 IndexedDB；「檔案 › 開啟最近的簡報」重用揭曉畫廊；純客戶端） |
 | [plan/contest-commentary.md](plan/contest-commentary.md) | Epic 15 繪圖比賽 AI 評語（揭曉卡片每張一句メスガキ評語：gemma4 經 Ollama `/api/chat`、`think: false`、自由發揮；評語不擋揭曉；順帶移除評分前縮圖） |
 
 ---
@@ -131,7 +132,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 - **所有實作必須由 `plan/` 驅動**：修改程式碼前後皆須同步對應 Epic 文件與 `backlog.md`。規範見 [plan/README.md](plan/README.md)。
 - **本專案無資料庫**，`spec/db/erd.mmd` 暫不維護；遊戲狀態模型寫在 `spec/architecture.md`（規劃中）。
-- **改畫面文字、無障礙標籤、殼層、畫布指標處理或滑桿換算前**，先 `grep -rn "UI-DEP\|CONST-DEP\|BUG-DEP" other/skills`：事務長（Purser）維護的 AI 代理遊玩技能依賴這些字串與行為，改動要知會事務長（2026-10-12）。
+- **改畫面文字、無障礙標籤、殼層、畫布指標處理或滑桿換算前**，先 `grep -n "UI-DEP\|CONST-DEP\|BUG-DEP" other/skills/MAINTENANCE.md`（2026-10-13 起依賴清單集中在這一檔）：事務長（Purser）維護的 AI 代理遊玩技能依賴這些字串與行為，改動要知會事務長（2026-10-12）。
 - **`DESIGN.md`**：已建立（共通原則 ＋ 各偽裝主題章節：vscode §3–§5、ppt §13、meet §15、excel §17；首頁 §14 不偽裝、柔和 UI；說明 §16）。**產生任何畫面、元件、樣式前先讀 [DESIGN.md](DESIGN.md)**，色碼一律用 token，不得寫死；新主題只加 token 覆寫與殼層，不動功能元件。
 
 ---

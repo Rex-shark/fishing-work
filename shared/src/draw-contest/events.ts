@@ -7,7 +7,7 @@ export type ContestPhase = 'idle' | 'choosing' | 'drawing' | 'judging' | 'ended'
 
 /** 評分器：ai = Clef 決策模型；random = 隨機（MVP 預設，或 AI 失敗退回） */
 export type JudgeMode = 'ai' | 'random';
-/** Epic 15：本回合評語器；'off' = 環境變數關閉或本回合已失敗跳過 */
+/** Epic 15：本回合評語器；'off' = 環境變數關閉或本回合連續兩次失敗跳過 */
 export type CommentMode = 'ai' | 'off';
 
 export interface PlayerPublic {

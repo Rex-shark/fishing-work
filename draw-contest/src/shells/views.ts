@@ -170,12 +170,14 @@ export interface VolunteerView {
 export interface HelpView {
   /** 說明內文的 {switch}：本殼層切換偽裝的操作路徑（例如「檔案 → 切換偽裝」；不帶「…」，代入內文後才不會連續標點） */
   switchHint: string
+  /** 說明內文的 {recent}：本殼層回看最近幾場的操作路徑（Epic 17；ppt「檔案 › 開啟最近的簡報」） */
+  recentHint: string
 }
 
 // ─── 偽裝用語（繪圖比賽：功能元件的文字裡，與偽裝有關的名詞由殼層提供） ─────────────────
 
 /**
- * 功能元件顯示的文字裡，題目、交卷、揭曉畫廊的叫法屬於偽裝（ppt：題目＝「標題」、交卷＝「儲存」、畫廊＝「投影片瀏覽」）。
+ * 功能元件顯示的文字裡，題目、交卷、揭曉畫廊、比賽歷史的叫法屬於偽裝（ppt：題目＝「標題」、交卷＝「儲存」、畫廊＝「投影片瀏覽」、歷史＝「最近的簡報」）。
  * 功能元件以這些詞組句（例如「已{save} 3/8」「{topic}：蘋果」「未{save}」），本身不寫死偽裝字樣（shellBoundary 把關）
  */
 export interface TermsView {
@@ -185,6 +187,8 @@ export interface TermsView {
   save: string
   /** 揭曉畫廊的無障礙名稱（ppt「投影片瀏覽」） */
   gallery: string
+  /** 比賽歷史（存在瀏覽器的最近幾場）在回合狀態列的叫法（Epic 17；ppt「最近的簡報」）：「最近的簡報：蘋果（10/12 14:03）…」 */
+  recent: string
 }
 
 // ─── Context ────────────────────────────────────────────────────
@@ -202,7 +206,7 @@ export interface ShellViews {
   volunteer: VolunteerView
   /** 遊戲說明代入的殼層名稱 */
   help: HelpView
-  /** 偽裝用語（題目、交卷、畫廊的叫法） */
+  /** 偽裝用語（題目、交卷、畫廊、比賽歷史的叫法） */
   terms: TermsView
 }
 

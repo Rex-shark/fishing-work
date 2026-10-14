@@ -104,8 +104,8 @@ export function pptDialogButtonText(purpose: DialogPurpose, index: number): stri
 
 // ─── 偽裝用語（ShellViews.terms） ──────────────────────────────────
 
-/** 題目＝投影片「標題」、交卷＝「儲存」、揭曉畫廊＝「投影片瀏覽」檢視 */
-export const PPT_TERMS = { topic: '標題', save: '儲存', gallery: '投影片瀏覽' } as const
+/** 題目＝投影片「標題」、交卷＝「儲存」、揭曉畫廊＝「投影片瀏覽」檢視、比賽歷史＝「最近的簡報」（Epic 17；design §2「歷史檢視」列） */
+export const PPT_TERMS = { topic: '標題', save: '儲存', gallery: '投影片瀏覽', recent: '最近的簡報' } as const
 
 /** 已交卷時鎖定畫布右下角的小字（design §2「drawing（已交卷）」） */
 export const PPT_SAVED_CAPTION = '已儲存，等待其他人…'
@@ -115,6 +115,17 @@ export const PPT_RESUME_TITLE = '加入簡報'
 
 /** 遊戲說明「如何切換偽裝」的路徑（plan/help-topics.md 決策 6） */
 export const PPT_SWITCH_HINT = '檔案 → 切換偽裝'
+
+// ─── 比賽歷史（Epic 17；spec/draw-contest/design.md §3.1） ────────────────────
+
+/** 「檔案」選單的入口（PowerPoint「檔案 › 開啟 › 最近」的語意）；右側的「›」由選單加 */
+export const PPT_RECENT_LABEL = '開啟最近的簡報'
+/** 沒有存檔（或讀不到）時子清單的灰字 */
+export const PPT_RECENT_EMPTY = '沒有最近的簡報'
+/** 歷史檢視時狀態列中段的按鈕（＝回到目前的畫面；design §2「歷史檢視」列） */
+export const PPT_RECENT_CLOSE = '關閉簡報'
+/** 遊戲說明「回看最近幾場」的路徑（plan/contest-history.md 任務表） */
+export const PPT_RECENT_HINT = '檔案 › 開啟最近的簡報'
 
 // ─── 「檔案」選單 → 切換偽裝、說明 ─────────────────────────────────
 

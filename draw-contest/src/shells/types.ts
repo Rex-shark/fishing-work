@@ -4,6 +4,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import type { ContestPhase } from '@fishing-work/shared/draw-contest'
 import type { HelpTopicId } from '../features/help/helpTopics'
+import type { HistoryMenuEntry } from '../features/history/historyDisplay'
 
 /** 偽裝主題 id：繪圖比賽 MVP 只有簡報（spec/draw-contest/design.md §1；日後加主題就在這裡加 id） */
 export type ShellId = 'ppt'
@@ -40,6 +41,13 @@ export interface ShellGameSlots {
   finish: ReactNode
   /** 揭曉畫廊（每位參賽者的畫、名次與分數；殼層只在 round.showReveal 時放；父層須可捲動或給定高度） */
   reveal: ReactNode
+  /**
+   * 比賽歷史的檢視（Epic 17；design §3.1）：存檔那一場的揭曉畫廊。殼層只在 history.openId 非 null 時放，
+   * 位置同 reveal（優先於 reveal 與 canvas）
+   */
+  historyView: ReactNode
+  /** 歷史檢視時的回合狀態列（一行摘要）；殼層在 history.openId 非 null 時放在 roundStatus 的位置 */
+  historyStatus: ReactNode
   /** 聊天室（純文字） */
   chat: ReactNode
   /** 回合階段、倒數、題目、交卷與評分進度、本回合名次 */
@@ -95,8 +103,35 @@ export interface ShellHelp {
   open(topicId?: HelpTopicId): void
 }
 
+/**
+ * 比賽歷史的入口與檢視（Epic 17；plan/contest-history.md 決策 6、7、7a、10；design §3.1）：最近幾場存在這台瀏覽器的回合。
+ * 殼層只負責呈現：入口的清單（ppt：「檔案」→「開啟最近的簡報」）、檢視時把 historyView／historyStatus 插槽放上去、
+ * 一顆呼叫 close 的按鈕（字樣由殼層給）。資料與動作由 App 從 features/history 注入；殼層不讀 store、不碰 IndexedDB
+ */
+export interface ShellHistory {
+  /** 清單（最新在上，最多 5 列；label 已排好字）；空陣列＝沒有存檔（或讀不到） */
+  entries: readonly HistoryMenuEntry[]
+  /** 開著的那一筆的 id；null＝沒有在看歷史 */
+  openId: number | null
+  /** 現在可以開啟（idle／ended，或 choosing 而自己不是出題者）；false 時入口整項灰化 */
+  canOpen: boolean
+  /** 開啟一筆（不可開或 id 不存在時不動作） */
+  open(id: number): void
+  /** 關閉，回到目前的畫面 */
+  close(): void
+  /** 重讀清單：殼層在入口的選單開啟時呼叫（另一個分頁可能寫了新紀錄） */
+  refresh(): void
+}
+
 export type ShellProps =
-  | ({ screen: 'game'; round: ShellRoundState; counts: ShellPlayerCounts; themes: ShellThemeSwitch; help: ShellHelp } & ShellGameSlots)
+  | ({
+      screen: 'game'
+      round: ShellRoundState
+      counts: ShellPlayerCounts
+      themes: ShellThemeSwitch
+      help: ShellHelp
+      history: ShellHistory
+    } & ShellGameSlots)
   | {
       /**
        * 自動重連畫面（未加入、但有重連憑證；Epic 4 決策 4、9）：殼層渲染空白畫面＋一行 notice（「正在重新加入…」）。

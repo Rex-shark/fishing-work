@@ -3,7 +3,8 @@
 //   第二步：標題＝主題、body＝段落（代入殼層名稱）、items「返回」（回清單，Enter）「關閉」（Esc）。
 //   Esc 在任一步都關閉；關閉時焦點還給開啟它的說明入口（helpOpen.closeHelp）。
 // 開關在 uiStore.helpTopic；殼層的說明入口呼叫 App 注入的 ShellProps.help.open。放在殼層的 dialogs 插槽（同放棄確認）。
-// 佔位符：{volunteer}＝ShellViews.volunteer.label、{switch}＝ShellViews.help.switchHint、{save}＝ShellViews.terms.save（本檔不寫死任何殼層名稱）。
+// 佔位符：{volunteer}＝ShellViews.volunteer.label、{switch}＝ShellViews.help.switchHint、{save}＝ShellViews.terms.save、
+//   {recent}＝ShellViews.help.recentHint（本檔不寫死任何殼層名稱）。
 // 對話框開著時遊戲照常進行（非強制回應）：其他插槽不受影響。
 import { useUiStore } from '../../layout/uiStore'
 import { useHelpView, useShellViews, useTermsView, useVolunteerView } from '../../shells/views'
@@ -62,7 +63,7 @@ function HelpTopicBody({ topic, onNavigate, onClose }: { topic: HelpTopic; onNav
   const volunteer = useVolunteerView()
   const help = useHelpView()
   const terms = useTermsView()
-  const paragraphs = renderTopic(topic, { volunteer: volunteer.label, switch: help.switchHint, save: terms.save })
+  const paragraphs = renderTopic(topic, { volunteer: volunteer.label, switch: help.switchHint, save: terms.save, recent: help.recentHint })
   return (
     <Dialog
       purpose="help"

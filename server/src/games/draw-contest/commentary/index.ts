@@ -2,7 +2,7 @@
 // COMMENT（ollama｜off，預設 ollama）、COMMENT_MODEL、COMMENT_TIMEOUT_MS；位址沿用 OLLAMA_URL。
 // COMMENT=ollama：啟動時非同步探測一次（GET /api/tags，不阻塞啟動、只 log）；清單裡有模型就背景暖機一次
 // （不帶圖的極短 chat＋keep_alive，冷啟動載入 9～17 秒，不暖機第一回合第一張會等）。
-// 探測或暖機失敗都**不**永久關閉——每回合仍先試，失敗由佇列讓該回合剩餘各張跳過，所以 Ollama 晚開不必重啟 server。
+// 探測或暖機失敗都**不**永久關閉——每回合仍先試，連續兩次失敗才由佇列讓該回合剩餘各張跳過，所以 Ollama 晚開不必重啟 server。
 import { log } from '../../../lib/log';
 import { DEFAULT_JUDGE_CONFIG, PROBE_TIMEOUT_MS } from '../judge/index';
 import { probeOllama, type FetchLike, type ProbeResult } from '../judge/ollama';
@@ -16,7 +16,8 @@ export const DEFAULT_COMMENT_CONFIG = {
   /** 與評分器共用 OLLAMA_URL（唯一來源：judge/index.ts） */
   ollamaUrl: DEFAULT_JUDGE_CONFIG.ollamaUrl,
   model: 'gemma4:26b-mlx-bf16',
-  timeoutMs: 20_000,
+  /** 2026-10-13 Phase 5 由 20 秒放寬：gemma4 被其他模型擠出記憶體後重載要 10～27 秒（§3） */
+  timeoutMs: 30_000,
 } as const;
 
 /** 暖機逾時（毫秒）：冷啟動載入實測 9～17 秒，留足餘裕；只為 log，不影響評語 */
@@ -103,7 +104,7 @@ export function createCommentSetup(config: CommentConfig, options: CommentSetupO
         reason: result.reason,
         ollamaUrl: config.ollamaUrl,
         model: config.model,
-        note: '每回合仍先試評語，失敗該回合剩餘各張跳過；Ollama 之後才開不用重啟。沒有這個模型的機器請設 COMMENT=off',
+        note: '每回合仍先試評語，連續兩次失敗該回合剩餘各張跳過；Ollama 之後才開不用重啟。沒有這個模型的機器請設 COMMENT=off',
       });
     return result;
   });

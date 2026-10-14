@@ -13,6 +13,7 @@ import {
   TOPIC_MAX,
 } from '@fishing-work/shared/draw-contest'
 import { formatDuration } from '../src/features/help/helpText'
+import { HISTORY_MAX } from '../src/features/history/historyDb'
 import { COMMENT_PENDING_TEXT } from '../src/features/reveal/revealView'
 import {
   HELP_BACK_LABEL,
@@ -42,9 +43,11 @@ describe('主題資料', () => {
     expect(findHelpTopic('nope')).toBeUndefined()
   })
 
-  it('佔位符只有 {volunteer}、{switch}、{save}，分別出現在「如何出題」「聊天與重連」「交卷」', () => {
+  it('佔位符只有 {volunteer}、{switch}、{save}、{recent}，分別出現在「如何出題」「聊天與重連」「交卷」「排名與總分」', () => {
     const all = HELP_TOPICS.flatMap((t) => t.paragraphs).join('\n')
-    expect([...new Set(all.match(/\{[^}]*\}/g))].sort()).toEqual(['{save}', '{switch}', '{volunteer}'])
+    // Epic 17 起多一個 {recent}（回看最近幾場的路徑，只出現在「排名與總分」）
+    expect([...new Set(all.match(/\{[^}]*\}/g))].sort()).toEqual(['{recent}', '{save}', '{switch}', '{volunteer}'])
+    expect(HELP_TOPICS.filter((t) => t.paragraphs.join('').includes('{recent}')).map((t) => t.id)).toEqual(['ranking'])
     expect(findHelpTopic('be-setter')?.paragraphs.join('')).toContain('「{volunteer}」')
     expect(findHelpTopic('chat-reconnect')?.paragraphs.join('')).toContain('{switch}')
     expect(findHelpTopic('submit')?.paragraphs.join('')).toContain('「{save}」')
@@ -66,9 +69,9 @@ describe('主題資料', () => {
     expect('時間 2 分鐘'.match(/\d+\s*(?:秒|分鐘)/g)).not.toBeNull()
   })
 
-  it('文案裡的數字都來自 shared 常數（改常數說明跟著變）', () => {
+  it('文案裡的數字都來自 shared 常數（改常數說明跟著變）；回看的場數來自客戶端常數 HISTORY_MAX（Epic 17）', () => {
     const allowed = new Set(
-      [MIN_PLAYERS, CHOOSING_SECONDS, TOPIC_MAX, SUBMIT_GRACE_SECONDS, SCORE_MAX, CHAT_MAX, RECONNECT_GRACE_SECONDS, 0, 1].map(String),
+      [MIN_PLAYERS, CHOOSING_SECONDS, TOPIC_MAX, SUBMIT_GRACE_SECONDS, SCORE_MAX, CHAT_MAX, RECONNECT_GRACE_SECONDS, HISTORY_MAX, 0, 1].map(String),
     )
     const rendered = HELP_TOPICS.flatMap((t) => t.paragraphs.join('')).join('').replace(formatDuration(DRAW_SECONDS), '')
     for (const n of rendered.match(/\d+/g) ?? []) expect(allowed.has(n), n).toBe(true)
@@ -106,6 +109,8 @@ describe('主題資料', () => {
     expect(text).toContain('寫在畫的下面')
     // Phase 4：第一名是稱讚版，揭曉後才寫（那張先顯示產生中的文字、晚一點出現）
     expect(text).toContain('第一名會被稱讚')
+    // 2026-10-13 Phase 5：稱讚版失敗時退回一般評語
+    expect(text).toContain('稱讚寫不出來時改顯示一般評語')
     expect(text).toContain('第一名那句是揭曉後才寫的，會晚一點出現')
     // 產生中的文字與卡片同一個常數（2026-10-12 由「…」改為「正在寫評語」，說明跟著變）
     expect(COMMENT_PENDING_TEXT).toBe('正在寫評語')
@@ -118,6 +123,17 @@ describe('主題資料', () => {
     expect(HELP_TOPICS.flatMap((t) => t.paragraphs).filter((p) => p.includes('稱讚'))).toEqual([text])
     const mentions = HELP_TOPICS.flatMap((t) => t.paragraphs.map((p) => [t.id, p] as const)).filter(([, p]) => p.includes(COMMENT_PERSONA_NAME))
     expect(mentions.map(([id]) => id)).toEqual(['scoring', 'ranking'])
+  })
+
+  it('「排名與總分」最後一段（Epic 17）：最近 HISTORY_MAX 場可以回看、只存在這台瀏覽器；路徑是佔位符、場數不寫死', () => {
+    const paragraphs = findHelpTopic('ranking')?.paragraphs ?? []
+    expect(paragraphs).toHaveLength(5)
+    expect(paragraphs.at(-1)).toBe(`最近 ${HISTORY_MAX} 場可從「{recent}」回看，只存在這台瀏覽器。`)
+    expect(HISTORY_MAX).toBe(5)
+    expect(helpSource).toContain('最近 ${HISTORY_MAX} 場可從「{recent}」回看')
+    // 入口的偽裝字樣不在說明的原始碼裡（由殼層的 help.recentHint 代入）
+    expect(helpSource).not.toContain(PPT_VIEWS.help.recentHint)
+    expect(helpSource).not.toMatch(/簡報|開啟最近/)
   })
 
   it('評審名稱不寫死：原始碼以 ${COMMENT_PERSONA_NAME} 組字（改常數說明跟著變）', () => {
@@ -140,7 +156,12 @@ describe('主題資料', () => {
 })
 
 describe('renderTopic', () => {
-  const names = { volunteer: PPT_VIEWS.volunteer.label, switch: PPT_VIEWS.help.switchHint, save: PPT_VIEWS.terms.save }
+  const names = {
+    volunteer: PPT_VIEWS.volunteer.label,
+    switch: PPT_VIEWS.help.switchHint,
+    save: PPT_VIEWS.terms.save,
+    recent: PPT_VIEWS.help.recentHint,
+  }
 
   it('每個主題的佔位符全部代入（輸出不含 {）、段數不變', () => {
     for (const t of HELP_TOPICS) {
@@ -150,13 +171,14 @@ describe('renderTopic', () => {
     }
   })
 
-  it('ppt 代入值：「從目前投影片開始」、「檔案 → 切換偽裝」、「儲存」', () => {
+  it('ppt 代入值：「從目前投影片開始」、「檔案 → 切換偽裝」、「儲存」、「檔案 › 開啟最近的簡報」', () => {
+    expect(renderTopic(findHelpTopic('ranking')!, names).at(-1)).toBe('最近 5 場可從「檔案 › 開啟最近的簡報」回看，只存在這台瀏覽器。')
     expect(renderTopic(findHelpTopic('be-setter')!, names)[0]).toContain('「從目前投影片開始」')
     expect(renderTopic(findHelpTopic('chat-reconnect')!, names).at(-1)).toBe('同一個暱稱在別的分頁加入會接管，原分頁回到首頁。想換介面風格：檔案 → 切換偽裝。')
     expect(renderTopic(findHelpTopic('submit')!, names)[0]).toBe('畫好按「完成」，在確認框按「儲存」就交卷；交卷後不能再修改。按「取消」可以回去繼續畫。')
     // 評語那一段沒有佔位符，代入後原樣
     expect(renderTopic(findHelpTopic('ranking')!, names)[1]).toBe(
-      '揭曉時評審「メスガキ」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚。還沒寫好的先顯示「正在寫評語」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。',
+      '揭曉時評審「メスガキ」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚；稱讚寫不出來時改顯示一般評語。還沒寫好的先顯示「正在寫評語」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。',
     )
     expect(renderTopic(findHelpTopic('scoring')!, names)).toEqual([
       `每交一張就排隊評一張，由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分，畫得越像題目分數越高；畫面會顯示「正在評分」的進度。`,
@@ -166,11 +188,9 @@ describe('renderTopic', () => {
   })
 
   it('同一段出現多次也全部代入；不修改原資料', () => {
-    expect(renderTopic({ paragraphs: ['{switch}／{switch}', '{volunteer}{volunteer}', '{save}'] }, { volunteer: 'A', switch: 'B', save: 'C' })).toEqual([
-      'B／B',
-      'AA',
-      'C',
-    ])
+    expect(
+      renderTopic({ paragraphs: ['{switch}／{switch}', '{volunteer}{volunteer}', '{save}', '{recent}、{recent}'] }, { volunteer: 'A', switch: 'B', save: 'C', recent: 'D' }),
+    ).toEqual(['B／B', 'AA', 'C', 'D、D'])
     expect(findHelpTopic('be-setter')!.paragraphs[0]).toContain('{volunteer}')
   })
 })

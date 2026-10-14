@@ -2,18 +2,21 @@
 //   標題列（橘紅，「簡報1 - PowerPoint」、右側 connection 插槽）
 //   ｜功能區分頁（檔案＝選單「切換偽裝…」；常用＝裝飾按鈕群；繪圖＝能作畫時 toolbar 插槽，否則整組灰化；
 //     說明＝遊戲中點了才作用，內容為一排說明主題按鈕 → ShellProps.help.open(主題)（Epic 6，DESIGN §13.2、§16）；
-//     「檔案」選單第二項「說明…」→ ShellProps.help.open()（決策 8：< 1024px「說明」分頁隱藏時的入口））
+//     「檔案」選單第二項「說明…」→ ShellProps.help.open()（決策 8：< 1024px「說明」分頁隱藏時的入口）；
+//     第三項「開啟最近的簡報 ›」＝比賽歷史的入口（Epic 17；spec/draw-contest/design.md §3.1；資料與動作經 ShellProps.history））
 //   ｜左縮圖窗格（players 插槽 → SlidePlayers）｜中央灰色工作區＋投影片（round.showReveal 時放 reveal 插槽＝投影片瀏覽（揭曉畫廊）；
 //     round.showCanvas 時放 canvas 插槽＝自己的畫布，1px 外框＋投影片陰影，已交卷時右下角小字「已儲存，等待其他人…」；
 //     否則空白投影片「按一下以新增標題」）
 //   ｜功能區右端固定「完成」（finish 插槽；在工具列的捲動區外，窄版也看得到；spec/draw-contest/design.md §4）
 //   ｜投影片下方備忘稿列（roundStatus 插槽）｜右註解窗格（chat 插槽，純文字）
 //   ｜狀態列（投影片 N / M、中文(台灣)、備忘稿；中央「從目前投影片開始」＝ volunteer 插槽（我出題）；右側顯示設定、62% 裝飾）。
+//   歷史檢視（ShellProps.history.openId 非 null；design §2「歷史檢視」列）：投影片區放 historyView 插槽（存檔那場的投影片瀏覽）、
+//     備忘稿列放 historyStatus 插槽、狀態列中央改為「關閉簡報」（呼叫 history.close，焦點還給「檔案」）；功能區、縮圖窗格、註解窗格照舊。
 //   自動重連（screen 'resume'，Epic 4）：同一殼層，空白投影片（按一下以新增標題）＋置中對話框只放一行 notice（PptResumeDialog）。
 // 狀態列不因角色變色（§13.3）；出題者以縮圖橘框呈現，能作畫時「繪圖」分頁作用。
 // 功能元件的呈現：對話框＝PptDialog、玩家清單＝SlidePlayers、聊天＝註解卡片（CommentChat）、狀態列項目＝深色字、
 // 工具列收合斷點、「▶ 從目前投影片開始」（pptViews），以 ShellViewsContext 提供；淺色底的配色由正式 view 與 token（--fg-on-active）處理，不在容器上改寫 CSS 變數。
-// 殼層不 import uiStore／catalog（踩雷紀錄 Phase 2）；主題資料經 ShellProps.themes、說明入口經 ShellProps.help。不讀 store/game：人數經 ShellProps.counts。
+// 殼層不 import uiStore／catalog（踩雷紀錄 Phase 2）；主題資料經 ShellProps.themes、說明入口經 ShellProps.help、比賽歷史經 ShellProps.history。不讀 store/game：人數經 ShellProps.counts。
 import { useRef, useState, type ComponentType, type ReactNode, type RefObject } from 'react'
 import { MIN_PLAYERS, PALETTE, type ContestPhase } from '@fishing-work/shared/draw-contest'
 import { HELP_TOPICS, type HelpTopicId } from '../../features/help/helpTopics'
@@ -21,9 +24,9 @@ import { canVolunteer } from '../../features/round/roundDisplay'
 import { CloseIcon, EllipsisIcon, EraserIcon, FillIcon, SearchIcon, TrashIcon, UndoIcon } from '../../layout/icons'
 import { tip } from '../../layout/tooltipPlacement'
 import { useMediaQuery } from '../../layout/useElementSize'
-import type { ShellGameSlots, ShellHelp, ShellPlayerCounts, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
+import type { ShellGameSlots, ShellHelp, ShellHistory, ShellPlayerCounts, ShellProps, ShellRoundState, ShellThemeSwitch } from '../types'
 import { ShellViewsContext } from '../views'
-import { FileTab, OfficeThemeDialog } from '../office/FileMenu'
+import { FileTab, OfficeThemeDialog, type FileMenuRecent } from '../office/FileMenu'
 import {
   CheckIcon,
   CommentIcon,
@@ -53,6 +56,9 @@ import {
 import {
   PPT_APP_TITLE,
   PPT_DIRTY_MARK,
+  PPT_RECENT_CLOSE,
+  PPT_RECENT_EMPTY,
+  PPT_RECENT_LABEL,
   PPT_SAVED_CAPTION,
   RIBBON_CONTENT_TABS,
   RIBBON_TABS,
@@ -97,8 +103,13 @@ export function PptShell(props: ShellProps) {
   )
 }
 
-function GameScreen(props: { round: ShellRoundState; counts: ShellPlayerCounts; themes: ShellThemeSwitch; help: ShellHelp } & ShellGameSlots) {
-  const { round, counts, themes, help, players, canvas, toolbar, finish, reveal, chat, roundStatus, volunteer, connection, dialogs } = props
+function GameScreen(
+  props: { round: ShellRoundState; counts: ShellPlayerCounts; themes: ShellThemeSwitch; help: ShellHelp; history: ShellHistory } & ShellGameSlots,
+) {
+  const { round, counts, themes, help, history, players, canvas, toolbar, finish, reveal, chat, roundStatus, volunteer, connection, dialogs } = props
+  const { historyView, historyStatus } = props
+  /** 正在看比賽歷史（design §2「歷史檢視」列） */
+  const viewing = history.openId !== null
   // 「投影片 N / M」為裝飾（N 在線、M 玩家數）；人數由 App 注入（殼層不讀 store）
   return (
     <PptFrame
@@ -109,15 +120,24 @@ function GameScreen(props: { round: ShellRoundState; counts: ShellPlayerCounts; 
       finish={round.canDraw ? finish : null}
       themes={themes}
       help={help}
+      recent={{
+        label: PPT_RECENT_LABEL,
+        emptyLabel: PPT_RECENT_EMPTY,
+        entries: history.entries,
+        enabled: history.canOpen,
+        onOpen: history.open,
+        onRefresh: history.refresh,
+      }}
+      onCloseRecent={viewing ? history.close : undefined}
       thumbnails={players}
-      slide={<SlideArea round={round} canvas={canvas} reveal={reveal} />}
+      slide={<SlideArea round={round} canvas={canvas} reveal={reveal} recent={viewing ? historyView : null} />}
       dialogs={dialogs}
       notes={
         <>
           <span aria-hidden="true" className="shrink-0 pr-1 pl-3 text-fg-muted">
             備忘稿：
           </span>
-          {roundStatus}
+          {viewing ? historyStatus : roundStatus}
         </>
       }
       comments={chat}
@@ -128,10 +148,13 @@ function GameScreen(props: { round: ShellRoundState; counts: ShellPlayerCounts; 
 }
 
 /**
- * 投影片區（design §2）：揭曉結果 → 投影片瀏覽（reveal）；自己的畫布（drawing／judging 的參賽者）→ 畫布，
+ * 投影片區（design §2）：正在看比賽歷史 → 存檔那場的投影片瀏覽（recent，優先於其他；design §3.1）；
+ * 揭曉結果 → 投影片瀏覽（reveal）；自己的畫布（drawing／judging 的參賽者）→ 畫布，
  * 作畫中已交卷時右下角小字「已儲存，等待其他人…」；其餘（旁觀、出題中、尚無結果）→ 空白投影片
  */
-export function SlideArea({ round, canvas, reveal }: { round: ShellRoundState; canvas: ReactNode; reveal: ReactNode }) {
+export function SlideArea(props: { round: ShellRoundState; canvas: ReactNode; reveal: ReactNode; recent?: ReactNode }) {
+  const { round, canvas, reveal, recent } = props
+  if (recent !== null && recent !== undefined) return recent
   if (round.showReveal) return reveal
   if (!round.showCanvas) return <BlankSlide />
   return (
@@ -161,6 +184,10 @@ interface PptFrameProps {
   themes?: ShellThemeSwitch
   /** 遊戲說明（遊戲中才有）；省略時「說明」分頁為裝飾 */
   help?: ShellHelp
+  /** 比賽歷史在「檔案」選單的入口（遊戲中才有） */
+  recent?: FileMenuRecent
+  /** 正在看比賽歷史時給：狀態列中央改為「關閉簡報」（呼叫它＝回到目前的畫面） */
+  onCloseRecent?: () => void
   thumbnails: ReactNode
   /** 投影片（畫布）；父層為 size container */
   slide: ReactNode
@@ -179,6 +206,7 @@ interface PptFrameProps {
 function PptFrame(props: PptFrameProps) {
   const { dirty, connection, ribbonDefault, drawTools, finish, themes, help, thumbnails, slide, dialogs, notes, comments, counter, statusCenter, overlay } =
     props
+  const { recent, onCloseRecent } = props
   const wide = useMediaQuery(WIDE_QUERY)
   /** 寬螢幕：縮圖窗格是否收起；窄螢幕：覆蓋層是否開啟（預設關） */
   const [paneHidden, setPaneHidden] = useState(false)
@@ -209,6 +237,7 @@ function PptFrame(props: PptFrameProps) {
         onSwitchTheme={themes !== undefined ? () => setThemePickOpen(true) : undefined}
         onHelp={help?.open}
         onHelpList={help !== undefined ? () => help.open() : undefined}
+        recent={recent}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -253,7 +282,24 @@ function PptFrame(props: PptFrameProps) {
         {themes !== undefined && themePickOpen && <OfficeThemeDialog themes={themes} onClose={closeThemePick} />}
       </div>
 
-      <StatusBar counter={counter} paneVisible={paneVisible} onTogglePane={togglePane} center={statusCenter} />
+      <StatusBar
+        counter={counter}
+        paneVisible={paneVisible}
+        onTogglePane={togglePane}
+        center={
+          onCloseRecent !== undefined ? (
+            <CloseRecent
+              onClose={() => {
+                onCloseRecent()
+                // 按鈕關閉後就不在畫面上了：焦點還給「檔案」（開啟歷史的入口）
+                fileRef.current?.focus()
+              }}
+            />
+          ) : (
+            statusCenter
+          )
+        }
+      />
     </div>
   )
 }
@@ -305,8 +351,10 @@ export function Ribbon(props: {
   onHelp?: (topicId: HelpTopicId) => void
   /** 開啟說明清單（「檔案」選單的「說明…」，窄螢幕入口；決策 8） */
   onHelpList?: () => void
+  /** 比賽歷史在「檔案」選單的入口（Epic 17） */
+  recent?: FileMenuRecent
 }) {
-  const { fallback, drawTools, finish, fileRef, onSwitchTheme, onHelp, onHelpList } = props
+  const { fallback, drawTools, finish, fileRef, onSwitchTheme, onHelp, onHelpList, recent } = props
   const hasFinish = finish !== null && finish !== undefined
   const [pick, setPick] = useState<RibbonPick | null>(null)
   const active = activeRibbonTab(pick, fallback)
@@ -314,7 +362,7 @@ export function Ribbon(props: {
   return (
     <div className="shrink-0 border-b border-border bg-activity">
       <div role="tablist" aria-label="功能區" className="flex h-[28px] items-stretch overflow-hidden bg-tab-inactive">
-        <FileTab buttonRef={fileRef} onSwitchTheme={onSwitchTheme} onHelp={onHelpList} />
+        <FileTab buttonRef={fileRef} onSwitchTheme={onSwitchTheme} onHelp={onHelpList} recent={recent} />
         {RIBBON_TABS.slice(1).map((tab) => {
           const narrowHidden = RIBBON_TABS_HIDDEN_WHEN_NARROW.includes(tab) ? 'max-lg:hidden' : ''
           const content = RIBBON_CONTENT_TABS.find((t) => t === tab && (t !== '說明' || onHelp !== undefined))
@@ -594,6 +642,24 @@ function StartSlideshowIdle() {
       {Icon !== undefined && <Icon size={14} />}
       {label}
     </span>
+  )
+}
+
+/**
+ * 歷史檢視時的狀態列中央（design §2「歷史檢視」列）：「關閉簡報」＝回到目前的畫面（取代「▶ 從目前投影片開始」；關閉後才能出題）。
+ * 外觀同狀態列左端的可點項目（深色字、hover 疊 --statusbar-hover、focus 外框 --border-focus）
+ */
+export function CloseRecent({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      data-history-close=""
+      className="flex h-full shrink-0 cursor-pointer items-center gap-1 px-[6px] transition-colors duration-100 hover:bg-statusbar-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-border-focus"
+    >
+      <CloseIcon size={14} />
+      {PPT_RECENT_CLOSE}
+    </button>
   )
 }
 

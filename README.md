@@ -122,6 +122,8 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 
 ## 繪圖比賽
 
+> **比賽歷史（Epic 17）**：揭曉後這一場的畫、分數、名次、評語會存進自己的瀏覽器（IndexedDB，最近 5 場、超過刪最舊、不同步給別人），從簡報的「檔案 › 開啟最近的簡報」回看；作畫中與自己出題時不能開。
+
 平台的第二款遊戲（Epic 14），與我畫你猜由**同一個 server 程序**提供，偽裝成簡報（PowerPoint）。規則見 [spec/draw-contest/overview.md](spec/draw-contest/overview.md)，契約與部署見 [spec/draw-contest/architecture.md](spec/draw-contest/architecture.md)。
 
 **怎麼玩**（給同事）：
@@ -155,11 +157,11 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 | `JUDGE_FAKE_DELAY_MS` | `1500` | 隨機評分器每張的假延遲（讓「評分中 n/m」看得到；測試設 0） |
 | `COMMENT` | `ollama` | 評語器：`ollama`（gemma4 產メスガキ評語，**預設**）；`off` 關閉。**沒有 gemma4 或記憶體不足的機器（例如 32 GB）設 `COMMENT=off`** |
 | `COMMENT_MODEL` | `gemma4:26b-mlx-bf16` | 評語用的 Ollama 模型 tag（約 52.5 GB；`ollama list` 可查），位址同樣用 `OLLAMA_URL` |
-| `COMMENT_TIMEOUT_MS` | `20000` | 單張評語逾時；逾時或輸出空白的那張沒有評語，且本回合剩下的各張直接跳過（下一回合再試） |
+| `COMMENT_TIMEOUT_MS` | `30000` | 單張評語逾時（模型被其他模型擠出記憶體後重新載入要 10～27 秒）；逾時或輸出空白只影響那一張（沒有評語），下一張照常嘗試；**同一回合連續兩次失敗**才跳過本回合剩下的各張（下一回合再試）；第一名的稱讚版失敗時退回一般評語 |
 
 - **交卷原圖直送，不再縮圖**（2026-10-12）：Clef `clef:27b-nvfp4` 在 Ollama 0.40.3 的 MLX 後端下 1280×720 原圖約 2.4 秒，`JUDGE_IMAGE_WIDTH` 已移除（設了也不會讀）。
 - **記憶體需求**：評分與評語兩個模型會同時常駐，合計約 **71 GB**（Clef 約 18 GB＋gemma4 約 52.5 GB），128 GB 的機器沒問題；**32 GB 的機器請設 `COMMENT=off`**（只留評分），或連評分也不用時再加 `JUDGE=random`。
-- **評語不影響揭曉**：分數與排名只由評分器決定；每張評完分才開始產生評語，揭曉不等它，晚到的評語會自動補在卡片上（等待中顯示「…」）。**第一名會被稱讚**：名次揭曉時才知道，所以第一名的評語在揭曉當下重做一次「稱讚版」（同一個評審人設），會比其他人晚一點出現；稱讚版失敗時第一名沒有評語。啟動時若清單裡有 `COMMENT_MODEL` 會先在背景暖機一次（log `draw-contest.comment.warmup`，冷啟動載入約 9～17 秒）；連不上或沒有該模型只會警告 `draw-contest.comment.commentUnavailable`，遊戲照常可玩、卡片只是沒有評語。
+- **評語不影響揭曉**：分數與排名只由評分器決定；每張評完分才開始產生評語，揭曉不等它，晚到的評語會自動補在卡片上（等待中顯示「メスガキ：正在寫評語」）。**第一名會被稱讚**：名次揭曉時才知道，所以第一名的評語在揭曉當下重做一次「稱讚版」（同一個評審人設），會比其他人晚一點出現；稱讚版失敗時退回他原本的一般評語（揭曉前已寫好、或揭曉當下正在寫的那句；都沒有才沒有評語）。啟動時若清單裡有 `COMMENT_MODEL` 會先在背景暖機一次（log `draw-contest.comment.warmup`，冷啟動載入約 9～17 秒）；連不上或沒有該模型只會警告 `draw-contest.comment.commentUnavailable`，遊戲照常可玩、卡片只是沒有評語。
 
 - **預設 `ollama`**：連不上 Ollama 或沒有該模型時，啟動 log 警告 `draw-contest.judge.ollamaUnavailable`（附原因），**遊戲照常可玩**：每回合仍先試 Ollama，連不上就該回合自動退回隨機，畫面備忘稿標「（隨機評分）」。Ollama 之後才開也**不用重啟** server，下一回合就會改用 AI 評分。確定沒有 Ollama 的機器直接設 `JUDGE=random` 與 `COMMENT=off`，省掉每回合的連線嘗試與 log。啟動時若清單裡有 `JUDGE_MODEL`，會先在背景暖機一次（送一張 1×1 的圖把 Clef 載進記憶體並常駐 30 分鐘，log `draw-contest.judge.warmup`；Clef 冷啟動第一張約 13 秒，暖機後第一回合第一張不必等），暖機失敗只警告 `draw-contest.judge.warmupFailed`、不影響評分。`/healthz` 不檢查 Ollama。
 - **模型不進映像**：Ollama 跑在主機上，容器只以 HTTP 呼叫它。

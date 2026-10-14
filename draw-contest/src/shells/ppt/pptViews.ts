@@ -5,7 +5,7 @@ import type { ChatView, HelpView, ShellViews, StatusView, TermsView, ToolbarView
 import { CommentComposer, CommentLine } from './CommentChat'
 import { PptDialog } from './PptDialog'
 import { SlideshowIcon } from './pptIcons'
-import { PPT_SWITCH_HINT, PPT_TERMS, START_SLIDESHOW_LABEL } from './pptLayout'
+import { PPT_RECENT_HINT, PPT_SWITCH_HINT, PPT_TERMS, START_SLIDESHOW_LABEL } from './pptLayout'
 import { SlidePlayers } from './SlidePlayers'
 
 /** 右註解窗格：窗格底色 --bg-sidebar、卡片之間 8px */
@@ -36,10 +36,10 @@ export const PPT_TOOLBAR_VIEW: ToolbarView = { compactBelowPx: 540 }
 /** DESIGN §13.2 狀態列中央「▶ 從目前投影片開始」＝我來畫；人數不足時殼層以同一組文字與圖示顯示灰化版本 */
 export const PPT_VOLUNTEER_VIEW: VolunteerView = { label: START_SLIDESHOW_LABEL, icon: SlideshowIcon }
 
-/** 說明內文「如何切換偽裝」的 {switch}：功能區「檔案」→「切換偽裝…」 */
-export const PPT_HELP_VIEW: HelpView = { switchHint: PPT_SWITCH_HINT }
+/** 說明內文「如何切換偽裝」的 {switch}：功能區「檔案」→「切換偽裝…」；{recent}：「檔案」→「開啟最近的簡報」（Epic 17） */
+export const PPT_HELP_VIEW: HelpView = { switchHint: PPT_SWITCH_HINT, recentHint: PPT_RECENT_HINT }
 
-/** 偽裝用語：題目＝「標題」、交卷＝「儲存」、揭曉畫廊＝「投影片瀏覽」 */
+/** 偽裝用語：題目＝「標題」、交卷＝「儲存」、揭曉畫廊＝「投影片瀏覽」、比賽歷史＝「最近的簡報」 */
 export const PPT_TERMS_VIEW: TermsView = PPT_TERMS
 
 export const PPT_VIEWS: ShellViews = {
