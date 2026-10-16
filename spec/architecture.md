@@ -65,7 +65,7 @@ fishing-work/
 ```
 
 - `draw-guess/vite.config.ts`：`base: '/draw-guess/'`、**`server.port: 80`、`server.strictPort: true`**（公司區網只放行標準埠，5173 會被擋；Rex 2026-09-24 實測）、`server.host: true`（區網同事也能連 dev server）、**`server.allowedHosts: ['.trycloudflare.com', '.local']`**（Vite 預設只接受 localhost 與 IP 的 Host 標頭，經 tunnel 或 mDNS 名稱連 dev 會被「Blocked request」擋下；前綴點＝含子網域；具名通道用自有網域時要再加該網域；2026-09-24 Rex 實測發現、龍骨修正）、`server.proxy['/socket.io'] = { target: 'http://localhost:7180', ws: true }`；另把 **`^/$`（遊戲清單）與 `/healthz`** proxy 到 `:7180`、**`/draw-contest`** proxy（含 ws）到繪圖比賽的 Vite `:7181`（內部埠 2026-10-12 先由 3000／3001 改為 5173／5174，同日再改為 7180／7181／7182：5173 系列是 Vite 預設埠，Rex 其他專案會搶；80 仍是入口）——Vite 對 base 以外的根路徑會 302 到 `/draw-guess/`，加了這三條後開發時 `http://localhost/` 與正式一樣是遊戲清單，從清單點進兩款遊戲都是 HMR 開發版（Rex 2026-10-12 要求：IDEA 啟動後直接看到遊戲選擇頁；海圖定案）。
-- 根目錄 `npm run dev` 以 `concurrently --kill-others-on-fail` **一次啟動五個程序**（Epic 16 起）：server（:7180）、draw-guess Vite（:80）、draw-contest Vite（:7181）、song-guess Vite（:7182）、`scripts/dev-open.mjs`。三個 Vite 互相 proxy 另外兩款的路徑（draw-contest 與 song-guess 的 vite.config 都有 `/draw-guess` → `:80` 與另一款 → 其埠），任一入口的根路徑都是遊戲清單。最後者輪詢 `http://localhost/healthz` 到回 200（最多 30 秒）才開瀏覽器到 `http://localhost/`（遊戲清單）然後結束；不用 Vite 的 `server.open` 是因為 Vite 不到 0.1 秒就緒、server 約 1 秒，瀏覽器會先開到 proxy error（2026-10-12 實測）。`BROWSER=none` 不開瀏覽器（測試用）。原本的 `dev:contest` 已移除（2026-10-12）。
+- 根目錄 `npm run dev` 以 `concurrently --kill-others-on-fail` **一次啟動五個程序**（Epic 16 起）：server（:7180）、draw-guess Vite（:80）、draw-contest Vite（:7181）、song-guess Vite（:7182）、`scripts/dev-open.mjs`。三個 Vite 互相 proxy 另外兩款的路徑（draw-contest 與 song-guess 的 vite.config 都有 `/draw-guess` → `:80` 與另一款 → 其埠），**三份 vite.config 都設 `server.allowedHosts: ['.trycloudflare.com', '.local']`**（:80 轉發時保留原 Host 標頭，只有 draw-guess 放行的話，經 tunnel 開 `/song-guess/`、`/draw-contest/` 會被另兩個 Vite 回 403「Blocked request」；Rex 2026-10-14 實測、海圖補齊），任一入口的根路徑都是遊戲清單。最後者輪詢 `http://localhost/healthz` 到回 200（最多 30 秒）才開瀏覽器到 `http://localhost/`（遊戲清單）然後結束；不用 Vite 的 `server.open` 是因為 Vite 不到 0.1 秒就緒、server 約 1 秒，瀏覽器會先開到 proxy error（2026-10-12 實測）。`BROWSER=none` 不開瀏覽器（測試用）。原本的 `dev:contest` 已移除（2026-10-12）。
 
 ### 正式（Rex 本機，區網）
 
@@ -543,6 +543,7 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 | 日期 | 變更 | 原因 |
 |------|------|------|
+| 2026-10-14 | §3 開發拓樸：`draw-contest`／`song-guess` 的 vite.config 補 `server.allowedHosts: ['.trycloudflare.com', '.local']`（與 draw-guess 一致；Vite 偵測設定檔改動會自動重啟，不需重開 dev） | Rex 2026-10-14 以 `npm run dev` ＋ tunnel 開 `/song-guess/` 回「Blocked request. This host is not allowed」：:80 proxy 保留原 Host，被 :7182 的 Vite 擋下；海圖補齊 |
 | 2026-10-12 | §3 開發拓樸內部埠再改：server **7180**、draw-contest Vite **7181**、song-guess Vite **7182**（原 5173／5174／5175）；80 仍是入口 | Rex 2026-10-12：5173 系列是 Vite 預設埠，`ai-chatroom` 等其他專案會搶（實測 5174 被占）；3000／3001 Rex 固定他用 |
 | 2026-10-12 | **Epic 16 猜歌的共用層定案**（海圖）：§1 加 `song-guess/`；§3 dev 五個程序、song-guess Vite :7182、三個 Vite 互 proxy、分享網址 `games` 三鍵、容器提示加「猜歌 /song-guess/」、Docker 多一份 dist 與 `ITUNES_*`、對外網域需求 | Rex 2026-10-12 新遊戲「猜歌」（iTunes 題庫） |
 | 2026-10-12 | §3 開發拓樸內部埠：server 3000 → 5173、draw-contest Vite 3001 → 5174；80 仍是入口，正式 `npm start` 不變 | Rex 2026-10-12：不要 3000／3001，改用 5173／5174 |

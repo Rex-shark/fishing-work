@@ -10,6 +10,9 @@ export default defineConfig({
     // 開發只在 Rex 本機（不需區網）：80 是我畫你猜、7181 是繪圖比賽的 dev server，猜歌綁 7182；被占用就直接失敗而不是悄悄換埠
     port: 7182,
     strictPort: true,
+    // :80（我畫你猜 Vite）會把 /draw-contest、/song-guess 連同原 Host 標頭轉過來；走 cloudflared 或 mDNS 時
+    // Host 不是 localhost，三份 vite.config 都要放行，否則回 "Blocked request. This host is not allowed."（Rex 2026-10-14）
+    allowedHosts: ['.trycloudflare.com', '.local'],
     proxy: {
       '/socket.io': { target: 'http://localhost:7180', ws: true },
       // Vite 會把 / 302 到 base（/song-guess/）；以下四條轉出去，

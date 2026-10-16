@@ -130,4 +130,4 @@
 
 ## 踩雷紀錄
 
-（尚無）
+- **Vite 擋 tunnel 網址（複製設定漏項）**（2026-10-14）：Rex 以 `npm run dev` ＋ `npm run tunnel` 開 `https://<隨機>.trycloudflare.com/draw-contest/`，回 403「Blocked request. This host (…trycloudflare.com) is not allowed」。原因：:80 的我畫你猜 Vite 把 `/draw-contest` 轉到 :7181 時保留原 Host 標頭，而 Epic 14／16 複製 vite.config 時只抄了 proxy、沒抄 `server.allowedHosts`。修正：三份 vite.config 都設 `allowedHosts: ['.trycloudflare.com', '.local']`（spec §3）。以 `curl -H "Host: x.trycloudflare.com" http://127.0.0.1/draw-contest/` 驗證 200；Vite 自動重啟，不用重開 dev。分享給外部仍建議 `npm run build` → `npm start`（Express 無 Host 檢查、HMR websocket 也不會經 tunnel 報錯）。
