@@ -13,7 +13,7 @@
 |------|------|----------|
 | 我畫你猜 | `http://<IP>/draw-guess/` | 畫師自訂題目作畫，其他人看畫在聊天室猜題（見下方「玩法」） |
 | 繪圖比賽 | `http://<IP>/draw-contest/` | 出題後所有人同時畫，評分器逐張打分、投影片揭曉（見「繪圖比賽」） |
-| 猜歌 | `http://<IP>/song-guess/` | 出題者指定歌手，所有人同時聽 30 秒試聽、打字猜歌名（見「猜歌」；**要戴耳機**） |
+| 猜歌 | `http://<IP>/song-guess/` | 出題者選題庫（指定歌手、台灣熱門或西洋熱門），所有人同時聽 30 秒試聽、打字猜歌名（見「猜歌」；**要戴耳機**） |
 
 ## 玩法（給同事）
 
@@ -116,7 +116,7 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 - **重開機自動恢復**：compose 設了 `restart: unless-stopped`，只要 Docker Desktop 有開機自動啟動（設定 → General →「Start Docker Desktop when you sign in」）就會自己起來；用 `docker compose down` 停掉的則不會。
 - **Windows 的 80 埠被占用**（常見是 IIS 或 `http.sys`，啟動時報埠已被使用）：改用其他主機埠，例如 PowerShell `$env:HOST_PORT=8080; docker compose up -d --build`（或寫進 `.env`：`HOST_PORT=8080`），分享網址要帶埠號 `http://<IP>:8080/`（我畫你猜為 `http://<IP>:8080/draw-guess/`）；也可以停掉占用 80 的服務。注意公司區網可能只放行標準埠。
 - **防火牆**：第一次啟動時系統若詢問是否允許 Docker 接受連入連線 → 允許，否則同事連不上。
-- **猜歌要連外網**：容器需要能連到 `itunes.apple.com`（https，server 搜尋歌手用），見下方「猜歌」；`ITUNES_*`、`SONG_PREVIEW_CAP_MS` 已列在 `docker-compose.yml`，可寫在 `.env` 覆寫。
+- **猜歌要連外網**：容器需要能連到 `itunes.apple.com` 與 `rss.marketingtools.apple.com`（https，server 搜尋歌手與取排行榜用），見下方「猜歌」；`ITUNES_*`、`SONG_PREVIEW_CAP_MS` 已列在 `docker-compose.yml`，可寫在 `.env` 覆寫。
 - **外網分享**：Cloudflare Tunnel 仍在主機上跑（不放進容器）：`cloudflared tunnel --url http://localhost:80`（主機埠改過就改成對應埠）。
 - 只想用 Dockerfile 不用 compose 也可以：`docker build -t fishing-work .` → `docker run -d --name fishing-work -p 80:80 --restart unless-stopped fishing-work`。要讓 log 印出正確的分享網址，`docker run` 再加 `-e PUBLIC_URL=http://<新電腦 IP>/`（站台根網址）。
 
@@ -177,8 +177,11 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 **怎麼玩**（給同事）：
 
 1. **先戴耳機**——聲音是這款遊戲唯一的破綻。瀏覽器開 `http://<IP>/song-guess/`（`http://<IP>/` 遊戲清單也有入口），輸入暱稱（規則同我畫你猜）進入。
-2. 沒有局進行時，任何人可按「分享音訊」成為出題者（至少 2 人在線），60 秒內輸入**歌手名稱**（1～30 字）。
-3. server 從 Apple iTunes 抽該歌手的 5 首歌，逐首播放 30 秒試聽；所有人同時聽（**出題者也一起猜**），畫面全程顯示歌手與「第 n / 5 首」。
+2. 沒有局進行時，任何人可按「分享音訊」成為出題者（至少 2 人在線），60 秒內選**題庫來源**（Epic 18）：
+   - **歌手**：輸入歌手名稱（1～30 字）；「只抽熱門歌」預設勾選＝只從 Apple 搜尋結果的前 30 首（Apple 的熱門度順序）抽，取消勾選就從該歌手全部的歌抽。
+   - **台灣熱門**：Apple Music 台灣榜當日前 100 首（不分語言，韓團也會出現）。
+   - **西洋熱門**：Apple Music 美國榜當日前 100 首。
+3. server 從 Apple iTunes 抽 5 首歌，逐首播放 30 秒試聽；所有人同時聽（**出題者也一起猜**），畫面顯示題庫標題、該首歌手與「第 n / 5 首」。
 4. 在聊天室打歌名，正規化後相同就算猜對（不分大小寫、全形半形、空白與標點；副標如 `(Live)`、`feat.` 可省略）。越快猜對分數越高（50～100）；有人猜對歌照播，其他人可以繼續猜。
 5. 試聽播完才揭曉歌名、歌手、封面與本首得分，停 5 秒進下一首；第 5 首揭曉後顯示本局排名，停到有人再按「分享音訊」。
 
@@ -186,7 +189,7 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 
 **網路需求**（兩邊都要通）：
 
-- **server（Rex 的電腦或容器）要能連到 `itunes.apple.com`**（https）：歌手搜尋由 server 統一呼叫 iTunes Search API（免金鑰；每 IP 約 20 次／分鐘，所以同一歌手的結果快取 10 分鐘）。連不上時出題者會看到「搜尋失敗，請再試一次」，另兩款遊戲不受影響；`/healthz` 不檢查 iTunes。
+- **server（Rex 的電腦或容器）要能連到 `itunes.apple.com` 與 `rss.marketingtools.apple.com`**（https）：歌手搜尋由 server 統一呼叫 iTunes Search API（免金鑰；每 IP 約 20 次／分鐘，所以同一歌手的結果快取 10 分鐘）；台灣熱門／西洋熱門由 server 先取排行榜 RSS、再以一次 `lookup` 補試聽網址（同一榜單也快取 10 分鐘）。連不上時出題者會看到「搜尋失敗，請再試一次」或「取得排行榜失敗，請再試一次」，另兩款遊戲不受影響；`/healthz` 不檢查 iTunes。
 - **每位同事的電腦要能連到 Apple 的試聽檔網域**：試聽檔（每首約 1 MB）與封面由各自的瀏覽器直接向 Apple 取，不經 Rex 的電腦——試聽檔在 `audio-ssl.itunes.apple.com`、封面在 `is1-ssl.mzstatic.com` 之類的 `*.mzstatic.com`（2026-10-12 實測的網域，以 Apple 實際回傳為準）。公司網路擋了這些網域的人會聽不到聲音。
 
 環境變數（server 讀取；Docker 由 `docker-compose.yml` 帶入，可寫在 `.env`）：
@@ -194,9 +197,11 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 | 變數 | 預設 | 說明 |
 |------|------|------|
 | `ITUNES_URL` | `https://itunes.apple.com` | iTunes Search API 根網址；協定測試指到假 iTunes（`user/mock/itunes.mjs`） |
-| `ITUNES_COUNTRY` | `TW` | 商店區域 |
-| `ITUNES_TIMEOUT_MS` | `8000` | 搜尋逾時（毫秒）；逾時回「搜尋失敗」，出題者可重試 |
-| `ITUNES_CACHE_MS` | `600000` | 歌手搜尋結果快取（10 分鐘）；同一歌手再出題不重打 iTunes |
+| `ITUNES_COUNTRY` | `TW` | 商店區域（搜尋與 lookup 都用；榜單的國家由來源決定，不受此影響） |
+| `ITUNES_RSS_URL` | `https://rss.marketingtools.apple.com` | 排行榜 RSS 根網址（台灣熱門／西洋熱門，Epic 18）；協定測試指到假 iTunes |
+| `ITUNES_TIMEOUT_MS` | `8000` | 搜尋與排行榜 lookup 的逾時（毫秒）；逾時回「搜尋失敗」或「取得排行榜失敗」，出題者可重試 |
+| `ITUNES_RSS_TIMEOUT_MS` | `12000` | 排行榜 RSS 那一段的逾時（毫秒；Apple RSS 偶發 8～15 秒才回，Epic 18） |
+| `ITUNES_CACHE_MS` | `600000` | 歌手搜尋結果與排行榜快取（10 分鐘）；同一歌手、同一榜單再出題不重打 iTunes |
 | `SONG_PREVIEW_CAP_MS` | `30000` | 單首最長播放毫秒；一般歌曲恆為 30 秒，全長不到 30 秒的曲子才更短 |
 
 **開發**：`npm run dev` 會一併啟動猜歌的 Vite（:7182）；從遊戲清單點進 <http://localhost/song-guess/> 就是 HMR 開發版（:80 的 Vite 把 `/song-guess` 轉給 :7182）。
@@ -229,4 +234,4 @@ TEST_PORT=3180 SERVER_PID=<pid> node user/protocol/draw-guess-load.mjs   # 30 �
 kill <pid>
 ```
 
-壓測內容與結果判讀見腳本檔頭；`user/protocol/` 下的 `draw-guess-phase*.mjs` 是各 Phase 的協定測試。另兩款的協定測試也在同一個目錄：`draw-contest-*.mjs`、`song-guess-phase1.mjs`（猜歌要先啟動假 iTunes `user/mock/itunes.mjs`，並以 `ITUNES_URL` 讓 server 指向它），用法與埠號見各檔檔頭。
+壓測內容與結果判讀見腳本檔頭；`user/protocol/` 下的 `draw-guess-phase*.mjs` 是各 Phase 的協定測試。另兩款的協定測試也在同一個目錄：`draw-contest-*.mjs`、`song-guess-*.mjs`（猜歌要先啟動假 iTunes `user/mock/itunes.mjs`，並以 `ITUNES_URL`、`ITUNES_RSS_URL` 讓 server 指向它），用法與埠號見各檔檔頭。

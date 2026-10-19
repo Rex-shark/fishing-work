@@ -2,9 +2,14 @@
 // - search()：組網址 → fetch（AbortSignal.timeout）→ 非 2xx、逾時、連不上、JSON 解析失敗一律拋 ItunesSearchError（對外即 SEARCH_FAILED）。
 // - createItunesClient()：包一層快取（鍵＝NFKC 小寫去空白的歌手名，時效 ITUNES_CACHE_MS）。每 IP 約 20 次／分鐘，
 //   所以 server 統一呼叫、同一歌手再出題不重打；失敗不快取（出題者可立刻重試）。
-// - 環境變數在本檔讀取（比照 draw-contest/judge/index.ts）：ITUNES_URL、ITUNES_COUNTRY、ITUNES_TIMEOUT_MS、ITUNES_CACHE_MS、SONG_PREVIEW_CAP_MS。
+// - chart()（Epic 18）：排行榜兩段呼叫——RSS（${ITUNES_RSS_URL}/api/v2/<國家>/music/most-played/100/songs.json）取 id →
+//   一次 lookup（${ITUNES_URL}/lookup?id=<逗號分隔>&country=${ITUNES_COUNTRY}）補 previewUrl／trackTimeMillis；
+//   RSS 段逾時 ITUNES_RSS_TIMEOUT_MS（12 秒；Apple RSS 偶發 8～15 秒才回，決策 14）、lookup 段 ITUNES_TIMEOUT_MS（8 秒）；
+//   任一段失敗或 RSS 沒有歌一律拋 ItunesChartError（對外即 CHART_FAILED）。快取鍵＝國家。
+// - 環境變數在本檔讀取（比照 draw-contest/judge/index.ts）：ITUNES_URL、ITUNES_COUNTRY、ITUNES_RSS_URL、ITUNES_TIMEOUT_MS、ITUNES_RSS_TIMEOUT_MS、
+//   ITUNES_CACHE_MS、SONG_PREVIEW_CAP_MS。
 // 啟動時**不**探測 iTunes（省限流額度；連不上時出題者會收到 SEARCH_FAILED 並可重試）。
-import { PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
+import { CHART_SIZE, PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
 import { log } from '../../lib/log';
 
 /** 測試可注入的 fetch（只用到這個形狀） */
@@ -36,6 +41,18 @@ export class ItunesSearchError extends Error {
   ) {
     super(`iTunes 搜尋失敗：${reason}`, options);
     this.name = 'ItunesSearchError';
+  }
+}
+
+/** 排行榜失敗（RSS 或 lookup 逾時、連不上、非 2xx、回應不是預期的 JSON、RSS 沒有歌）；room 一律回 CHART_FAILED */
+export class ItunesChartError extends Error {
+  readonly code = 'CHART_FAILED';
+  constructor(
+    readonly reason: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`取得排行榜失敗：${reason}`, options);
+    this.name = 'ItunesChartError';
   }
 }
 
@@ -117,22 +134,135 @@ export function parseSearchBody(body: string): ItunesTrack[] {
   return tracks;
 }
 
+/**
+ * GET 一次並讀回本文：非 2xx、逾時（含讀本文時）、連不上一律以 makeError 包成該模組的錯誤（search／chart 共用）。
+ * 逾時以 AbortSignal.timeout 涵蓋整段（連線＋讀本文）。
+ */
+async function fetchText(
+  url: string,
+  timeoutMs: number,
+  doFetch: FetchLike,
+  makeError: (reason: string, cause?: unknown) => Error,
+): Promise<string> {
+  try {
+    const res = await doFetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: 'application/json' } });
+    if (!res.ok) throw makeError(`HTTP ${res.status}`);
+    return await res.text();
+  } catch (err) {
+    if (err instanceof ItunesSearchError || err instanceof ItunesChartError) throw err;
+    const name = err instanceof Error ? err.name : '';
+    const reason = name === 'TimeoutError' || name === 'AbortError' ? `逾時（${timeoutMs} ms）` : `連線失敗：${String(err)}`;
+    throw makeError(reason, err);
+  }
+}
+
+const defaultFetch: FetchLike = (url, init) => fetch(url, init);
+
 /** 搜尋歌手（不快取）。失敗一律拋 ItunesSearchError */
 export async function search(artist: string, options: SearchOptions): Promise<ItunesTrack[]> {
-  const doFetch: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
   const url = buildSearchUrl(artist, options);
-  let body: string;
-  try {
-    const res = await doFetch(url, { signal: AbortSignal.timeout(options.timeoutMs), headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new ItunesSearchError(`HTTP ${res.status}`);
-    body = await res.text();
-  } catch (err) {
-    if (err instanceof ItunesSearchError) throw err;
-    const name = err instanceof Error ? err.name : '';
-    const reason = name === 'TimeoutError' || name === 'AbortError' ? `逾時（${options.timeoutMs} ms）` : `連線失敗：${String(err)}`;
-    throw new ItunesSearchError(reason, { cause: err });
-  }
+  const body = await fetchText(url, options.timeoutMs, options.fetch ?? defaultFetch, (reason, cause) => new ItunesSearchError(reason, { cause }));
   return parseSearchBody(body);
+}
+
+// ─── 排行榜（Epic 18） ─────────────────────────────────────────────
+
+/** 榜單國家：台灣熱門 tw、西洋熱門 us（room 由 source 對應） */
+export type ChartCountry = 'tw' | 'us';
+
+export interface ChartOptions {
+  /** 排行榜 RSS 根網址（ITUNES_RSS_URL，不含 /api） */
+  rssUrl: string;
+  /** iTunes 根網址（ITUNES_URL，lookup 用） */
+  url: string;
+  /** lookup 的商店區域（ITUNES_COUNTRY；與榜單國家無關） */
+  country: string;
+  /** lookup 段的逾時（ITUNES_TIMEOUT_MS） */
+  timeoutMs: number;
+  /** RSS 段的逾時（ITUNES_RSS_TIMEOUT_MS；決策 14）；未給時用 timeoutMs */
+  rssTimeoutMs?: number;
+  fetch?: FetchLike;
+}
+
+/** 組 RSS 網址：`${rssUrl}/api/v2/${country}/music/most-played/${CHART_SIZE}/songs.json` */
+export function buildChartUrl(country: ChartCountry, rssUrl: string): string {
+  return `${rssUrl.replace(/\/+$/, '')}/api/v2/${country}/music/most-played/${CHART_SIZE}/songs.json`;
+}
+
+/** 組 lookup 網址：`${url}/lookup?id=<逗號分隔>&country=…`（id 已確認為純數字，逗號不編碼，照 §3 字面） */
+export function buildLookupUrl(ids: readonly string[], options: Pick<ChartOptions, 'url' | 'country'>): string {
+  return `${options.url.replace(/\/+$/, '')}/lookup?id=${ids.join(',')}&country=${encodeURIComponent(options.country)}`;
+}
+
+/**
+ * 解析 RSS 本文：取 `feed.results[].id`（依榜單名次；字串或數字皆可，非純數字者略過、重複者只留第一次）。
+ * 不是 JSON、沒有 feed.results 陣列、或一個 id 都沒有 → ItunesChartError。
+ */
+export function parseChartIds(body: string): string[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch (err) {
+    throw new ItunesChartError('RSS 回應不是 JSON', { cause: err });
+  }
+  const feed = typeof json === 'object' && json !== null ? (json as Record<string, unknown>).feed : undefined;
+  const results = typeof feed === 'object' && feed !== null ? (feed as Record<string, unknown>).results : undefined;
+  if (!Array.isArray(results)) throw new ItunesChartError('RSS 回應沒有 feed.results 陣列');
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of results) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const id = (raw as Record<string, unknown>).id;
+    const text = typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? String(id) : id;
+    if (typeof text !== 'string' || !/^\d+$/.test(text) || seen.has(text)) continue;
+    seen.add(text);
+    ids.push(text);
+  }
+  if (ids.length === 0) throw new ItunesChartError('RSS 榜單沒有歌');
+  return ids;
+}
+
+/**
+ * 解析 lookup 本文並依榜單名次排序：只留 `wrapperType === 'track'` 且有試聽者；榜單上的 id 在 lookup 找不到
+ * （例：該國商店沒上架）就略過。不是 JSON、沒有 results 陣列 → ItunesChartError。
+ */
+export function parseLookupBody(body: string, ids: readonly string[]): ItunesTrack[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch (err) {
+    throw new ItunesChartError('lookup 回應不是 JSON', { cause: err });
+  }
+  const results = typeof json === 'object' && json !== null ? (json as Record<string, unknown>).results : undefined;
+  if (!Array.isArray(results)) throw new ItunesChartError('lookup 回應沒有 results 陣列');
+  const byId = new Map<string, ItunesTrack>();
+  for (const raw of results) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    if ((raw as Record<string, unknown>).wrapperType !== 'track') continue;
+    const t = toTrack(raw);
+    if (t === null || t.previewUrl === null || t.trackId <= 0) continue;
+    const key = String(t.trackId);
+    if (!byId.has(key)) byId.set(key, t);
+  }
+  const tracks: ItunesTrack[] = [];
+  for (const id of ids) {
+    const t = byId.get(id);
+    if (t !== undefined) tracks.push(t);
+  }
+  return tracks;
+}
+
+/** 取排行榜（不快取）：RSS → lookup 合併，依榜單名次。失敗一律拋 ItunesChartError */
+export async function chart(country: ChartCountry, options: ChartOptions): Promise<ItunesTrack[]> {
+  const doFetch = options.fetch ?? defaultFetch;
+  const makeError =
+    (stage: string) =>
+    (reason: string, cause?: unknown): Error =>
+      new ItunesChartError(`${stage} ${reason}`, { cause });
+  const rss = await fetchText(buildChartUrl(country, options.rssUrl), options.rssTimeoutMs ?? options.timeoutMs, doFetch, makeError('RSS'));
+  const ids = parseChartIds(rss);
+  const lookup = await fetchText(buildLookupUrl(ids, options), options.timeoutMs, doFetch, makeError('lookup'));
+  return parseLookupBody(lookup, ids);
 }
 
 // ─── 快取 ─────────────────────────────────────────────────────────
@@ -140,10 +270,18 @@ export async function search(artist: string, options: SearchOptions): Promise<It
 /** room 使用的搜尋器：給歌手名（已驗證、去頭尾空白），回原始搜尋結果；失敗 reject */
 export type SongSearcher = (artist: string) => Promise<ItunesTrack[]>;
 
+/** room 使用的排行榜取得器（Epic 18）：給國家，回依名次排序、有試聽的歌；失敗 reject */
+export type ChartFetcher = (country: ChartCountry) => Promise<ItunesTrack[]>;
+
 export interface ItunesConfig {
   url: string;
   country: string;
+  /** 排行榜 RSS 根網址（ITUNES_RSS_URL；Epic 18） */
+  rssUrl: string;
+  /** 搜尋與 lookup 的逾時（ITUNES_TIMEOUT_MS） */
   timeoutMs: number;
+  /** 排行榜 RSS 段的逾時（ITUNES_RSS_TIMEOUT_MS；決策 14） */
+  rssTimeoutMs: number;
   cacheMs: number;
 }
 
@@ -157,18 +295,65 @@ export interface SearchLogInfo {
   reason?: string;
 }
 
+export interface ChartLogInfo {
+  country: ChartCountry;
+  /** 合併後的筆數（失敗時無） */
+  count?: number;
+  ms: number;
+  cached: boolean;
+  /** 失敗原因（成功時無） */
+  reason?: string;
+}
+
 export interface ItunesClientOptions {
   fetch?: FetchLike;
   /** 快取時效用的時鐘（預設 Date.now；測試注入） */
   now?: () => number;
   /** 每次搜尋（含快取命中、失敗）回報一次，register 記 log */
   onSearch?: (info: SearchLogInfo) => void;
+  /** 每次取排行榜（含快取命中、失敗）回報一次（Epic 18） */
+  onChart?: (info: ChartLogInfo) => void;
 }
 
 export interface ItunesClient {
   search: SongSearcher;
+  /** 排行榜（Epic 18）：快取鍵＝國家，規則同 search（只快取成功、同鍵進行中共用請求） */
+  chart: ChartFetcher;
   /** 目前快取的歌手數（測試與 log 用） */
   cacheSize(): number;
+  /** 目前快取的榜單數（測試用） */
+  chartCacheSize(): number;
+}
+
+/**
+ * 帶時效的快取＋同鍵進行中共用請求（search 與 chart 共用的骨架）。
+ * 命中且未過期直接回；同鍵進行中回同一個 promise；只快取成功的結果；每次寫入時順手清掉過期項目。
+ */
+function createCache<T>(cacheMs: number, now: () => number) {
+  const cache = new Map<string, { at: number; value: T }>();
+  const pending = new Map<string, Promise<T>>();
+  return {
+    size: () => cache.size,
+    get(key: string): { value: T } | undefined {
+      const hit = cache.get(key);
+      return hit !== undefined && now() - hit.at < cacheMs ? { value: hit.value } : undefined;
+    },
+    pending: (key: string) => pending.get(key),
+    track(key: string, run: Promise<T>): Promise<T> {
+      const shared = run
+        .then((value) => {
+          const t = now();
+          for (const [k, entry] of cache) if (t - entry.at >= cacheMs) cache.delete(k);
+          if (cacheMs > 0) cache.set(key, { at: t, value });
+          return value;
+        })
+        .finally(() => {
+          pending.delete(key);
+        });
+      pending.set(key, shared);
+      return shared;
+    },
+  };
 }
 
 /**
@@ -179,44 +364,65 @@ export interface ItunesClient {
  */
 export function createItunesClient(config: ItunesConfig, options: ItunesClientOptions = {}): ItunesClient {
   const now = options.now ?? (() => Date.now());
-  const cache = new Map<string, { at: number; tracks: ItunesTrack[] }>();
-  const pending = new Map<string, Promise<ItunesTrack[]>>();
-
-  const prune = (t: number): void => {
-    for (const [key, entry] of cache) if (t - entry.at >= config.cacheMs) cache.delete(key);
-  };
+  const searches = createCache<ItunesTrack[]>(config.cacheMs, now);
+  const charts = createCache<ItunesTrack[]>(config.cacheMs, now);
 
   return {
-    cacheSize: () => cache.size,
+    cacheSize: searches.size,
+    chartCacheSize: charts.size,
     search: (artist) => {
       const key = artistKey(artist);
-      const hit = cache.get(key);
-      if (hit !== undefined && now() - hit.at < config.cacheMs) {
-        options.onSearch?.({ artist, count: hit.tracks.length, ms: 0, cached: true });
-        return Promise.resolve(hit.tracks);
+      const hit = searches.get(key);
+      if (hit !== undefined) {
+        options.onSearch?.({ artist, count: hit.value.length, ms: 0, cached: true });
+        return Promise.resolve(hit.value);
       }
-      const inFlight = pending.get(key);
+      const inFlight = searches.pending(key);
       if (inFlight !== undefined) return inFlight;
 
       const startedAt = Date.now();
-      const run = search(artist, { url: config.url, country: config.country, timeoutMs: config.timeoutMs, fetch: options.fetch })
-        .then((tracks) => {
-          const t = now();
-          prune(t);
-          if (config.cacheMs > 0) cache.set(key, { at: t, tracks });
+      const run = search(artist, { url: config.url, country: config.country, timeoutMs: config.timeoutMs, fetch: options.fetch }).then(
+        (tracks) => {
           options.onSearch?.({ artist, count: tracks.length, ms: Date.now() - startedAt, cached: false });
           return tracks;
-        })
-        .catch((err: unknown) => {
+        },
+        (err: unknown) => {
           const reason = err instanceof ItunesSearchError ? err.reason : String(err);
           options.onSearch?.({ artist, ms: Date.now() - startedAt, cached: false, reason });
           throw err;
-        })
-        .finally(() => {
-          pending.delete(key);
-        });
-      pending.set(key, run);
-      return run;
+        },
+      );
+      return searches.track(key, run);
+    },
+    chart: (country) => {
+      const hit = charts.get(country);
+      if (hit !== undefined) {
+        options.onChart?.({ country, count: hit.value.length, ms: 0, cached: true });
+        return Promise.resolve(hit.value);
+      }
+      const inFlight = charts.pending(country);
+      if (inFlight !== undefined) return inFlight;
+
+      const startedAt = Date.now();
+      const run = chart(country, {
+        rssUrl: config.rssUrl,
+        url: config.url,
+        country: config.country,
+        timeoutMs: config.timeoutMs,
+        rssTimeoutMs: config.rssTimeoutMs,
+        fetch: options.fetch,
+      }).then(
+        (tracks) => {
+          options.onChart?.({ country, count: tracks.length, ms: Date.now() - startedAt, cached: false });
+          return tracks;
+        },
+        (err: unknown) => {
+          const reason = err instanceof ItunesChartError ? err.reason : String(err);
+          options.onChart?.({ country, ms: Date.now() - startedAt, cached: false, reason });
+          throw err;
+        },
+      );
+      return charts.track(country, run);
     },
   };
 }
@@ -226,7 +432,9 @@ export function createItunesClient(config: ItunesConfig, options: ItunesClientOp
 export const DEFAULT_ITUNES_CONFIG = {
   url: 'https://itunes.apple.com',
   country: 'TW',
+  rssUrl: 'https://rss.marketingtools.apple.com',
   timeoutMs: 8000,
+  rssTimeoutMs: 12_000,
   cacheMs: 600_000,
   previewCapMs: PREVIEW_CAP_MS,
 } as const;
@@ -257,6 +465,11 @@ export function readSongGuessConfig(env: NodeJS.ProcessEnv = process.env, warn: 
   if (/^https?:\/\//i.test(rawUrl)) url = rawUrl.replace(/\/+$/, '');
   else if (rawUrl !== '') warn('song-guess.envInvalid', { name: 'ITUNES_URL', value: env.ITUNES_URL, using: url });
 
+  let rssUrl: string = DEFAULT_ITUNES_CONFIG.rssUrl;
+  const rawRss = env.ITUNES_RSS_URL?.trim() ?? '';
+  if (/^https?:\/\//i.test(rawRss)) rssUrl = rawRss.replace(/\/+$/, '');
+  else if (rawRss !== '') warn('song-guess.envInvalid', { name: 'ITUNES_RSS_URL', value: env.ITUNES_RSS_URL, using: rssUrl });
+
   let country: string = DEFAULT_ITUNES_CONFIG.country;
   const rawCountry = env.ITUNES_COUNTRY?.trim() ?? '';
   if (/^[a-z]{2}$/i.test(rawCountry)) country = rawCountry.toUpperCase();
@@ -265,7 +478,9 @@ export function readSongGuessConfig(env: NodeJS.ProcessEnv = process.env, warn: 
   return {
     url,
     country,
+    rssUrl,
     timeoutMs: readInt(env, 'ITUNES_TIMEOUT_MS', DEFAULT_ITUNES_CONFIG.timeoutMs, warn, 1),
+    rssTimeoutMs: readInt(env, 'ITUNES_RSS_TIMEOUT_MS', DEFAULT_ITUNES_CONFIG.rssTimeoutMs, warn, 1),
     cacheMs: readInt(env, 'ITUNES_CACHE_MS', DEFAULT_ITUNES_CONFIG.cacheMs, warn, 0),
     previewCapMs: readInt(env, 'SONG_PREVIEW_CAP_MS', DEFAULT_ITUNES_CONFIG.previewCapMs, warn, 1),
   };
@@ -274,6 +489,7 @@ export function readSongGuessConfig(env: NodeJS.ProcessEnv = process.env, warn: 
 /** register 的預設組合：讀環境變數、建立帶快取的搜尋器，並把每次搜尋記進 log */
 export interface SongGuessSetup {
   search: SongSearcher;
+  chart: ChartFetcher;
   previewCapMs: number;
 }
 
@@ -285,6 +501,10 @@ export function songGuessSetupFromEnv(env: NodeJS.ProcessEnv = process.env, warn
       if (info.reason !== undefined) log.warn('song-guess.itunes.failed', { ...info });
       else log.info('song-guess.itunes.search', { ...info });
     },
+    onChart: (info) => {
+      if (info.reason !== undefined) log.warn('song-guess.itunes.chartFailed', { ...info });
+      else log.info('song-guess.itunes.chart', { ...info });
+    },
   });
-  return { search: client.search, previewCapMs: config.previewCapMs };
+  return { search: client.search, chart: client.chart, previewCapMs: config.previewCapMs };
 }

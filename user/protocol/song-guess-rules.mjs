@@ -1,15 +1,15 @@
 // 猜歌規則協定符合性測試（Epic 16 驗收補測）：只依 spec/song-guess/architecture.md §4／§5／§5.1／§5.3 打 Socket，不看實作、不 import server 內部程式。
 // 與 song-guess-phase1.mjs 互補，專驗驗收範圍點名的規則：
 //   - choosing 的三種搜尋結果：不足 5 首 ARTIST_NOT_FOUND、iTunes 500 → SEARCH_FAILED、別名退回不過半 → ARTIST_NOT_FOUND，三者都**仍在 choosing**（出題者可重填）
-//   - 別名退回且過半（Jay Chou → artistDisplay「周杰倫」）；round.artist 為輸入值、artistDisplay 為正式名
+//   - 別名退回且過半（Jay Chou → topic「周杰倫」）；round.artist 為輸入值、topic 為正式名
 //   - 同一則 round:update 內 `startedAt − serverNow`（playing）、`endsAt − serverNow`（choosing／reveal）的方向與範圍；`endsAt = startedAt + durationMs` 嚴格相等
 //   - 未猜對者訊息含歌名但不完全相同 → SPOILER_BLOCKED「猜歌名請只輸入歌名本身」且不廣播；已猜對者含歌名 → SPOILER_BLOCKED「你已經猜對了，不要說出歌名」且不廣播
 //   - 多人猜對（含出題者、含中途加入者）不提早結束：全員猜對後仍 playing，直到 endsAt 才 reveal
 //   - 中途加入者：快照帶進行中那首（startedAt 與其他人相同、serverNow 為當下）、可猜可得分、**不在 participantIds**；排名因有得分而列入
 //   - 重連：寬限期內以 token 接管 → 同一個 id、分數保留、快照 song.startedAt 與其他人相同、serverNow 為當下
-//   - 第 5 首揭曉停滿 REVEAL_SECONDS 才 ended；ended 的 results 依 gameScore 降冪、同分依先達到該分數者在前、0 分者依 participantIds 順序；lastArtist 為正式名；
+//   - 第 5 首揭曉停滿 REVEAL_SECONDS 才 ended；ended 的 results 依 gameScore 降冪、同分依先達到該分數者在前、0 分者依 participantIds 順序；lastTopic 為正式名；
 //     reveal 保留最後一首、song 為 null、endsAt 為 null；系統訊息「本局第一名：X（n 分）」
-//   - results／lastArtist 在之後的 choosing／idle 保留，下一局搜尋成功進第 1 首才清空
+//   - results／lastTopic 在之後的 choosing／idle 保留，下一局搜尋成功進第 1 首才清空
 // 為了讓排名可預期，所有猜對都刻意在起播緩衝（startedAt 之前）送出 → 每次都是滿分 100（§5：startedAt 之前得分以 startedAt 為 0 秒）。
 //
 // 題庫用假 iTunes（user/mock/itunes.mjs，§6）：trackTimeMillis 2000 ms → durationMs 2000；一首 = 緩衝 1.5 秒 + 播放 2 秒 + 揭曉 5 秒。
@@ -22,6 +22,8 @@
 // **假 iTunes 請用預設的 MOCK_ITUNES_TRACK_MS（2000）**，本檔的時間斷言以此為準。總時長約 50 秒；全部 PASS 時 exit 0。
 //
 // 驗收子代理（代架構師海圖）2026-10-12 依 spec 撰寫。
+// 2026-10-16 Epic 18 改寫（水手長派出的子代理）：round:setArtist → round:setSource（payload { source: 'artist', artist, hot: true }）、
+//   ack { artistDisplay } → { topic }、RoundPublic 的 artistDisplay → topic、lastArtist → lastTopic（另驗 lastSource）。規則斷言不變。
 import { io } from 'socket.io-client';
 
 const PORT = process.env.TEST_PORT ?? '3462';
@@ -106,7 +108,7 @@ const C = await joinAs('不猜的C');
 const E = await joinAs('不猜的E');
 const ids = { A: A.id, B: B.id, C: C.id, E: E.id };
 await until(() => lastPlayers(A)?.length === 4);
-check('初始 idle，results／lastArtist 為 null', A.snap.round.phase === 'idle' && A.snap.round.results === null && A.snap.round.lastArtist === null, j(A.snap.round));
+check('初始 idle，results／lastTopic 為 null', A.snap.round.phase === 'idle' && A.snap.round.results === null && A.snap.round.lastTopic === null, j(A.snap.round));
 
 // ── choosing：三種失敗都留在 choosing ──
 {
@@ -115,22 +117,22 @@ check('初始 idle，results／lastArtist 為 null', A.snap.round.phase === 'idl
   await until(() => lastRound(A)?.phase === 'choosing');
   const ch = lastRound(A);
   check('choosing：setterId=A、endsAt − serverNow 在 (CHOOSING−SKEW, CHOOSING]', ch.setterId === ids.A && gapIs(ch.endsAt, ch.serverNow, CHOOSING_SECONDS * 1000), `gap=${ch.endsAt - ch.serverNow}`);
-  check('choosing：results／lastArtist 仍為 null（第一局）', ch.results === null && ch.lastArtist === null);
+  check('choosing：results／lastTopic 仍為 null（第一局）', ch.results === null && ch.lastTopic === null);
 
-  const r1 = await call(A.s, 'round:setArtist', { artist: '三首樂團' });
+  const r1 = await call(A.s, 'round:setSource', { source: 'artist', artist: '三首樂團', hot: true });
   check('不足 5 首 → ARTIST_NOT_FOUND（文案 §5.3）', isErr(r1, 'ARTIST_NOT_FOUND'), j(r1));
   check('ARTIST_NOT_FOUND 後仍在 choosing、setterId 不變', lastRound(A).phase === 'choosing' && lastRound(A).setterId === ids.A, j(lastRound(A)));
 
-  const r2 = await call(A.s, 'round:setArtist', { artist: '壞掉樂團' });
+  const r2 = await call(A.s, 'round:setSource', { source: 'artist', artist: '壞掉樂團', hot: true });
   check('iTunes 500 → SEARCH_FAILED（文案 §5.3）', isErr(r2, 'SEARCH_FAILED'), j(r2));
   check('SEARCH_FAILED 後仍在 choosing', lastRound(A).phase === 'choosing' && lastRound(A).setterId === ids.A);
 
-  const r3 = await call(A.s, 'round:setArtist', { artist: '客串歌手' });
+  const r3 = await call(A.s, 'round:setSource', { source: 'artist', artist: '客串歌手', hot: true });
   check('本人不足 5 首、最多次 artistName 不過半（5/12）→ 不退回、ARTIST_NOT_FOUND', isErr(r3, 'ARTIST_NOT_FOUND'), j(r3));
   check('不過半退回失敗後仍在 choosing', lastRound(A).phase === 'choosing');
 
-  const rb = await call(B.s, 'round:setArtist', { artist: '周杰倫' });
-  check('非出題者在 choosing setArtist → NOT_SETTER', isErr(rb, 'NOT_SETTER'), j(rb));
+  const rb = await call(B.s, 'round:setSource', { source: 'artist', artist: '周杰倫', hot: true });
+  check('非出題者在 choosing setSource → NOT_SETTER', isErr(rb, 'NOT_SETTER'), j(rb));
   const rv = await call(B.s, 'round:volunteer');
   check('choosing 時他人 volunteer → ROUND_BUSY', isErr(rv, 'ROUND_BUSY'), j(rv));
   check('失敗期間沒有多送 playing 的 round:update', A.rounds.every((x) => x.phase !== 'playing'));
@@ -138,12 +140,12 @@ check('初始 idle，results／lastArtist 為 null', A.snap.round.phase === 'idl
 
 // ── 別名退回成功：Jay Chou → 周杰倫 ──
 const sentAt = Date.now();
-const rs = await call(A.s, 'round:setArtist', { artist: 'Jay Chou' });
-check('Jay Chou → ok，ack.data.artistDisplay = 周杰倫（別名退回且 9/10 過半）', rs?.ok === true && rs.data?.artistDisplay === '周杰倫', j(rs));
+const rs = await call(A.s, 'round:setSource', { source: 'artist', artist: 'Jay Chou', hot: true });
+check('Jay Chou → ok，ack.data.topic = 周杰倫（別名退回且 9/10 過半）', rs?.ok === true && rs.data?.topic === '周杰倫', j(rs));
 await waitSong(A, 'playing', 1);
 const p1 = lastRound(A);
 const startedAt1 = p1.song?.startedAt;
-check('第 1 首 playing：gameNo 1、artist=輸入值 Jay Chou、artistDisplay=周杰倫', p1.gameNo === 1 && p1.artist === 'Jay Chou' && p1.artistDisplay === '周杰倫', j(p1));
+check('第 1 首 playing：gameNo 1、artist=輸入值 Jay Chou、topic=周杰倫', p1.gameNo === 1 && p1.artist === 'Jay Chou' && p1.topic === '周杰倫', j(p1));
 check('participantIds = 此刻在線的 A、B、C、E（依加入順序）', j(p1.participantIds) === j([ids.A, ids.B, ids.C, ids.E]), j(p1.participantIds));
 check('playing：startedAt − serverNow 在 (START_DELAY−SKEW, START_DELAY]', gapIs(p1.song.startedAt, p1.serverNow, START_DELAY_MS), `gap=${p1.song.startedAt - p1.serverNow}`);
 check('playing：endsAt = startedAt + durationMs（嚴格）、durationMs = 2000、round.endsAt = song.endsAt', p1.song.endsAt === p1.song.startedAt + p1.song.durationMs && p1.song.durationMs === TRACK_MS && p1.endsAt === p1.song.endsAt, j(p1.song));
@@ -211,7 +213,7 @@ check('中途加入者的 gameScore 0、isSetter false', me(A, D.id) === undefin
   const rv = lastRound(A);
   const revealAt = Date.now();
   check('reveal 在 endsAt 之後才來（容許早 5 ms）', revealAt >= startedAt1 + TRACK_MS - EARLY_MS && revealAt <= startedAt1 + TRACK_MS + LATE_MS, `late=${revealAt - (startedAt1 + TRACK_MS)}`);
-  // reveal.artist 是該首的 artistName（合唱曲會是「周杰倫 & 五月天 阿信」），不是 artistDisplay → 只驗含「周杰倫」（2026-10-12 驗收子代理首跑抽到合唱曲後放寬）
+  // reveal.artist 是該首的 artistName（合唱曲會是「周杰倫 & 五月天 阿信」），不是 topic → 只驗含「周杰倫」（2026-10-12 驗收子代理首跑抽到合唱曲後放寬）
   check('reveal：index 1、title 為裁判歌名、artist 含 周杰倫', rv.reveal?.index === 1 && rv.reveal?.title === title1 && typeof rv.reveal?.artist === 'string' && rv.reveal.artist.includes('周杰倫'), j(rv.reveal));
   check('reveal.scores 依猜對順序 [B, D, A] 各 100', j(rv.reveal?.scores) === j([ids.B, D.id, ids.A].map((playerId) => ({ playerId, score: SCORE_MAX }))), j(rv.reveal?.scores));
   check('reveal：endsAt − serverNow 在 (REVEAL−SKEW, REVEAL]', gapIs(rv.endsAt, rv.serverNow, REVEAL_SECONDS * 1000), `gap=${rv.endsAt - rv.serverNow}`);
@@ -223,6 +225,8 @@ check('中途加入者的 gameScore 0、isSetter false', me(A, D.id) === undefin
 await waitSong(A, 'playing', 2, 9000);
 const p2 = lastRound(A);
 const title2 = titleOf(titles, p2.song);
+// players:update 緊接在 round:update 之後送出，可能分在下一個封包才到 → 先等它（水手長 2026-10-16：三支協定測試並行時 1/83 失敗的計時競態，非產品問題）
+await until(() => lastPlayers(A).every((x) => x.hasGuessed === false), 1500);
 check('第 2 首開始：hasGuessed 全清、correctIds []', lastPlayers(A).every((x) => x.hasGuessed === false) && p2.song.correctIds.length === 0);
 check('第 2 首：reveal 清為 null', p2.reveal === null);
 {
@@ -280,8 +284,13 @@ await waitSong(A, 'playing', 5, 12000);
 
 // ── ended 排名 ──
 {
+  // 2026-10-16 Epic 18 回歸時抓到的計時競態（與本 Epic 改動無關）：ended 的 round:update 之後才是 players:update 與系統訊息，
+  // 可能分在不同封包到達；先等兩者都到再斷言（只加等待，斷言不變）
+  const endedRounds = A.rounds.length;
+  await until(() => A.chat.some((m) => m.kind === 'system' && m.text.includes('本局第一名')) && A.players.length > 0 && lastPlayers(A).every((x) => x.hasGuessed === false), 2000);
+  check('等待期間沒有多出 round:update（ended 無計時器）', A.rounds.length === endedRounds, `${endedRounds}→${A.rounds.length}`);
   const en = lastRound(A);
-  check('ended：song null、endsAt null、reveal 保留第 5 首、lastArtist=周杰倫（正式名，不是輸入值）', en.song === null && en.endsAt === null && en.reveal?.index === 5 && en.lastArtist === '周杰倫', j({ song: en.song, endsAt: en.endsAt, reveal: en.reveal?.index, lastArtist: en.lastArtist }));
+  check('ended：song null、endsAt null、reveal 保留第 5 首、lastTopic=周杰倫（正式名，不是輸入值）、lastSource=artist（2026-10-16 Epic 18）', en.song === null && en.endsAt === null && en.reveal?.index === 5 && en.lastTopic === '周杰倫' && en.lastSource === 'artist', j({ song: en.song, endsAt: en.endsAt, reveal: en.reveal?.index, lastTopic: en.lastTopic }));
   const rows = en.results ?? [];
   check('results 五筆：A、B、D 各 200；C、E 0；非參賽者 D 因有得分列入', rows.length === 5 && rows.find((x) => x.playerId === D.id)?.gameScore === 200, j(rows));
   const order = rows.map((x) => x.playerId);
@@ -294,19 +303,19 @@ await waitSong(A, 'playing', 5, 12000);
   check('ended：participantIds 仍為 A、B、C、E', j(en.participantIds) === j([ids.A, ids.B, ids.C, ids.E]));
 }
 
-// ── results／lastArtist 生命週期 ──
+// ── results／lastTopic 生命週期 ──
 {
   const r = await call(B.s, 'round:volunteer');
   check('ended 後 B volunteer → ok 進 choosing', r?.ok === true && (await until(() => lastRound(A)?.phase === 'choosing')), j(r));
-  check('choosing：results／lastArtist 保留；setterId 換成 B、isSetter 隨之', lastRound(A).results?.length === 5 && lastRound(A).lastArtist === '周杰倫' && lastRound(A).setterId === ids.B && me(A, ids.B)?.isSetter === true && me(A, ids.A)?.isSetter === false, j({ results: lastRound(A).results?.length, lastArtist: lastRound(A).lastArtist }));
+  check('choosing：results／lastTopic 保留；setterId 換成 B、isSetter 隨之', lastRound(A).results?.length === 5 && lastRound(A).lastTopic === '周杰倫' && lastRound(A).setterId === ids.B && me(A, ids.B)?.isSetter === true && me(A, ids.A)?.isSetter === false, j({ results: lastRound(A).results?.length, lastTopic: lastRound(A).lastTopic }));
   const rc = await call(B.s, 'round:cancel');
-  check('cancel → idle，results／lastArtist 仍保留', rc?.ok === true && (await until(() => lastRound(A)?.phase === 'idle')) && lastRound(A).results?.length === 5 && lastRound(A).lastArtist === '周杰倫', j(rc));
+  check('cancel → idle，results／lastTopic 仍保留', rc?.ok === true && (await until(() => lastRound(A)?.phase === 'idle')) && lastRound(A).results?.length === 5 && lastRound(A).lastTopic === '周杰倫', j(rc));
   const r2 = await call(B.s, 'round:volunteer');
-  const r3 = r2?.ok ? await call(B.s, 'round:setArtist', { artist: '孫燕姿' }) : null;
-  check('第 2 局 setArtist 孫燕姿 → ok', r3?.ok === true && r3.data?.artistDisplay === '孫燕姿', j(r3));
+  const r3 = r2?.ok ? await call(B.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true }) : null;
+  check('第 2 局 setSource 孫燕姿 → ok', r3?.ok === true && r3.data?.topic === '孫燕姿', j(r3));
   await waitSong(A, 'playing', 1);
   const g2 = lastRound(A);
-  check('第 2 局第 1 首：gameNo 2、results／lastArtist 清空、全員 gameScore 0、participantIds 含 D（此刻在線）', g2.gameNo === 2 && g2.results === null && g2.lastArtist === null && lastPlayers(A).every((x) => x.gameScore === 0) && g2.participantIds.includes(D.id) && g2.participantIds.length === 5, j({ gameNo: g2.gameNo, results: g2.results, lastArtist: g2.lastArtist, participantIds: g2.participantIds }));
+  check('第 2 局第 1 首：gameNo 2、results／lastTopic 清空、全員 gameScore 0、participantIds 含 D（此刻在線）', g2.gameNo === 2 && g2.results === null && g2.lastTopic === null && g2.lastSource === null && lastPlayers(A).every((x) => x.gameScore === 0) && g2.participantIds.includes(D.id) && g2.participantIds.length === 5, j({ gameNo: g2.gameNo, results: g2.results, lastTopic: g2.lastTopic, participantIds: g2.participantIds }));
   check('第 2 局：總分 score 累計保留（A 200）', me(A, ids.A)?.score === 200, j(me(A, ids.A)));
 }
 

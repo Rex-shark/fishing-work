@@ -38,7 +38,6 @@ import {
   shareControlTip,
   songProgress,
   stageLabel,
-  stageSongLine,
   stepEnabledIndex,
   stepMenuItem,
   tileName,
@@ -88,11 +87,6 @@ describe('舞台文字（design §2「舞台」欄）', () => {
   it('choosing（其他人）：「<出題者> 正在準備分享音訊…」', () => {
     expect(preparingText('rex')).toBe('rex 正在準備分享音訊…')
     expect(preparingText(null)).toBe('出題者 正在準備分享音訊…')
-  })
-
-  it('playing：「歌手：孫燕姿 · 第 2 / 5 首」；沒有歌手名時只有第幾首', () => {
-    expect(stageSongLine('孫燕姿', 2, 5)).toBe('歌手：孫燕姿 · 第 2 / 5 首')
-    expect(stageSongLine(null, 2, 5)).toBe('第 2 / 5 首')
   })
 
   it('波形 5～7 根直條，每根的參數不完全相同、延遲不為正（一開始就在動）', () => {
@@ -145,27 +139,27 @@ describe('「分享音訊」按鈕（design §2「控制列」欄）', () => {
 describe('對話框（design §1「出題」：對話框「分享音訊」、按鈕「取消／分享」、搜尋中「搜尋中…」）', () => {
   it('標題與按鈕文字', () => {
     expect(SHARE_AUDIO_LABEL).toBe('分享音訊')
-    expect(MEET_DIALOG_TITLE.artist).toBe('分享音訊')
-    expect(MEET_DIALOG_BUTTONS.artist).toEqual(['分享', '取消'])
-    expect(meetDialogHeading('artist', undefined)).toBe('分享音訊')
+    expect(MEET_DIALOG_TITLE.source).toBe('分享音訊')
+    expect(MEET_DIALOG_BUTTONS.source).toEqual(['分享', '取消'])
+    expect(meetDialogHeading('source', undefined)).toBe('分享音訊')
     expect(meetDialogHeading('help', '計分')).toBe('計分')
     expect(meetDialogHeading('help', undefined)).toBe('說明')
   })
 
   it('按鈕可見文字：出題為「分享」「取消」；說明照選項原文', () => {
-    expect(meetDialogButtonText('artist', 0, '搜尋並開始')).toBe('分享')
-    expect(meetDialogButtonText('artist', 1, '取消出題')).toBe('取消')
+    expect(meetDialogButtonText('source', 0, '搜尋並開始')).toBe('分享')
+    expect(meetDialogButtonText('source', 1, '取消出題')).toBe('取消')
     expect(meetDialogButtonText('help', 0, '返回')).toBe('返回')
   })
 
   it('搜尋中（pending）：主要按鈕顯示選項原文「搜尋中…」', () => {
-    expect(meetDialogButtonText('artist', 0, '搜尋中…', true)).toBe('搜尋中…')
-    expect(meetDialogButtonLabel('artist', 0, '搜尋中…', true)).toBe('搜尋中…')
+    expect(meetDialogButtonText('source', 0, '搜尋中…', true)).toBe('搜尋中…')
+    expect(meetDialogButtonLabel('source', 0, '搜尋中…', true)).toBe('搜尋中…')
   })
 
   it('無障礙名稱以可見文字開頭，再補動作', () => {
-    expect(meetDialogButtonLabel('artist', 0, '搜尋並開始')).toBe('分享：搜尋並開始')
-    expect(meetDialogButtonLabel('artist', 1, '取消出題')).toBe('取消：取消出題')
+    expect(meetDialogButtonLabel('source', 0, '搜尋並開始')).toBe('分享：搜尋並開始')
+    expect(meetDialogButtonLabel('source', 1, '取消出題')).toBe('取消：取消出題')
     expect(meetDialogButtonLabel('help', 1, '關閉')).toBe('關閉')
   })
 

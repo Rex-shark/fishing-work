@@ -24,8 +24,8 @@ const noop = () => {}
 // ─── 舞台 ───────────────────────────────────────────────────────
 
 describe('MeetStage（design §2「舞台」欄）', () => {
-  const playing = (playback: StagePlayback, artist: string | null = '孫燕姿') =>
-    renderToStaticMarkup(<MeetStage kind="playing" artist={artist} index={2} total={5} playback={playback} startLabel={START_PLAYBACK_LABEL} onStart={noop} />)
+  const playing = (playback: StagePlayback, heading = '孫燕姿（熱門） · 第 2 / 5 首', artistLine: string | null = null) =>
+    renderToStaticMarkup(<MeetStage kind="playing" heading={heading} artistLine={artistLine} playback={playback} startLabel={START_PLAYBACK_LABEL} onStart={noop} />)
 
   it('empty：「尚無人分享音訊」', () => {
     const html = renderToStaticMarkup(<MeetStage kind="empty" />)
@@ -40,16 +40,17 @@ describe('MeetStage（design §2「舞台」欄）', () => {
     expect(self).toBe('<div data-stage="preparing"></div>')
   })
 
-  it('playing：波形（5～7 根 --accent 直條）＋下方 12px --fg「歌手：孫燕姿 · 第 2 / 5 首」', () => {
+  it('playing：波形（5～7 根 --accent 直條）＋下方 12px --fg「孫燕姿（熱門） · 第 2 / 5 首」（第二行省略）', () => {
     const html = playing('playing')
     expect(html).toContain('data-stage="playing"')
     expect(html).toContain('data-playback="playing"')
     expect(html.match(/class="h-full w-\[8px\] rounded-full bg-accent wave-bar /g)).toHaveLength(WAVE_BARS.length)
-    expect(html).toMatch(/<p class="[^"]*text-\[12px\][^"]*text-fg">歌手：孫燕姿 · 第 2 \/ 5 首<\/p>/)
+    expect(html).toMatch(/<p class="[^"]*text-\[12px\][^"]*text-fg">孫燕姿（熱門） · 第 2 \/ 5 首<\/p>/)
+    expect(html.match(/<p /g)).toHaveLength(1)
     expect(html).toContain('data-wave="moving"')
   })
 
-  it('playing：沒有專輯封面、沒有歌名（只有歌手與第幾首）', () => {
+  it('playing：沒有專輯封面、沒有歌名（只有題庫標題、第幾首與本首歌手）', () => {
     const html = playing('playing')
     expect(html).not.toContain('<img')
     expect(html).not.toMatch(/歌名|《/)
@@ -65,16 +66,19 @@ describe('MeetStage（design §2「舞台」欄）', () => {
     expect(playing('playing')).not.toContain('wave-bar-paused')
   })
 
-  it('自動播放被擋（blocked）：波形位置改放按鈕「點一下開始播放」，歌手那行照樣顯示', () => {
-    const html = playing('blocked')
+  it('自動播放被擋（blocked）：波形位置改放按鈕「點一下開始播放」，下方兩行照樣顯示', () => {
+    const html = playing('blocked', '台灣熱門 · 第 2 / 5 首', '歌手：告五人')
     expect(html).toMatch(/<button type="button" class="[^"]*bg-active[^"]*text-fg-on-active[^"]*">點一下開始播放<\/button>/)
     expect(html).not.toContain('wave-bar')
-    expect(html).toContain('歌手：孫燕姿 · 第 2 / 5 首')
+    expect(html).toContain('>台灣熱門 · 第 2 / 5 首</p>')
+    expect(html).toContain('>歌手：告五人</p>')
     expect(playing('playing')).not.toContain('<button')
   })
 
-  it('沒有歌手名時只顯示第幾首', () => {
-    expect(playing('playing', null)).toContain('>第 2 / 5 首</p>')
+  it('第二行（本首歌手）：有給才顯示，同樣 12px --fg、可截斷；兩行文字原樣顯示（文字由功能元件決定）', () => {
+    const html = playing('playing', '西洋熱門 · 第 3 / 5 首', '歌手：Taylor Swift')
+    expect(html).toMatch(/<p class="max-w-full truncate text-\[12px\] leading-\[16px\] text-fg">西洋熱門 · 第 3 \/ 5 首<\/p><p class="max-w-full truncate text-\[12px\] leading-\[16px\] text-fg">歌手：Taylor Swift<\/p>/)
+    expect(playing('playing', '第 2 / 5 首')).toContain('>第 2 / 5 首</p>')
   })
 
   it('theme.css：wave-bar 是純 CSS 動畫（keyframes），prefers-reduced-motion 時不動；暫停用 animation-play-state', () => {

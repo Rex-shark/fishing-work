@@ -1,7 +1,18 @@
 // 回合狀態的呈現（純邏輯，可單元測試）：回合狀態列各階段的文字、歌名字數提示、「出題」顯示條件、報讀文字。
 // 文字逐列依 spec/song-guess/design.md §2「各階段對照」；規則依 overview.md 與 architecture §5。
 // 出題按鈕的叫法屬於偽裝（由殼層給，ShellViews.volunteer.label），這裡以參數 shareLabel 組句，不寫死。
-import { MIN_PLAYERS, type GameResultEntry, type PlayerPublic, type RoundPublic, type SongPhase } from '@fishing-work/shared/song-guess'
+import {
+  CHART_SIZE,
+  MIN_PLAYERS,
+  SONGS_PER_GAME,
+  SOURCE_TITLE,
+  type GameResultEntry,
+  type PlayerPublic,
+  type RoundPublic,
+  type SongPhase,
+  type SongSource,
+  type SongSourcePayload,
+} from '@fishing-work/shared/song-guess'
 import { formatClock } from './countdown'
 
 /** 歌名字數提示：`＿ ＿ ＿`（每字一個全形底線，以半形空白分隔）；0 或非法值回空字串 */
@@ -31,26 +42,115 @@ export function setterNameOf(round: Pick<RoundPublic, 'setterId'>, players: read
   return players.find((p) => p.id === round.setterId)?.nickname ?? null
 }
 
-/** 顯示用的歌手名：iTunes 的正式名稱（第 1 首開始才有），沒有時為出題者輸入的 */
-export function artistNameOf(round: Pick<RoundPublic, 'artist' | 'artistDisplay'>): string | null {
-  return round.artistDisplay ?? round.artist
+/** 題庫標題（第 1 首開始才有）：歌手模式＝iTunes 的歌手正式名、榜單＝「台灣熱門」／「西洋熱門」；沒有時退回出題者輸入的歌手名 */
+export function topicOf(round: Pick<RoundPublic, 'topic' | 'artist'>): string | null {
+  return round.topic ?? round.artist
 }
 
-// ─── 出題對話框的文字（features/round/ArtistDialog；design §1「出題」） ───────────────
+/** 熱門字樣：歌手模式且「只抽熱門歌」時加在題庫標題後面（design §1「播放中的試聽」） */
+export const HOT_SUFFIX = '（熱門）'
+
+/** 舞台上的題庫標題：「孫燕姿（熱門）」「周杰倫」「台灣熱門」；沒有標題為 null */
+export function topicLabel(round: Pick<RoundPublic, 'source' | 'topic' | 'artist' | 'artistHot'>): string | null {
+  const topic = topicOf(round)
+  if (topic === null || topic === '') return null
+  return round.source === 'artist' && round.artistHot ? `${topic}${HOT_SUFFIX}` : topic
+}
+
+/** 「第 2 / 5 首」 */
+export function songProgressText(index: number, total: number): string {
+  return `第 ${index} / ${total} 首`
+}
+
+/** 播放中舞台的兩行字（波形下方） */
+export interface PlayingStageLines {
+  /** 第一行：「孫燕姿（熱門） · 第 2 / 5 首」「台灣熱門 · 第 2 / 5 首」；沒有題庫標題時只有第幾首 */
+  heading: string
+  /** 第二行：「歌手：周杰倫」；歌手模式且本首歌手與題庫標題相同（同一位歌手）時為 null，不重複顯示 */
+  artistLine: string | null
+}
+
+/**
+ * 播放中舞台的文字（design §1「播放中的試聽」；plan/song-guess-sources.md 決策 10）：
+ *   第一行 {topic}{歌手模式且熱門時「（熱門）」} · 第 n / 5 首；
+ *   第二行 歌手：{song.artist}——榜單模式一律顯示（每首歌手不同）；歌手模式與 topic 相同則省略（合唱、別名時才會不同）
+ */
+export function playingStageLines(round: Pick<RoundPublic, 'source' | 'topic' | 'artist' | 'artistHot' | 'song' | 'songCount'>): PlayingStageLines {
+  const progress = songProgressText(round.song?.index ?? 1, round.songCount)
+  const label = topicLabel(round)
+  const heading = label === null ? progress : `${label} · ${progress}`
+  const songArtist = round.song?.artist ?? ''
+  const sameAsTopic = round.source === 'artist' && songArtist === topicOf(round)
+  return { heading, artistLine: songArtist === '' || sameAsTopic ? null : `歌手：${songArtist}` }
+}
+
+/** 排名表對應的題庫標題：lastTopic（與 results 同生命週期）；沒帶到時退回本局的題庫標題 */
+export function rankingTopicOf(round: Pick<RoundPublic, 'lastTopic' | 'topic' | 'artist'>): string | null {
+  return round.lastTopic ?? topicOf(round)
+}
+
+// ─── 出題對話框的文字（features/round/SourceDialog；design §1「出題（選題庫）」） ───────────────
+
+/** 題庫來源的選項（順序即畫面順序；榜單的文字用 shared 的 SOURCE_TITLE，與 topic 一致） */
+export const SOURCE_OPTIONS: readonly { id: SongSource; label: string }[] = [
+  { id: 'artist', label: '歌手' },
+  { id: 'tw-hot', label: SOURCE_TITLE['tw-hot'] },
+  { id: 'western-hot', label: SOURCE_TITLE['western-hot'] },
+]
+/** 每次開對話框的預設來源（不記住上次） */
+export const DEFAULT_SOURCE: SongSource = 'artist'
+/** 來源三選一（radiogroup）的無障礙名稱 */
+export const SOURCE_GROUP_LABEL = '題庫來源'
+
+/** 是不是榜單來源（沒有欄位，直接抽） */
+export function isChartSource(source: SongSource): source is Exclude<SongSource, 'artist'> {
+  return source !== 'artist'
+}
+
+/** 榜單模式的一行說明（design §1；數字由 shared 常數推導） */
+export const CHART_NOTES: Record<Exclude<SongSource, 'artist'>, string> = {
+  'tw-hot': `從今天的 Apple Music 台灣熱門 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`,
+  'western-hot': `從今天的 Apple Music 美國熱門 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`,
+}
 
 /** 歌手欄位的名稱與提示 */
 export const ARTIST_FIELD_LABEL = '歌手'
 export const ARTIST_PLACEHOLDER = '輸入歌手名稱（例如：孫燕姿）'
+/** 歌手模式的勾選（預設勾；features/round/hotPreference 記住上次） */
+export const HOT_TOGGLE_LABEL = '只抽熱門歌'
 /** 選項文字（殼層可改用自己的按鈕文字；無障礙名稱會帶上這些動作說明） */
 export const ARTIST_SUBMIT_LABEL = '搜尋並開始'
-/** 搜尋中（等 server 向題庫搜尋）：送出選項的文字；殼層須照樣顯示（DialogItem.pending） */
+export const CHART_SUBMIT_LABEL = '抽歌並開始'
+/** 送出中（等 server 取歌）：送出選項的文字；殼層須照樣顯示（DialogItem.pending） */
 export const ARTIST_SEARCHING_LABEL = '搜尋中…'
+export const CHART_LOADING_LABEL = '取得排行榜…'
 export const ARTIST_CANCEL_LABEL = '取消出題'
+
+/** 送出選項的文字：依來源與是否送出中 */
+export function submitLabel(source: SongSource, pending: boolean): string {
+  if (isChartSource(source)) return pending ? CHART_LOADING_LABEL : CHART_SUBMIT_LABEL
+  return pending ? ARTIST_SEARCHING_LABEL : ARTIST_SUBMIT_LABEL
+}
+
+/** round:setSource 的 payload（architecture §4 SongSourcePayload）；歌手名原樣送出（去頭尾空白與驗證以 server 為準，客戶端只預檢） */
+export function sourcePayload(source: SongSource, artist: string, hot: boolean): SongSourcePayload {
+  switch (source) {
+    case 'artist':
+      return { source: 'artist', artist, hot }
+    case 'tw-hot':
+      return { source: 'tw-hot' }
+    case 'western-hot':
+      return { source: 'western-hot' }
+  }
+}
 
 // ─── 回合狀態列 ──────────────────────────────────────────────────
 
 /** 出題者不在玩家清單時句子裡的稱呼 */
 export const SETTER_FALLBACK = '出題者'
+
+/** 本局第一名也是 0 分（沒有人猜對任何一首）時的 ended 文字：與 server 的聊天系統訊息同一句（architecture §7） */
+export const NOBODY_SCORED_TEXT = '本局結束：沒有人猜對'
 
 /** 本局第一名（results 依 rank 升冪；保險起見自己找 rank 最小的）；沒有結果為 null */
 export function winnerOf(results: readonly GameResultEntry[] | null): GameResultEntry | null {
@@ -91,7 +191,7 @@ function clockTail(remaining: number | null): string {
  *   choosing    自己：正在出題 · 00:52；其他人：等待 <出題者> 出題 · 00:52
  *   playing     歌名 ＿ ＿ ＿（3 字） · 00:21；自己已猜對：你猜對了 +87 · 00:21
  *   reveal      下一首 00:04；最後一首：本局結束
- *   ended       本局第一名：X（n 分）
+ *   ended       本局第一名：X（n 分）；第一名 0 分（沒有人猜對）：本局結束：沒有人猜對（與聊天系統訊息一致；Epic 18 決策 14）
  */
 export function roundCaption(input: CaptionInput): Caption {
   const { round, isSetter, setterName, hasGuessed, gain, remaining, shareLabel } = input
@@ -114,7 +214,9 @@ export function roundCaption(input: CaptionInput): Caption {
     }
     case 'ended': {
       const winner = winnerOf(round.results)
-      return { head: winner === null ? '本局結束' : `本局第一名：${winner.nickname}（${winner.gameScore} 分）`, tail: '' }
+      if (winner === null) return { head: '本局結束', tail: '' }
+      if (winner.gameScore <= 0) return { head: NOBODY_SCORED_TEXT, tail: '' }
+      return { head: `本局第一名：${winner.nickname}（${winner.gameScore} 分）`, tail: '' }
     }
   }
 }
@@ -143,7 +245,7 @@ export function roundAnnouncement(input: AnnouncementInput): string {
     case 'idle':
       return ''
     case 'choosing':
-      return isSetter ? '請輸入歌手名稱' : `${setterName ?? SETTER_FALLBACK} 正在出題`
+      return isSetter ? '請選擇題庫來源' : `${setterName ?? SETTER_FALLBACK} 正在出題`
     case 'playing': {
       if (round.song === null) return ''
       if (hasGuessed) return gain !== null ? `你猜對了，得 ${gain} 分` : '你猜對了'
@@ -156,7 +258,9 @@ export function roundAnnouncement(input: AnnouncementInput): string {
     }
     case 'ended': {
       const winner = winnerOf(round.results)
-      return winner === null ? '本局結束' : `本局結束，第一名：${winner.nickname}（${winner.gameScore} 分）`
+      if (winner === null) return '本局結束'
+      if (winner.gameScore <= 0) return NOBODY_SCORED_TEXT
+      return `本局結束，第一名：${winner.nickname}（${winner.gameScore} 分）`
     }
   }
 }

@@ -1,11 +1,18 @@
 #!/usr/bin/env node
-// 假的 iTunes Search API（猜歌協定測試與離線開發用）：spec/song-guess/architecture.md §6「假 iTunes」
+// 假的 iTunes Search API ＋ 排行榜 RSS（猜歌協定測試與離線開發用）：spec/song-guess/architecture.md §6「假 iTunes」
 //
-// 實作兩個端點，回應形狀與真 iTunes 相同（2026-10-12 以 https://itunes.apple.com/search 台灣區實測；只留本專案用到的欄位）：
+// 實作四個端點，回應形狀與真 iTunes 相同（2026-10-12 以 https://itunes.apple.com/search 台灣區實測；只留本專案用到的欄位；
+// 排行榜與 lookup 為 2026-10-16 Epic 18 加入，形狀照 rss.marketingtools.apple.com 與 itunes.apple.com/lookup 實測）：
 //   GET /search?term=<歌手>&attribute=artistTerm&country=TW&media=music&entity=song&limit=200
 //       → 200 text/javascript; charset=utf-8 { resultCount, results: [{ wrapperType, kind, trackId, artistName, collectionName,
 //         trackName, trackViewUrl, previewUrl, artworkUrl100, trackTimeMillis }] }
 //       只看 term（其餘參數照收不驗）；比對方式：NFKC、小寫、去空白後完全相同。查無 → 200 { resultCount: 0, results: [] }（真 iTunes 也是）。
+//   GET /api/v2/<國家>/music/most-played/<n>/songs.json（Epic 18；server 的 ITUNES_RSS_URL 指到本服務）
+//       → 200 application/json { feed: { title, id, author, links, copyright, country, icon, updated, results: [{ artistName, id（字串）,
+//         name, releaseDate, kind: 'songs', artistId, artistUrl, artworkUrl100, genres, url }] } }（同真 RSS：沒有 previewUrl、trackTimeMillis）
+//       國家只有 tw（12 首中英混合）與 us（12 首西洋）；其他國家 404。<n> 取前 n 首。
+//   GET /lookup?id=<逗號分隔>&country=TW（Epic 18）→ 200 text/javascript { resultCount, results }：依 id 回與 /search 同形的資料
+//       （榜單歌與所有歌手的歌都查得到；查不到的 id 略過，同真 lookup）；previewUrl 指回本服務。
 //   GET /preview/<trackId>.m4a → 200 audio/mp4（2 秒 440 Hz 單音，約 4 KB，支援瀏覽器 <audio> 直接播；CORS *）。協定測試不驗播放。
 //
 // 固定的歌手資料（MOCK_ARTISTS；歌名取自真 iTunes 回應，含副標、Live、Remastered、合唱曲，讓去重與答案判定有東西可驗）：
@@ -17,7 +24,11 @@
 //                  → 不退回、ARTIST_NOT_FOUND（不會出別人的歌）；term 直接打 大團甲 或 大團乙 回同一份，各有 5 首可出題
 //   慢慢來樂團     8 筆，但回應前固定多等 MOCK_ITUNES_SLOW_MS（預設 1500 ms）→ 測 SEARCH_BUSY、搜尋中取消
 //   壞掉樂團       一律回 500 → 測 SEARCH_FAILED（不必重啟成 MOCK_ITUNES_FAIL=1）
+//   熱門歌手       60 筆，歌名「熱門第n首」依 n 排列（trackId＝1700＋n，n 即 iTunes 回傳的名次）→ 測「只抽熱門歌」（Epic 18）：
+//                  hot 時只會抽到第 1～30 首，不勾可抽到第 31 首之後
 //   其他任何 term  查無（resultCount 0）
+// 排行榜（MOCK_CHARTS，Epic 18）：tw 12 首（中文、韓團、英文混合；trackId 2101～2112）、us 12 首西洋（trackId 2201～2212），
+//   依名次排列；歌名、歌手、歌手＋歌名皆不重複（去重後 12 首都可抽）。
 // trackTimeMillis 一律是 MOCK_ITUNES_TRACK_MS（預設 2000）：server 的 durationMs = min(trackTimeMillis, 上限)，協定測試靠這個縮時，
 // 不必替 server 加縮時用的環境變數。previewUrl 指回本服務的 /preview/<trackId>.m4a（網址不含歌名）。
 //
@@ -25,13 +36,18 @@
 //   node user/mock/itunes.mjs                                   # 預設 127.0.0.1:11535
 //   MOCK_ITUNES_PORT=11535 MOCK_ITUNES_DELAY_MS=300 node user/mock/itunes.mjs
 //   MOCK_ITUNES_FAIL=1 node user/mock/itunes.mjs                # /search 一律回 500
-//   ITUNES_URL=http://127.0.0.1:11535 HOST=127.0.0.1 PORT=3411 node server/dist/index.js   # server 指向假 iTunes
+//   MOCK_ITUNES_CHART_FAIL=1 node user/mock/itunes.mjs          # 排行榜 RSS 一律回 500（→ CHART_FAILED）
+//   MOCK_ITUNES_LOOKUP_FAIL=1 node user/mock/itunes.mjs         # /lookup 一律回 500（→ CHART_FAILED）
+//   ITUNES_URL=http://127.0.0.1:11535 ITUNES_RSS_URL=http://127.0.0.1:11535 HOST=127.0.0.1 PORT=3411 node server/dist/index.js
+//                                                               # server 的搜尋、lookup 與排行榜都指向假 iTunes
 // 環境變數：MOCK_ITUNES_PORT（預設 11535）、MOCK_ITUNES_HOST（預設 127.0.0.1）、
-//           MOCK_ITUNES_DELAY_MS（每次 /search 回應前的延遲，預設 0）、MOCK_ITUNES_FAIL=1（/search 一律回 500）、
+//           MOCK_ITUNES_DELAY_MS（每次 /search、排行榜、/lookup 回應前的延遲，預設 0）、MOCK_ITUNES_FAIL=1（/search 一律回 500）、
+//           MOCK_ITUNES_CHART_FAIL=1（排行榜 RSS 一律回 500）、MOCK_ITUNES_LOOKUP_FAIL=1（/lookup 一律回 500）、
 //           MOCK_ITUNES_TRACK_MS（每首的 trackTimeMillis，預設 2000；想在瀏覽器聽久一點可設 30000 以上，server 會夾在 30 秒）、
 //           MOCK_ITUNES_SLOW_MS（「慢慢來樂團」額外的延遲，預設 1500）、
 //           MOCK_ITUNES_PUBLIC_URL（previewUrl 的根網址；預設用請求的 Host 標頭。要讓區網另一台電腦的瀏覽器也播得到時設成 http://<本機 IP>:<埠>，並把 MOCK_ITUNES_HOST 設 0.0.0.0）。
-// 也可在程式內 import { startMockItunes } 啟動（測試用，回傳 { url, port, close, requests }）。
+// 也可在程式內 import { startMockItunes } 啟動（測試用，回傳 { url, port, close, requests }）；
+// 選項 chartFail、lookupFail 對應上面兩個環境變數。
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
@@ -136,7 +152,55 @@ export const MOCK_ARTISTS = [
       ['排隊', '慢慢來樂團', '不急'],
     ],
   },
+  {
+    name: '熱門歌手',
+    aliases: ['熱門歌手'],
+    idBase: 1700,
+    // 60 首、歌名帶名次：熱門第1首…熱門第60首（iTunes 回傳順序＝熱門度；Epic 18 的「只抽熱門歌」取前 30）
+    tracks: Array.from({ length: 60 }, (_, i) => [`熱門第${i + 1}首`, '熱門歌手', `熱門精選${Math.floor(i / 10) + 1}`]),
+  },
 ];
+
+/** 排行榜（Epic 18）：國家 → { idBase, title, tracks: [歌名, artistName, 專輯] }（依名次） */
+export const MOCK_CHARTS = {
+  tw: {
+    idBase: 2100,
+    title: 'Top Songs',
+    tracks: [
+      ['擱淺', '周杰倫', '七里香'],
+      ['NEON', 'A2O & A2O LITE', 'NEON - Single'],
+      ['我不難過', '孫燕姿', '未完成'],
+      ['Supernova', 'aespa', 'Armageddon - The 1st Album'],
+      ['要去什麼地方', '田馥甄', '要去什麼地方 - Single'],
+      ['APT.', 'ROSÉ & Bruno Mars', 'APT. - Single'],
+      ['太陽與地球', '盧廣仲', '太陽與地球 - Single'],
+      ['Whiplash', 'aespa', 'Whiplash - The 5th Mini Album'],
+      ['自由的你', '鄧紫棋', '自由的你 - Single'],
+      ['Drowning', 'WOODZ', 'OO-LI'],
+      ['海嶼你', '馬也_Crabbit & Cole先生', '海嶼你 - Single'],
+      ['Dynamite', 'BTS', 'Dynamite (DayTime Version) - EP'],
+    ],
+  },
+  us: {
+    idBase: 2200,
+    title: 'Top Songs',
+    tracks: [
+      ["Choosin' Texas", 'Ella Langley', "Choosin' Texas - Single"],
+      ['Quebec', 'Drake', 'ICEMAN'],
+      ['Patient Zero', 'Taylor Swift', 'The Life of a Showgirl'],
+      ['stupid song', 'Olivia Rodrigo', 'OR3'],
+      ['Wicked Games', 'The Weeknd', 'House Of Balloons'],
+      ['Been By Now', 'Morgan Wallen', 'Been By Now - Single'],
+      ['Espresso', 'Sabrina Carpenter', "Short n' Sweet"],
+      ['BIRDS OF A FEATHER', 'Billie Eilish', 'HIT ME HARD AND SOFT'],
+      ['Die With A Smile', 'Lady Gaga & Bruno Mars', 'Die With A Smile - Single'],
+      ['luther', 'Kendrick Lamar & SZA', 'GNX'],
+      ['A Bar Song (Tipsy)', 'Shaboozey', 'Where I\'ve Been, Isn\'t Where I\'m Going'],
+      ['Good Luck, Babe!', 'Chappell Roan', 'Good Luck, Babe! - Single'],
+    ],
+  },
+};
+
 /** 一律回 500 的歌手（term 正規化後相同） */
 export const MOCK_FAILING_ARTIST = '壞掉樂團';
 
@@ -193,30 +257,73 @@ function termKey(s) {
   return String(s).normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
 }
 
-/** 組出某位歌手的 results（iTunes 的欄位形狀） */
-function resultsFor(artist, publicUrl, trackMs) {
-  return artist.tracks.map(([trackName, artistName, collectionName], i) => {
-    const trackId = artist.idBase + i + 1;
-    return {
-      wrapperType: 'track',
-      kind: 'song',
-      trackId,
-      artistName,
-      collectionName,
-      trackName,
-      trackViewUrl: `${publicUrl}/track/${trackId}`,
-      previewUrl: `${publicUrl}/preview/${trackId}.m4a`,
-      artworkUrl100: `${publicUrl}/artwork/${trackId}/100x100bb.jpg`,
-      trackTimeMillis: trackMs,
-    };
-  });
+/** 一首歌的 search／lookup 結果（iTunes 的欄位形狀） */
+function trackResult(trackId, [trackName, artistName, collectionName], publicUrl, trackMs) {
+  return {
+    wrapperType: 'track',
+    kind: 'song',
+    trackId,
+    artistName,
+    collectionName,
+    trackName,
+    trackViewUrl: `${publicUrl}/track/${trackId}`,
+    previewUrl: `${publicUrl}/preview/${trackId}.m4a`,
+    artworkUrl100: `${publicUrl}/artwork/${trackId}/100x100bb.jpg`,
+    trackTimeMillis: trackMs,
+  };
 }
 
-function sendJson(res, status, obj) {
+/** 組出某位歌手的 results（iTunes 的欄位形狀） */
+function resultsFor(artist, publicUrl, trackMs) {
+  return artist.tracks.map((t, i) => trackResult(artist.idBase + i + 1, t, publicUrl, trackMs));
+}
+
+/** trackId → [歌名, artistName, 專輯]：所有歌手的歌與兩個榜單（lookup 用） */
+const TRACK_BY_ID = new Map();
+for (const group of [...MOCK_ARTISTS, ...Object.values(MOCK_CHARTS)]) {
+  group.tracks.forEach((t, i) => TRACK_BY_ID.set(group.idBase + i + 1, t));
+}
+
+/** 排行榜 RSS 的 feed（形狀同 rss.marketingtools.apple.com；沒有 previewUrl、trackTimeMillis） */
+function chartFeed(country, n, publicUrl) {
+  const chart = MOCK_CHARTS[country];
+  const results = chart.tracks.slice(0, n).map(([name, artistName], i) => {
+    const id = String(chart.idBase + i + 1);
+    return {
+      artistName,
+      id,
+      name,
+      releaseDate: '2026-10-16',
+      kind: 'songs',
+      artistId: String(9000 + chart.idBase + i + 1),
+      artistUrl: `${publicUrl}/artist/${id}`,
+      artworkUrl100: `${publicUrl}/artwork/${id}/100x100bb.jpg`,
+      genres: [{ genreId: '14', name: 'Pop', url: `${publicUrl}/genre/id14` }],
+      url: `${publicUrl}/track/${id}`,
+    };
+  });
+  return {
+    feed: {
+      title: chart.title,
+      id: `${publicUrl}/api/v2/${country}/music/most-played/${n}/songs.json`,
+      author: { name: 'Apple', url: 'https://www.apple.com/' },
+      links: [{ self: `${publicUrl}/api/v2/${country}/music/most-played/${n}/songs.json` }],
+      copyright: 'mock',
+      country,
+      icon: `${publicUrl}/favicon.ico`,
+      updated: '2026-10-16T00:00:00Z',
+      results,
+    },
+  };
+}
+
+const CHART_PATH = /^\/api\/v2\/([a-z]{2})\/music\/most-played\/(\d+)\/songs\.json$/;
+
+function sendJson(res, status, obj, contentType = 'text/javascript; charset=utf-8') {
   const text = JSON.stringify(obj);
-  // 真 iTunes 回 text/javascript 但內容是 JSON
+  // 真 iTunes 回 text/javascript 但內容是 JSON（RSS 回 application/json）
   res.writeHead(status, {
-    'Content-Type': 'text/javascript; charset=utf-8',
+    'Content-Type': contentType,
     'Content-Length': Buffer.byteLength(text),
     'Access-Control-Allow-Origin': '*',
   });
@@ -225,10 +332,11 @@ function sendJson(res, status, obj) {
 
 /**
  * 啟動假 iTunes。
- * @param {{ port?: number, host?: string, delayMs?: number, fail?: boolean, trackMs?: number, slowMs?: number, publicUrl?: string }} [options]
- *   delayMs：每次 /search 回應前的延遲；fail：/search 一律回 500；trackMs：每首的 trackTimeMillis；
+ * @param {{ port?: number, host?: string, delayMs?: number, fail?: boolean, chartFail?: boolean, lookupFail?: boolean, trackMs?: number, slowMs?: number, publicUrl?: string }} [options]
+ *   delayMs：每次 /search、排行榜、/lookup 回應前的延遲；fail：/search 一律回 500；chartFail：排行榜 RSS 一律回 500；
+ *   lookupFail：/lookup 一律回 500；trackMs：每首的 trackTimeMillis；
  *   slowMs：「慢慢來樂團」額外的延遲；publicUrl：previewUrl 的根網址（預設用請求的 Host 標頭）
- * @returns {Promise<{ url: string, port: number, close: () => Promise<void>, requests: Array<{ method: string, path: string, term?: string, query?: Record<string, string> }> }>}
+ * @returns {Promise<{ url: string, port: number, close: () => Promise<void>, requests: Array<{ method: string, path: string, term?: string, query?: Record<string, string>, country?: string, ids?: string[] }> }>}
  */
 export function startMockItunes(options = {}) {
   const host = options.host ?? '127.0.0.1';
@@ -263,6 +371,44 @@ export function startMockItunes(options = {}) {
       const wait = delayMs + (artist?.slow ? slowMs : 0);
       if (wait > 0) setTimeout(reply, wait);
       else reply();
+      return;
+    }
+    const publicUrlOf = () => (options.publicUrl ?? `http://${req.headers.host ?? `${host}:${server.address().port}`}`).replace(/\/+$/, '');
+    const later = (reply) => {
+      const run = () => {
+        if (!res.destroyed) reply();
+      };
+      if (delayMs > 0) setTimeout(run, delayMs);
+      else run();
+    };
+    const chartMatch = CHART_PATH.exec(path);
+    if (chartMatch) {
+      const [, country, n] = chartMatch;
+      requests.push({ method: req.method, path, country, query: Object.fromEntries(url.searchParams) });
+      const publicUrl = publicUrlOf();
+      later(() => {
+        if (options.chartFail) sendJson(res, 500, { errorMessage: 'mock RSS: internal error' }, 'application/json');
+        else if (!(country in MOCK_CHARTS)) sendJson(res, 404, { errors: [{ status: '404', title: 'Not Found' }] }, 'application/json');
+        else sendJson(res, 200, chartFeed(country, Number(n), publicUrl), 'application/json');
+      });
+      return;
+    }
+    if (path === '/lookup') {
+      const ids = (url.searchParams.get('id') ?? '').split(',').filter((x) => x !== '');
+      requests.push({ method: req.method, path, ids, query: Object.fromEntries(url.searchParams) });
+      const publicUrl = publicUrlOf();
+      later(() => {
+        if (options.lookupFail) {
+          sendJson(res, 500, { errorMessage: 'mock iTunes lookup: internal error' });
+          return;
+        }
+        const results = [];
+        for (const id of ids) {
+          const t = /^\d+$/.test(id) ? TRACK_BY_ID.get(Number(id)) : undefined;
+          if (t !== undefined) results.push(trackResult(Number(id), t, publicUrl, trackMs));
+        }
+        sendJson(res, 200, { resultCount: results.length, results });
+      });
       return;
     }
     if (/^\/preview\/\d+\.m4a$/.test(path)) {
@@ -303,16 +449,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const delayMs = num('MOCK_ITUNES_DELAY_MS', 0);
   const trackMs = num('MOCK_ITUNES_TRACK_MS', 2000);
   const fail = process.env.MOCK_ITUNES_FAIL === '1';
+  const chartFail = process.env.MOCK_ITUNES_CHART_FAIL === '1';
+  const lookupFail = process.env.MOCK_ITUNES_LOOKUP_FAIL === '1';
   const mock = await startMockItunes({
     port: num('MOCK_ITUNES_PORT', 11535),
     host: process.env.MOCK_ITUNES_HOST ?? '127.0.0.1',
     delayMs,
     fail,
+    chartFail,
+    lookupFail,
     trackMs,
     slowMs: num('MOCK_ITUNES_SLOW_MS', 1500),
     ...(process.env.MOCK_ITUNES_PUBLIC_URL ? { publicUrl: process.env.MOCK_ITUNES_PUBLIC_URL } : {}),
   });
-  console.log(`假 iTunes 已啟動：${mock.url}（search delay ${delayMs} ms、trackTimeMillis ${trackMs}${fail ? '、一律回 500' : ''}）`);
+  console.log(
+    `假 iTunes 已啟動：${mock.url}（delay ${delayMs} ms、trackTimeMillis ${trackMs}${fail ? '、/search 一律回 500' : ''}` +
+      `${chartFail ? '、排行榜一律回 500' : ''}${lookupFail ? '、/lookup 一律回 500' : ''}）`,
+  );
   const stop = () => mock.close().then(() => process.exit(0));
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

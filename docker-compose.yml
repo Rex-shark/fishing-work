@@ -28,11 +28,15 @@ services:
       # 試聽檔由每位玩家的瀏覽器直接向 Apple 取，不經容器：同事的電腦也要能連到 Apple 的試聽檔網域
       # iTunes Search API 根網址；協定測試才會指到假 iTunes（user/mock/itunes.mjs）
       ITUNES_URL: ${ITUNES_URL:-https://itunes.apple.com}
-      # 商店區域（決定搜得到哪些歌與歌名語言）
+      # 商店區域（決定搜得到哪些歌與歌名語言；排行榜的 lookup 也用它，榜單國家由來源決定）
       ITUNES_COUNTRY: ${ITUNES_COUNTRY:-TW}
-      # 搜尋逾時（毫秒）；逾時回「搜尋失敗」，出題者可重試
+      # 排行榜 RSS 根網址（Epic 18：台灣熱門＝tw 榜、西洋熱門＝us 榜）；容器也要能連到 rss.marketingtools.apple.com（https）
+      ITUNES_RSS_URL: ${ITUNES_RSS_URL:-https://rss.marketingtools.apple.com}
+      # 搜尋與排行榜 lookup 的逾時（毫秒）；逾時回「搜尋失敗」或「取得排行榜失敗」，出題者可重試
       ITUNES_TIMEOUT_MS: ${ITUNES_TIMEOUT_MS:-8000}
-      # 歌手搜尋結果快取（毫秒，預設 10 分鐘）；iTunes 每 IP 約 20 次／分鐘，同一歌手再出題不重打
+      # 排行榜 RSS 那一段的逾時（毫秒；Apple RSS 偶發 8～15 秒才回；lookup 仍用 ITUNES_TIMEOUT_MS；Epic 18）
+      ITUNES_RSS_TIMEOUT_MS: ${ITUNES_RSS_TIMEOUT_MS:-12000}
+      # 歌手搜尋結果與排行榜快取（毫秒，預設 10 分鐘）；iTunes 每 IP 約 20 次／分鐘，同一歌手、同一榜單再出題不重打
       ITUNES_CACHE_MS: ${ITUNES_CACHE_MS:-600000}
       # 單首最長播放毫秒（試聽約 30 秒；全長不到 30 秒的曲子才更短）
       SONG_PREVIEW_CAP_MS: ${SONG_PREVIEW_CAP_MS:-30000}

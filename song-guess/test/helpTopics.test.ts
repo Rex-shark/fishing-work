@@ -2,8 +2,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   ARTIST_MAX,
+  CHART_SIZE,
   CHAT_MAX,
   CHOOSING_SECONDS,
+  HOT_POOL,
   MIN_PLAYERS,
   PREVIEW_CAP_MS,
   RECONNECT_GRACE_SECONDS,
@@ -69,12 +71,14 @@ describe('數字一律由 shared 常數推導', () => {
     expect(t).toContain(`斷線 ${RECONNECT_GRACE_SECONDS} 秒內`)
   })
 
-  it('出題：人數、期限、歌手名長度、至少幾首', () => {
+  it('出題：人數、期限、歌手名長度、至少幾首、熱門前幾首、榜單前幾首', () => {
     const t = text('be-setter')
     expect(t).toContain(`至少 ${MIN_PLAYERS} 人在線`)
     expect(t).toContain(`${CHOOSING_SECONDS} 秒內`)
     expect(t).toContain(`1–${ARTIST_MAX} 字`)
     expect(t).toContain(`至少要有 ${SONGS_PER_GAME} 首有試聽的歌`)
+    expect(t).toContain(`最前面的 ${HOT_POOL} 首`)
+    expect(t).toContain(`前 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`)
   })
 
   it('猜歌：聊天字數上限；計分：最低與最高分', () => {
@@ -98,6 +102,36 @@ describe('數字一律由 shared 常數推導', () => {
     const withoutTemplates = body.replace(/\$\{[^}]+\}/g, '')
     const digits = [...withoutTemplates.matchAll(/\d+/g)].map((m) => m[0])
     expect(digits.every((d) => d === '1' || d === '0')).toBe(true)
+  })
+})
+
+describe('題庫來源（Epic 18；overview 規則 3、design §1「出題（選題庫）」）', () => {
+  it('怎麼玩：三種題庫（歌手、台灣熱門、西洋熱門）', () => {
+    const t = text('how-to-play')
+    expect(t).toContain('指定一位歌手')
+    expect(t).toContain('「台灣熱門」「西洋熱門」排行榜')
+  })
+
+  it('出題：三種來源、每次從「歌手」開始；熱門＝Apple 依熱門度排序的搜尋結果前段、預設勾、記在瀏覽器；取消勾選從全部抽', () => {
+    const t = text('be-setter')
+    expect(t).toContain('歌手、台灣熱門或西洋熱門')
+    expect(t).toContain('每次出題都從「歌手」開始')
+    expect(t).toContain('「只抽熱門歌」預設勾選')
+    expect(t).toContain('依 Apple 的熱門度排序')
+    expect(t).toContain('取消勾選就從搜得到的全部歌裡抽')
+    expect(t).toContain('記在你的瀏覽器')
+  })
+
+  it('出題：榜單＝當日 Apple Music 台灣榜／美國榜、不分語言；取不到可重試或換來源；榜單模式每首顯示該首歌手', () => {
+    const t = text('be-setter')
+    expect(t).toContain('今天的 Apple Music 熱門排行榜')
+    expect(t).toContain('台灣熱門是台灣榜、西洋熱門是美國榜')
+    expect(t).toContain('不分語言')
+    expect(t).toContain('再試一次或換一個來源')
+    expect(t).toContain('用排行榜時每首的歌手可能不同')
+    // 舊的說法（歌手名全程顯示、只決定歌手）不再出現
+    expect(t).not.toContain('歌手名稱會全程顯示')
+    expect(t).not.toContain('只決定歌手')
   })
 })
 

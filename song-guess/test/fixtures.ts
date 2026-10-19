@@ -12,6 +12,7 @@ export function song(over: Partial<SongPublic> = {}): SongPublic {
   return {
     index: 1,
     previewUrl: 'https://audio.example/preview-1.m4a',
+    artist: '孫燕姿',
     startedAt,
     durationMs,
     endsAt: startedAt + durationMs,
@@ -43,22 +44,41 @@ export function round(over: Partial<RoundPublic> = {}): RoundPublic {
     gameNo: 1,
     phase: 'idle',
     setterId: null,
+    source: null,
     artist: null,
-    artistDisplay: null,
+    artistHot: false,
+    topic: null,
     songCount: 5,
     endsAt: null,
     song: null,
     reveal: null,
     results: null,
-    lastArtist: null,
+    lastTopic: null,
+    lastSource: null,
     serverNow: 0,
     participantIds: [],
     ...over,
   }
 }
 
-/** 第 index 首播放中的局 */
+/** 第 index 首播放中的局（預設：歌手模式「孫燕姿」、不限熱門；本首歌手同題庫標題） */
 export function playingRound(over: Partial<RoundPublic> = {}, songOver: Partial<SongPublic> = {}): RoundPublic {
   const s = song(songOver)
-  return round({ phase: 'playing', setterId: 'p1', artist: '孫燕姿', artistDisplay: '孫燕姿', song: s, endsAt: s.endsAt, participantIds: ['p1', 'p2'], ...over })
+  return round({
+    phase: 'playing',
+    setterId: 'p1',
+    source: 'artist',
+    artist: '孫燕姿',
+    artistHot: false,
+    topic: '孫燕姿',
+    song: s,
+    endsAt: s.endsAt,
+    participantIds: ['p1', 'p2'],
+    ...over,
+  })
+}
+
+/** 榜單模式（台灣熱門／西洋熱門）播放中的局：artist＝null、artistHot＝false、topic＝SOURCE_TITLE */
+export function chartRound(source: 'tw-hot' | 'western-hot', topic: string, over: Partial<RoundPublic> = {}, songOver: Partial<SongPublic> = {}): RoundPublic {
+  return playingRound({ source, artist: null, artistHot: false, topic, ...over }, songOver)
 }

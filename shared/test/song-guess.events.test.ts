@@ -17,6 +17,8 @@ import type {
   SongPhase,
   SongPublic,
   SongReveal,
+  SongSource,
+  SongSourcePayload,
 } from '../src/song-guess/events';
 
 const SPEC = new URL('../../spec/song-guess/architecture.md', import.meta.url);
@@ -60,6 +62,7 @@ describe('song-guess 契約（型別層）', () => {
   const song: SongPublic = {
     index: 1,
     previewUrl: 'https://audio-ssl.itunes.apple.com/preview/1.m4a',
+    artist: '韋禮安',
     startedAt: 1_000,
     endsAt: 31_000,
     durationMs: 30_000,
@@ -80,14 +83,17 @@ describe('song-guess 契約（型別層）', () => {
     gameNo: 0,
     phase: 'idle',
     setterId: null,
+    source: null,
     artist: null,
-    artistDisplay: null,
+    artistHot: false,
+    topic: null,
     songCount: 5,
     endsAt: null,
     song: null,
     reveal: null,
     results: null,
-    lastArtist: null,
+    lastTopic: null,
+    lastSource: null,
     serverNow: 1_000,
     participantIds: [],
   };
@@ -112,17 +118,38 @@ describe('song-guess 契約（型別層）', () => {
     expect(bad).toBe('image');
   });
 
-  it('ErrorCode 含猜歌專屬的五個碼，不含繪圖比賽的 TOPIC_INVALID', () => {
+  it('ErrorCode 含猜歌專屬的七個碼（Epic 18 加 SOURCE_INVALID、CHART_FAILED），不含繪圖比賽的 TOPIC_INVALID', () => {
     const codes: ErrorCode[] = [
       'NICKNAME_INVALID', 'NICKNAME_TAKEN', 'NOT_IN_ROOM', 'ROOM_FULL',
       'ROUND_BUSY', 'NOT_SETTER', 'NOT_ENOUGH_PLAYERS', 'ARTIST_INVALID',
-      'ARTIST_NOT_FOUND', 'SEARCH_FAILED', 'SEARCH_BUSY',
+      'ARTIST_NOT_FOUND', 'SEARCH_FAILED', 'SEARCH_BUSY', 'SOURCE_INVALID', 'CHART_FAILED',
       'MESSAGE_INVALID', 'SPOILER_BLOCKED', 'RATE_LIMITED',
     ];
-    expect(new Set(codes).size).toBe(14);
+    expect(new Set(codes).size).toBe(16);
     // @ts-expect-error 題目是繪圖比賽的概念
     const bad: ErrorCode = 'TOPIC_INVALID';
     expect(bad).toBe('TOPIC_INVALID');
+  });
+
+  it('SongSource 只有 artist／tw-hot／western-hot；SongSourcePayload 依 source 區分欄位（Epic 18）', () => {
+    const sources: SongSource[] = ['artist', 'tw-hot', 'western-hot'];
+    expect(sources).toHaveLength(3);
+    // @ts-expect-error 英國榜不在本 Epic
+    const bad: SongSource = 'uk-hot';
+    expect(bad).toBe('uk-hot');
+
+    const payloads: SongSourcePayload[] = [
+      { source: 'artist', artist: '周杰倫', hot: true },
+      { source: 'tw-hot' },
+      { source: 'western-hot' },
+    ];
+    expect(payloads.map((p) => p.source)).toEqual(sources);
+    // @ts-expect-error 歌手模式的 hot 為必填
+    const noHot: SongSourcePayload = { source: 'artist', artist: '周杰倫' };
+    expect(noHot.source).toBe('artist');
+    // @ts-expect-error 榜單模式不帶歌手名
+    const chartWithArtist: SongSourcePayload = { source: 'tw-hot', artist: '周杰倫' };
+    expect(chartWithArtist.source).toBe('tw-hot');
   });
 
   it('PlayerPublic 帶 gameScore、isSetter、hasGuessed（皆必填）', () => {
@@ -142,9 +169,9 @@ describe('song-guess 契約（型別層）', () => {
     expect(missing.id).toBe('p1');
   });
 
-  it('SongPublic 不帶答案欄位；SongReveal 的 album／artworkUrl／itunesUrl 可為 null', () => {
+  it('SongPublic 帶本首歌手（Epic 18）但不帶答案欄位；SongReveal 的 album／artworkUrl／itunesUrl 可為 null', () => {
     expect(Object.keys(song).sort()).toEqual(
-      ['index', 'previewUrl', 'startedAt', 'endsAt', 'durationMs', 'titleLength', 'correctIds'].sort(),
+      ['index', 'previewUrl', 'artist', 'startedAt', 'endsAt', 'durationMs', 'titleLength', 'correctIds'].sort(),
     );
     // @ts-expect-error 播放中的一首不得帶歌名
     const leaked: SongPublic = { ...song, title: '如果可以' };
@@ -165,8 +192,10 @@ describe('song-guess 契約（型別層）', () => {
       gameNo: 1,
       phase: 'playing',
       setterId: 'p0',
+      source: 'artist',
       artist: '韋禮安',
-      artistDisplay: '韋禮安',
+      artistHot: true,
+      topic: '韋禮安',
       endsAt: song.endsAt,
       song,
       participantIds: ['p0', 'p1'],
@@ -178,12 +207,23 @@ describe('song-guess 契約（型別層）', () => {
       endsAt: null,
       song: null,
       results: [result],
-      lastArtist: '韋禮安',
+      lastTopic: '韋禮安',
+      lastSource: 'artist',
+    };
+    const chart: RoundPublic = {
+      ...playing,
+      source: 'tw-hot',
+      artist: null,
+      artistHot: false,
+      topic: '台灣熱門',
+      song: { ...song, artist: 'BLACKPINK' },
     };
     expect(idle.song).toBeNull();
     expect(playing.song?.correctIds).toEqual(['p1']);
     expect(revealing.reveal?.scores).toEqual([{ playerId: 'p1', score: 80 }]);
     expect(ended.results).toEqual([result]);
+    expect(chart.song?.artist).toBe('BLACKPINK');
+    expect(chart.artist).toBeNull();
     // @ts-expect-error serverNow、participantIds 等為必填
     const missing: RoundPublic = { gameNo: 0, phase: 'idle' };
     expect(missing.phase).toBe('idle');
@@ -197,22 +237,25 @@ describe('song-guess 契約（型別層）', () => {
     expect(!failed.ok && failed.error).toBe('ROOM_FULL');
   });
 
-  it("ClientToServerEvents：'round:setArtist' 的 ack 帶 artistDisplay；事件名共五個", () => {
-    const acks: Ack<{ artistDisplay: string }>[] = [];
-    const setArtist: ClientToServerEvents['round:setArtist'] = (payload, ack) => {
-      ack({ ok: true, data: { artistDisplay: payload.artist } });
-      ack({ ok: false, error: 'ARTIST_NOT_FOUND', message: '找不到這位歌手的歌' });
+  it("ClientToServerEvents：'round:setSource' 的 ack 帶 topic；事件名共五個（Epic 18 由 setArtist 改名）", () => {
+    const acks: Ack<{ topic: string }>[] = [];
+    const setSource: ClientToServerEvents['round:setSource'] = (payload, ack) => {
+      ack({ ok: true, data: { topic: payload.source === 'artist' ? payload.artist : '台灣熱門' } });
+      ack({ ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' });
     };
-    setArtist({ artist: '孫燕姿' }, (r) => acks.push(r));
+    setSource({ source: 'artist', artist: '孫燕姿', hot: true }, (r) => acks.push(r));
+    setSource({ source: 'tw-hot' }, (r) => acks.push(r));
     expect(acks).toEqual([
-      { ok: true, data: { artistDisplay: '孫燕姿' } },
-      { ok: false, error: 'ARTIST_NOT_FOUND', message: '找不到這位歌手的歌' },
+      { ok: true, data: { topic: '孫燕姿' } },
+      { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' },
+      { ok: true, data: { topic: '台灣熱門' } },
+      { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' },
     ]);
 
     const names: Record<keyof ClientToServerEvents, true> = {
       'player:join': true,
       'round:volunteer': true,
-      'round:setArtist': true,
+      'round:setSource': true,
       'round:cancel': true,
       'chat:send': true,
     };

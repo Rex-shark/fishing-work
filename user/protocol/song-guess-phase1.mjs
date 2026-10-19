@@ -1,6 +1,6 @@
 // 猜歌協定符合性測試（Epic 16 Phase 1 範圍）：只依 spec/song-guess/architecture.md §4／§5 打 Socket，不看實作、不 import server 內部程式。
 // 涵蓋 §8 清單：加入／出題／搜尋失敗與不足 5 首／第 1 首 playing／猜對計分／防洩題／揭曉／5 首走完 ended 排名／中途加入快照／重連；
-// 另含階段不符的錯誤碼（§5）、搜尋中 SEARCH_BUSY 與取消後結果丟棄（Q9）、英文名退回（Q2）與退回須過半、results／lastArtist（正式名）生命週期（§4）、
+// 另含階段不符的錯誤碼（§5）、搜尋中 SEARCH_BUSY 與取消後結果丟棄（Q9）、英文名退回（Q2）與退回須過半、results／lastTopic（正式名）生命週期（§4）、
 // titleLength 不含空白標點（§4 答案判定）、ack 文案（§5.3）。
 //
 // 題庫用假 iTunes（user/mock/itunes.mjs，§6）：trackTimeMillis 是 2000 ms 的短值，server 的 durationMs = min(trackTimeMillis, 上限) 因此也是 2 秒，
@@ -18,6 +18,9 @@
 // 未涵蓋（要等真實的 60 秒／15 秒，另由 Vitest 假時鐘涵蓋）：CHOOSING_SECONDS 逾時回 idle、寬限期滿離開（出題者／參賽者）、ROOM_FULL、快取時效。
 //
 // 水手長（Bosun）派出的子代理 2026-10-12 依 spec 撰寫。
+// 2026-10-16 Epic 18 改寫：事件 round:setArtist → round:setSource（payload { source: 'artist', artist, hot: true }，舊名不保留）、
+//   ack { artistDisplay } → { topic }、RoundPublic 的 artistDisplay → topic、lastArtist → lastTopic（另驗 source／artistHot／lastSource／song.artist）。
+//   題庫來源（台灣熱門、西洋熱門、只抽熱門歌）另見 song-guess-sources.mjs。
 import { io } from 'socket.io-client';
 
 const PORT = process.env.TEST_PORT ?? '3411';
@@ -150,7 +153,8 @@ try {
   const A = await joinAs('  Alice '); sockets.push(A.s);
   if (A.snap.players.length !== 1) throw new Error('需要全新的 server 程序（房間已有其他玩家）');
   const r0 = A.snap.round;
-  check('全新 server：gameNo 0、idle、setterId／artist／artistDisplay／endsAt／song／reveal／results／lastArtist 皆 null', r0.gameNo === 0 && r0.phase === 'idle' && [r0.setterId, r0.artist, r0.artistDisplay, r0.endsAt, r0.song, r0.reveal, r0.results, r0.lastArtist].every((v) => v === null), j(r0));
+  // 2026-10-16 Epic 18：artistDisplay → topic、lastArtist → lastTopic，另驗 source／lastSource null、artistHot false
+  check('全新 server：gameNo 0、idle、setterId／source／artist／topic／endsAt／song／reveal／results／lastTopic／lastSource 皆 null、artistHot false', r0.gameNo === 0 && r0.phase === 'idle' && [r0.setterId, r0.source, r0.artist, r0.topic, r0.endsAt, r0.song, r0.reveal, r0.results, r0.lastTopic, r0.lastSource].every((v) => v === null) && r0.artistHot === false, j(r0));
   check('RoundPublic：songCount = 5、participantIds []、serverNow 為 server 時鐘（與本機差 < 2 秒）', r0.songCount === SONGS_PER_GAME && Array.isArray(r0.participantIds) && r0.participantIds.length === 0 && near(r0.serverNow, Date.now(), 2000), j(r0));
   const meA = A.snap.players.find((p) => p.id === A.id);
   check('join ok：token 為字串、player id 不是 socket.id、暱稱去頭尾空白', typeof A.token === 'string' && A.id !== A.s.id && meA?.nickname === 'Alice', j(meA));
@@ -164,7 +168,7 @@ try {
   }
   const rDup = await call(X, 'player:join', { nickname: 'ＡＬＩＣＥ' });
   check('暱稱重複（全形＋大小寫）→ NICKNAME_TAKEN（文案）', isErr(rDup, 'NICKNAME_TAKEN'), j(rDup));
-  for (const [ev, payload] of [['round:volunteer'], ['round:setArtist', { artist: '孫燕姿' }], ['round:cancel'], ['chat:send', { text: 'hi' }]]) {
+  for (const [ev, payload] of [['round:volunteer'], ['round:setSource', { source: 'artist', artist: '孫燕姿', hot: true }], ['round:cancel'], ['chat:send', { text: 'hi' }]]) {
     const r = payload === undefined ? await call(X, ev) : await call(X, ev, payload);
     check(`未加入就 ${ev} → NOT_IN_ROOM（文案）`, isErr(r, 'NOT_IN_ROOM'), j(r));
   }
@@ -175,47 +179,47 @@ try {
   const B = await joinAs('Bob'); sockets.push(B.s);
   await until(() => lastPlayers(A)?.length === 2);
   check('B 加入後 A 收到 players:update（2 人）與「加入」訊息', lastPlayers(A)?.length === 2 && A.chat.some((m) => m.kind === 'system' && m.text.includes('Bob')));
-  const ri1 = await call(A.s, 'round:setArtist', { artist: '孫燕姿' });
+  const ri1 = await call(A.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true });
   const ri2 = await call(A.s, 'round:cancel');
-  check('idle 時 setArtist／cancel → NOT_SETTER（文案）', isErr(ri1, 'NOT_SETTER') && isErr(ri2, 'NOT_SETTER'), j([ri1, ri2]));
+  check('idle 時 setSource／cancel → NOT_SETTER（文案）', isErr(ri1, 'NOT_SETTER') && isErr(ri2, 'NOT_SETTER'), j([ri1, ri2]));
 
   const t0 = Date.now();
   const rv2 = await call(A.s, 'round:volunteer');
   check('volunteer ok', rv2?.ok === true, j(rv2));
   await waitPhase(B, 'choosing');
   const ch = lastRound(B);
-  check('choosing：setterId=A、artist／artistDisplay null、gameNo 仍 0、endsAt≈now+CHOOSING_SECONDS、song／reveal null', ch?.phase === 'choosing' && ch.setterId === A.id && ch.artist === null && ch.artistDisplay === null && ch.gameNo === 0 && near(ch.endsAt, t0 + CHOOSING_SECONDS * 1000, 2000) && ch.song === null && ch.reveal === null, j(ch));
+  check('choosing：setterId=A、artist／topic null、gameNo 仍 0、endsAt≈now+CHOOSING_SECONDS、song／reveal null', ch?.phase === 'choosing' && ch.setterId === A.id && ch.artist === null && ch.topic === null && ch.gameNo === 0 && near(ch.endsAt, t0 + CHOOSING_SECONDS * 1000, 2000) && ch.song === null && ch.reveal === null, j(ch));
   await until(() => me(B, A.id)?.isSetter === true);
   check('players:update 帶 isSetter=true（只有出題者）', me(B, A.id)?.isSetter === true && me(B, B.id)?.isSetter === false, j(lastPlayers(B)));
   const rv3 = await call(B.s, 'round:volunteer');
   const rv4 = await call(A.s, 'round:volunteer');
   check('choosing 時別人或出題者自己再 volunteer → ROUND_BUSY（文案）【spec §5 未明列 choosing 情境，照繪圖比賽】', isErr(rv3, 'ROUND_BUSY') && isErr(rv4, 'ROUND_BUSY'), j([rv3, rv4]));
-  const rn1 = await call(B.s, 'round:setArtist', { artist: '孫燕姿' });
+  const rn1 = await call(B.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true });
   const rn2 = await call(B.s, 'round:cancel');
-  check('choosing 時非出題者 setArtist／cancel → NOT_SETTER（文案）', isErr(rn1, 'NOT_SETTER') && isErr(rn2, 'NOT_SETTER'), j([rn1, rn2]));
+  check('choosing 時非出題者 setSource／cancel → NOT_SETTER（文案）', isErr(rn1, 'NOT_SETTER') && isErr(rn2, 'NOT_SETTER'), j([rn1, rn2]));
   for (const [artist, name] of [['   ', '全空白'], ['', '空字串'], ['x'.repeat(ARTIST_MAX + 1), `${ARTIST_MAX + 1} 字`], ['孫\t燕姿', '控制字元'], [42, '非字串']]) {
-    const r = await call(A.s, 'round:setArtist', { artist });
+    const r = await call(A.s, 'round:setSource', { source: 'artist', artist, hot: true });
     check(`歌手名${name} → ARTIST_INVALID（文案）`, isErr(r, 'ARTIST_INVALID'), j(r));
   }
   check('歌手名不合法後仍在 choosing', lastRound(B)?.phase === 'choosing', j(lastRound(B)));
 
   // ════════ 3. 搜尋失敗、不足 5 首、查無：仍在 choosing、可重試 ════════
-  const rf = await call(A.s, 'round:setArtist', { artist: '壞掉樂團' });
+  const rf = await call(A.s, 'round:setSource', { source: 'artist', artist: '壞掉樂團', hot: true });
   check('iTunes 回 500 → SEARCH_FAILED（文案）', isErr(rf, 'SEARCH_FAILED'), j(rf));
-  const r3 = await call(A.s, 'round:setArtist', { artist: '三首樂團' });
+  const r3 = await call(A.s, 'round:setSource', { source: 'artist', artist: '三首樂團', hot: true });
   check('只有 3 首 → ARTIST_NOT_FOUND（文案）', isErr(r3, 'ARTIST_NOT_FOUND'), j(r3));
-  const r404 = await call(A.s, 'round:setArtist', { artist: '查無此人樂團' });
+  const r404 = await call(A.s, 'round:setSource', { source: 'artist', artist: '查無此人樂團', hot: true });
   check('查無歌手 → ARTIST_NOT_FOUND（文案）', isErr(r404, 'ARTIST_NOT_FOUND'), j(r404));
-  const rSplit = await call(A.s, 'round:setArtist', { artist: '客串歌手' });
+  const rSplit = await call(A.s, 'round:setSource', { source: 'artist', artist: '客串歌手', hot: true });
   check('退回須過半：本人 2 首、結果被兩個團瓜分（最多 5／12）→ 不退回、ARTIST_NOT_FOUND（文案）', isErr(rSplit, 'ARTIST_NOT_FOUND'), j(rSplit));
   await sleep(100);
   const still = lastRound(B);
   check('四次失敗後仍在 choosing：setterId、endsAt 不變、gameNo 0、artist null', still?.phase === 'choosing' && still.setterId === A.id && still.endsAt === ch.endsAt && still.gameNo === 0 && still.artist === null, j(still));
 
   // ════════ 4. 搜尋進行中：SEARCH_BUSY；取消 → idle，搜尋回來 ack NOT_SETTER、不開局 ════════
-  const slowAck = call(A.s, 'round:setArtist', { artist: '慢慢來樂團' });   // 假 iTunes 這位會慢 1.5 秒
+  const slowAck = call(A.s, 'round:setSource', { source: 'artist', artist: '慢慢來樂團', hot: true });   // 假 iTunes 這位會慢 1.5 秒
   await sleep(150);
-  const rBusy = await call(A.s, 'round:setArtist', { artist: '孫燕姿' });
+  const rBusy = await call(A.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true });
   check('搜尋中再送 → SEARCH_BUSY（文案）', isErr(rBusy, 'SEARCH_BUSY'), j(rBusy));
   check('搜尋中 round 仍是 choosing、artist 尚未公開', lastRound(B)?.phase === 'choosing' && lastRound(B).artist === null, j(lastRound(B)));
   const sysBeforeCancel = B.chat.filter((m) => m.kind === 'system').length;
@@ -234,14 +238,15 @@ try {
   const sysBeforeSet = B.chat.filter((m) => m.kind === 'system').length;
   const seqA = [];
   A.s.on('round:update', (r) => { if (r.phase === 'playing') seqA.push('playing'); });
-  const rSet = await new Promise((res) => A.s.emit('round:setArtist', { artist: ' Jay Chou ' }, (r) => { seqA.push('ack'); res(r); }));
-  check('setArtist 成功 ack { artistDisplay }：Jay Chou → 周杰倫（最多次 artistName 退回）', rSet?.ok === true && rSet.data?.artistDisplay === '周杰倫', j(rSet));
+  // 2026-10-16 Epic 18：setSource 歌手模式，ack { topic }
+  const rSet = await new Promise((res) => A.s.emit('round:setSource', { source: 'artist', artist: ' Jay Chou ', hot: true }, (r) => { seqA.push('ack'); res(r); }));
+  check('setSource 成功 ack { topic }：Jay Chou → 周杰倫（最多次 artistName 退回）', rSet?.ok === true && rSet.data?.topic === '周杰倫', j(rSet));
   await waitSong(B, 'playing', 1);
   await until(() => seqA.includes('playing'));
   check('先 ack 再廣播：出題者先收到 ack 才收到第 1 首的 round:update', seqA[0] === 'ack' && seqA[1] === 'playing', j(seqA));
   const p1 = lastRound(B);
-  check('playing：gameNo 1、setterId=A、artist 為輸入（去頭尾空白）、artistDisplay 為正式名稱、songCount 5', p1?.gameNo === 1 && p1.setterId === A.id && p1.artist === 'Jay Chou' && p1.artistDisplay === '周杰倫' && p1.songCount === SONGS_PER_GAME, j(p1));
-  check('playing：participantIds＝此刻在線者（A、B，依加入順序）、reveal／results／lastArtist null', j(p1?.participantIds) === j([A.id, B.id]) && p1.reveal === null && p1.results === null && p1.lastArtist === null, j(p1));
+  check('playing：gameNo 1、setterId=A、source artist、artistHot true、artist 為輸入（去頭尾空白）、topic 為正式名稱、songCount 5、song.artist 為本首歌手', p1?.gameNo === 1 && p1.setterId === A.id && p1.source === 'artist' && p1.artistHot === true && p1.artist === 'Jay Chou' && p1.topic === '周杰倫' && p1.songCount === SONGS_PER_GAME && typeof p1.song?.artist === 'string' && p1.song.artist.includes('周杰倫'), j(p1));
+  check('playing：participantIds＝此刻在線者（A、B，依加入順序）、reveal／results／lastTopic null', j(p1?.participantIds) === j([A.id, B.id]) && p1.reveal === null && p1.results === null && p1.lastTopic === null, j(p1));
   const s1 = p1.song;
   check('song：index 1、correctIds []、durationMs = min(trackTimeMillis, 上限) = 2000', s1?.index === 1 && Array.isArray(s1.correctIds) && s1.correctIds.length === 0 && s1.durationMs === TRACK_MS, j(s1));
   check('song：startedAt − serverNow = START_DELAY_MS（容許取樣落差）、endsAt = startedAt + durationMs、round.endsAt = song.endsAt', aheadBy(s1.startedAt, p1.serverNow, START_DELAY_MS) && s1.endsAt === s1.startedAt + s1.durationMs && p1.endsAt === s1.endsAt, j(p1));
@@ -250,8 +255,8 @@ try {
   check('答案不外洩：playing 的 round:update 與 players:update 不含歌名', !j(p1).includes(stripSubtitle(track1.trackName)) && !JSON.stringify(lastPlayers(B)).includes(stripSubtitle(track1.trackName)));
   await until(() => B.chat.filter((m) => m.kind === 'system').length > sysBeforeSet);
   check('出題成功多一則 system 訊息，且不含歌名', B.chat.filter((m) => m.kind === 'system').length > sysBeforeSet && !B.chat.some((m) => m.text.includes(stripSubtitle(track1.trackName))), j(B.chat.at(-1)));
-  const [bv, bs, bc] = [await call(B.s, 'round:volunteer'), await call(A.s, 'round:setArtist', { artist: '孫燕姿' }), await call(A.s, 'round:cancel')];
-  check('playing 時 volunteer／setArtist／cancel → ROUND_BUSY（文案）', isErr(bv, 'ROUND_BUSY') && isErr(bs, 'ROUND_BUSY') && isErr(bc, 'ROUND_BUSY'), j([bv, bs, bc]));
+  const [bv, bs, bc] = [await call(B.s, 'round:volunteer'), await call(A.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true }), await call(A.s, 'round:cancel')];
+  check('playing 時 volunteer／setSource／cancel → ROUND_BUSY（文案）', isErr(bv, 'ROUND_BUSY') && isErr(bs, 'ROUND_BUSY') && isErr(bc, 'ROUND_BUSY'), j([bv, bs, bc]));
 
   // 帳本：各玩家本局得分與猜對首數（依 correct 訊息的 at 以計分式算）
   const ledger = new Map();
@@ -310,8 +315,8 @@ try {
   check('reveal 時 hasGuessed 保留', me(B, A.id)?.hasGuessed === true && me(B, B.id)?.hasGuessed === true, j(lastPlayers(B)));
   await until(() => B.chat.some((m) => m.kind === 'system' && m.text.includes(title1)));
   check('每首揭曉的 system 訊息「第 1 首：《歌名》」', B.chat.some((m) => m.kind === 'system' && m.text === `第 1 首：《${title1}》`), j(B.chat.at(-1)));
-  const [vv, vs, vc] = [await call(B.s, 'round:volunteer'), await call(A.s, 'round:setArtist', { artist: '孫燕姿' }), await call(A.s, 'round:cancel')];
-  check('reveal 時 volunteer／setArtist／cancel → ROUND_BUSY', isErr(vv, 'ROUND_BUSY') && isErr(vs, 'ROUND_BUSY') && isErr(vc, 'ROUND_BUSY'), j([vv, vs, vc]));
+  const [vv, vs, vc] = [await call(B.s, 'round:volunteer'), await call(A.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true }), await call(A.s, 'round:cancel')];
+  check('reveal 時 volunteer／setSource／cancel → ROUND_BUSY', isErr(vv, 'ROUND_BUSY') && isErr(vs, 'ROUND_BUSY') && isErr(vc, 'ROUND_BUSY'), j([vv, vs, vc]));
   const nV = A.chat.length;
   const rAfter = await say(B, `原來是${main1}`);
   await until(() => A.chat.length > nV);
@@ -338,7 +343,7 @@ try {
   const C = await joinAs('Carol'); sockets.push(C.s);
   const cs = C.snap.round;
   check('中途加入快照：playing、進行中的那首（同 previewUrl／startedAt／durationMs）、correctIds 已含 B', cs.phase === 'playing' && cs.song?.index === 2 && cs.song.previewUrl === p2.song.previewUrl && cs.song.startedAt === p2.song.startedAt && cs.song.durationMs === TRACK_MS && j(cs.song.correctIds) === j([B.id]), j(cs));
-  check('中途加入快照：serverNow − startedAt 可定位播放位置（0 < 位置 < durationMs）、artist／artistDisplay 看得到', cs.serverNow - cs.song.startedAt > 0 && cs.serverNow - cs.song.startedAt < TRACK_MS && cs.artist === 'Jay Chou' && cs.artistDisplay === '周杰倫', j(cs));
+  check('中途加入快照：serverNow − startedAt 可定位播放位置（0 < 位置 < durationMs）、artist／topic 看得到', cs.serverNow - cs.song.startedAt > 0 && cs.serverNow - cs.song.startedAt < TRACK_MS && cs.artist === 'Jay Chou' && cs.topic === '周杰倫', j(cs));
   check('中途加入者不在 participantIds；快照的玩家清單帶 hasGuessed／gameScore', j(cs.participantIds) === j([A.id, B.id]) && C.snap.players.find((p) => p.id === B.id)?.hasGuessed === true && C.snap.players.find((p) => p.id === C.id)?.gameScore === 0, j(C.snap.players));
   check('中途加入快照不含本首歌名', !JSON.stringify(C.snap).includes(main2));
   const rG2c = await say(C, title2);
@@ -398,7 +403,8 @@ try {
   await waitPhase(A, 'ended', 9000);
   const en = lastRound(A);
   check('第 5 首揭曉停滿才 ended：ended 的 serverNow 不早於揭曉的 endsAt（計時器容許早 5 ms、晚 < 1 秒）', en?.phase === 'ended' && firedAt(en.serverNow, v5.endsAt), j([en?.serverNow, v5.endsAt]));
-  check('ended：gameNo 1、song null、endsAt null、reveal 保留最後一首、lastArtist＝正式名（artistDisplay，不是輸入的 Jay Chou）、setterId 仍為 A', en.gameNo === 1 && en.song === null && en.endsAt === null && en.reveal?.index === 5 && en.reveal.title === title5 && en.lastArtist === '周杰倫' && en.setterId === A.id, j(en));
+  // 2026-10-16 Epic 18：lastArtist → lastTopic，另驗 lastSource
+  check('ended：gameNo 1、song null、endsAt null、reveal 保留最後一首、lastTopic＝正式名（topic，不是輸入的 Jay Chou）、lastSource artist、setterId 仍為 A', en.gameNo === 1 && en.song === null && en.endsAt === null && en.reveal?.index === 5 && en.reveal.title === title5 && en.lastTopic === '周杰倫' && en.lastSource === 'artist' && en.setterId === A.id, j(en));
   check('results：對象＝參賽者 ∪ 本局有得分者（A、B、中途加入的 C），rank 連號、gameScore 降冪', en.results?.length === 3 && rankingOk(en.results) === 'ok' && [A.id, B.id, C.id].every((id) => en.results.some((e) => e.playerId === id)), `${rankingOk(en.results)} ${j(en.results)}`);
   check('results：每人的 gameScore、correctCount、nickname 與帳本一致', en.results.every((e) => ledger.get(e.playerId)?.gameScore === e.gameScore && ledger.get(e.playerId)?.correctCount === e.correctCount && e.nickname === { [A.id]: 'Alice', [B.id]: 'Bob', [C.id]: 'Carol' }[e.playerId]), j([en.results, [...ledger]]));
   // 同分者依先達到該分數（最後一次得分時間較早）在前
@@ -410,28 +416,28 @@ try {
   const top = en.results[0];
   await until(() => A.chat.some((m) => m.kind === 'system' && m.text.includes('本局第一名')));
   check('本局結束的 system 訊息「本局第一名：X（n 分）」', A.chat.some((m) => m.kind === 'system' && m.text === `本局第一名：${top.nickname}（${top.gameScore} 分）`), j(A.chat.at(-1)));
-  const [es, ec] = [await call(A.s, 'round:setArtist', { artist: '孫燕姿' }), await call(A.s, 'round:cancel')];
-  check('ended 時 setArtist／cancel → NOT_SETTER（上一局出題者也一樣）', isErr(es, 'NOT_SETTER') && isErr(ec, 'NOT_SETTER'), j([es, ec]));
+  const [es, ec] = [await call(A.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true }), await call(A.s, 'round:cancel')];
+  check('ended 時 setSource／cancel → NOT_SETTER（上一局出題者也一樣）', isErr(es, 'NOT_SETTER') && isErr(ec, 'NOT_SETTER'), j([es, ec]));
 
-  // ════════ 11. results／lastArtist 生命週期：下一局 choosing、取消回 idle 都保留；搜尋成功才清 ════════
+  // ════════ 11. results／lastTopic 生命週期：下一局 choosing、取消回 idle 都保留；搜尋成功才清 ════════
   const D = await joinAs('Dave'); sockets.push(D.s);
-  check('ended 時加入：快照帶 results、lastArtist、最後一首的揭曉', D.snap.round.phase === 'ended' && j(D.snap.round.results) === j(en.results) && D.snap.round.lastArtist === '周杰倫' && D.snap.round.reveal?.index === 5, j(D.snap.round));
+  check('ended 時加入：快照帶 results、lastTopic、最後一首的揭曉', D.snap.round.phase === 'ended' && j(D.snap.round.results) === j(en.results) && D.snap.round.lastTopic === '周杰倫' && D.snap.round.reveal?.index === 5, j(D.snap.round));
   const rv5 = await call(B.s, 'round:volunteer');
   await waitPhase(A, 'choosing');
   const ch2 = lastRound(A);
-  check('ended 可再 volunteer → choosing：setterId=B、gameNo 仍 1、results／lastArtist 保留、reveal／artist null、participantIds []', rv5?.ok === true && ch2.setterId === B.id && ch2.gameNo === 1 && j(ch2.results) === j(en.results) && ch2.lastArtist === '周杰倫' && ch2.reveal === null && ch2.artist === null && ch2.artistDisplay === null && ch2.participantIds.length === 0, j(ch2));
+  check('ended 可再 volunteer → choosing：setterId=B、gameNo 仍 1、results／lastTopic 保留、reveal／artist null、participantIds []', rv5?.ok === true && ch2.setterId === B.id && ch2.gameNo === 1 && j(ch2.results) === j(en.results) && ch2.lastTopic === '周杰倫' && ch2.reveal === null && ch2.artist === null && ch2.topic === null && ch2.participantIds.length === 0, j(ch2));
   await until(() => me(A, B.id)?.isSetter === true);
   check('下一局 choosing：isSetter 換人、上一局的 gameScore 還在', me(A, B.id)?.isSetter === true && me(A, A.id)?.isSetter === false && me(A, B.id)?.gameScore === ledger.get(B.id).gameScore, j(lastPlayers(A)));
   await call(B.s, 'round:cancel');
   await waitPhase(A, 'idle');
-  check('取消回 idle：results／lastArtist 仍保留、setterId null', lastRound(A).phase === 'idle' && j(lastRound(A).results) === j(en.results) && lastRound(A).lastArtist === '周杰倫' && lastRound(A).setterId === null, j(lastRound(A)));
+  check('取消回 idle：results／lastTopic 仍保留、setterId null', lastRound(A).phase === 'idle' && j(lastRound(A).results) === j(en.results) && lastRound(A).lastTopic === '周杰倫' && lastRound(A).lastSource === 'artist' && lastRound(A).setterId === null, j(lastRound(A)));
 
   await call(B.s, 'round:volunteer');
   await waitPhase(A, 'choosing');
-  const rSet2 = await call(B.s, 'round:setArtist', { artist: 'taylor swift' });
+  const rSet2 = await call(B.s, 'round:setSource', { source: 'artist', artist: 'taylor swift', hot: true });
   await until(() => lastRound(A)?.phase === 'playing' && lastRound(A).gameNo === 2);
   const g2 = lastRound(A);
-  check('第二局搜尋成功（輸入小寫）：ack artistDisplay 為正式名 Taylor Swift、gameNo 2、results／lastArtist 清空、reveal null、第 1 首', rSet2?.ok === true && rSet2.data.artistDisplay === 'Taylor Swift' && g2.artistDisplay === 'Taylor Swift' && g2.gameNo === 2 && g2.results === null && g2.lastArtist === null && g2.reveal === null && g2.song?.index === 1 && g2.artist === 'taylor swift', j(g2));
+  check('第二局搜尋成功（輸入小寫）：ack topic 為正式名 Taylor Swift、gameNo 2、results／lastTopic 清空、reveal null、第 1 首', rSet2?.ok === true && rSet2.data.topic === 'Taylor Swift' && g2.topic === 'Taylor Swift' && g2.gameNo === 2 && g2.results === null && g2.lastTopic === null && g2.lastSource === null && g2.reveal === null && g2.song?.index === 1 && g2.artist === 'taylor swift', j(g2));
   check('第二局參賽者＝此刻在線的四人（依加入順序）', j(g2.participantIds) === j([A.id, B.id, C.id, D.id]), j(g2.participantIds));
   await until(() => lastPlayers(A)?.every((p) => p.gameScore === 0));
   check('新局開始：全員 gameScore 歸零、總分保留、isSetter 只有 B', lastPlayers(A).every((p) => p.gameScore === 0 && p.score === (ledger.get(p.id)?.gameScore ?? 0) && p.isSetter === (p.id === B.id)), j(lastPlayers(A)));
@@ -458,8 +464,9 @@ try {
   check('快照帶聊天紀錄：猜對的訊息只有「猜對了」、沒有任何未揭曉的歌名', lateSnap.snap.chat.some((m) => m.kind === 'correct') && !JSON.stringify(lateSnap.snap).includes(stripSubtitle(g2track.trackName)), j(lateSnap.snap.chat.slice(-3)));
 
   // ════════ 13. 不崩潰 ════════
-  A.s.emit('round:setArtist', { artist: '孫燕姿' });   // 不帶 ack
-  A.s.emit('round:setArtist');
+  A.s.emit('round:setSource', { source: 'artist', artist: '孫燕姿', hot: true });   // 不帶 ack
+  A.s.emit('round:setSource');
+  A.s.emit('round:setArtist', { artist: '孫燕姿' }, () => {});   // 2026-10-16 Epic 18：舊事件名沒有 handler，不回 ack、不崩潰
   A.s.emit('chat:send', null);
   B.s.emit('player:join', null, () => {});
   await sleep(300);

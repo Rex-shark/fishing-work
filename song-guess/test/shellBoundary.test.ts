@@ -253,9 +253,9 @@ describe('另兩款遊戲的殘留（spec/song-guess/architecture.md §4：只�
     }
   })
 
-  it('本機偏好鍵都在 fishing-work:song-guess: 命名空間（shell、session、volume）', () => {
+  it('本機偏好鍵都在 fishing-work:song-guess: 命名空間（shell、session、volume、hot）', () => {
     const keys = new Set(Object.values(allSources).flatMap((src) => [...src.matchAll(/'(fishing-work:[\w:-]+)'/g)].map((m) => m[1])))
-    expect([...keys].sort()).toEqual(['fishing-work:song-guess:session', 'fishing-work:song-guess:shell', 'fishing-work:song-guess:volume'])
+    expect([...keys].sort()).toEqual(['fishing-work:song-guess:hot', 'fishing-work:song-guess:session', 'fishing-work:song-guess:shell', 'fishing-work:song-guess:volume'])
   })
 
   it('規則抓得到違規寫法（正向對照）', () => {

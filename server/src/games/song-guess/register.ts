@@ -1,9 +1,9 @@
 // /song-guess namespace 接線（薄）：spec/song-guess/architecture.md §4
 // 驗證 payload 形狀 → 呼叫 Room → ack 與執行效果；寫法比照 draw-contest/register.ts（獨立複製，不共用程式）。
-// 與另兩款不同的只有 round:setArtist：Room 要先向 iTunes 搜尋，回傳 Promise，搜尋回來才 ack 與送效果。
+// 與另兩款不同的只有 round:setSource（Epic 18 前為 round:setArtist，不保留舊名）：Room 要先向 iTunes 搜尋或取排行榜，
+// 回傳 Promise，取歌回來才 ack 與送效果。
 import type { Namespace } from 'socket.io';
 import {
-  ARTIST_INVALID_MESSAGE,
   NICKNAME_INVALID_MESSAGE,
   type Ack,
   type ClientToServerEvents,
@@ -13,7 +13,7 @@ import {
 import { log } from '../../lib/log';
 import { clientAddress } from '../../lib/network';
 import { CHAT_ERROR_MESSAGES } from './chat';
-import { songGuessSetupFromEnv, type SongSearcher } from './itunes';
+import { songGuessSetupFromEnv, type ChartFetcher, type SongSearcher } from './itunes';
 import { Room, type ActionOutcome, type Clock, type Effect, type RoomDurations } from './room';
 
 export type SongGuessNamespace = Namespace<ClientToServerEvents, ServerToClientEvents>;
@@ -27,6 +27,8 @@ export interface RegisterOptions {
   durations?: Partial<RoomDurations>;
   /** 歌手搜尋器（測試注入）；預設依環境變數 ITUNES_URL 等建立帶快取的 iTunes 客戶端（itunes.ts） */
   search?: SongSearcher;
+  /** 排行榜取得器（測試注入；Epic 18）；預設依環境變數 ITUNES_RSS_URL、ITUNES_URL 等建立（與搜尋器共用同一個 iTunes 客戶端） */
+  chart?: ChartFetcher;
   /** 抽歌用的亂數（測試注入；預設 Math.random） */
   random?: () => number;
 }
@@ -80,7 +82,9 @@ function logRoundEffects(effects: Effect[]): void {
       log.info('song-guess.round', {
         gameNo: r.gameNo,
         phase: r.phase,
-        artist: r.artistDisplay,
+        source: r.source,
+        topic: r.topic,
+        hot: r.artistHot,
         song: r.song.index,
         durationMs: r.song.durationMs,
         titleLength: r.song.titleLength,
@@ -91,7 +95,8 @@ function logRoundEffects(effects: Effect[]): void {
       log.info('song-guess.round', {
         gameNo: r.gameNo,
         phase: r.phase,
-        artist: r.lastArtist,
+        source: r.lastSource,
+        topic: r.lastTopic,
         results: r.results.map((x) => ({ player: x.playerId, rank: x.rank, gameScore: x.gameScore, correct: x.correctCount })),
       });
     }
@@ -100,13 +105,14 @@ function logRoundEffects(effects: Effect[]): void {
 
 /** /song-guess namespace 事件接線（薄）：驗證 payload 形狀 → 呼叫 Room → ack 與執行效果 */
 export function registerSongGuess(nsp: SongGuessNamespace, options: RegisterOptions = {}): Room {
-  // 搜尋器與播放上限：兩者都有注入時不讀環境變數（測試不需要 iTunes 客戶端）
-  const needEnv = options.search === undefined || options.durations?.previewCapMs === undefined;
+  // 搜尋器、排行榜取得器與播放上限：三者都有注入時不讀環境變數（測試不需要 iTunes 客戶端）
+  const needEnv = options.search === undefined || options.chart === undefined || options.durations?.previewCapMs === undefined;
   const fromEnv = needEnv ? songGuessSetupFromEnv() : null;
   const room: Room = new Room({
     clock: options.clock,
     durations: { ...(fromEnv ? { previewCapMs: fromEnv.previewCapMs } : {}), ...options.durations },
     search: options.search ?? fromEnv?.search,
+    chart: options.chart ?? fromEnv?.chart,
     random: options.random,
     onAsyncEffects: (effects) => {
       try {
@@ -159,7 +165,7 @@ export function registerSongGuess(nsp: SongGuessNamespace, options: RegisterOpti
     /** ack（若有）→ 執行效果 → log；同步與非同步的回合事件共用 */
     const finish = <T>(event: string, reply: ((r: Ack<T>) => void) | undefined, outcome: { ack: Ack<T>; effects: Effect[] }): void => {
       const { ack, effects } = outcome;
-      // 先 ack 再廣播（與另兩款一致）：setArtist 成功時出題者先收到 ack，再收到第 1 首的 round:update
+      // 先 ack 再廣播（與另兩款一致）：setSource 成功時出題者先收到 ack，再收到第 1 首的 round:update
       reply?.(ack);
       applyEffects(nsp, room, effects);
       logRoundEffects(effects);
@@ -184,19 +190,14 @@ export function registerSongGuess(nsp: SongGuessNamespace, options: RegisterOpti
 
     socket.on('round:volunteer', handleAction('volunteer', () => room.volunteer(socket.id)));
 
-    // round:setArtist：payload 形狀不對（不是物件、artist 不是字串）→ ARTIST_INVALID；其餘判定與搜尋都在 Room.setArtist（非同步）
-    socket.on('round:setArtist', (...args: unknown[]) => {
-      const { payload, reply } = splitArgs<Ack<{ artistDisplay: string }>>(args);
-      const artist = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>).artist : undefined;
-      if (typeof artist !== 'string') {
-        reply?.({ ok: false, error: 'ARTIST_INVALID', message: ARTIST_INVALID_MESSAGE });
-        return;
-      }
-      const onError = (err: unknown): void => log.error('song-guess.setArtist.error', { socket: socket.id, err: String(err) });
+    // round:setSource：payload 形狀（SOURCE_INVALID 等）、判定與取歌都在 Room.setSource（非同步；parseSourcePayload）
+    socket.on('round:setSource', (...args: unknown[]) => {
+      const { payload, reply } = splitArgs<Ack<{ topic: string }>>(args);
+      const onError = (err: unknown): void => log.error('song-guess.setSource.error', { socket: socket.id, err: String(err) });
       try {
-        room.setArtist(socket.id, artist).then((outcome) => {
+        room.setSource(socket.id, payload).then((outcome) => {
           try {
-            finish('setArtist', reply, outcome);
+            finish('setSource', reply, outcome);
           } catch (err) {
             onError(err);
           }

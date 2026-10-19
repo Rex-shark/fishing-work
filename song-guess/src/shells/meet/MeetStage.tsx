@@ -1,12 +1,12 @@
 // meet 主題的舞台（ShellViews.Stage；spec/song-guess/design.md §1「播放中的試聽」、§2「舞台」欄）：主畫面 tile 裡「有人正在分享音訊」的樣子。
 //   empty：置中一行「尚無人分享音訊」；preparing：其他人看到「<出題者> 正在準備分享音訊…」（自己是出題者時對話框疊在上面，這裡留白）；
 //   playing：音訊波形（7 根 --accent 直條，純 CSS 動畫、不讀真實音訊；還沒起播或被擋時靜止；prefers-reduced-motion 時不動）
-//     ＋下方 12px --fg「歌手：孫燕姿 · 第 2 / 5 首」；沒有專輯封面、沒有歌名。
+//     ＋下方 12px --fg 兩行（文字由功能元件給，Epic 18）：「孫燕姿（熱門） · 第 2 / 5 首」／「歌手：周杰倫」（第二行可省略）；沒有專輯封面、沒有歌名。
 //     瀏覽器擋自動播放（playback 'blocked'）時，波形位置改放按鈕「點一下開始播放」（文字由功能元件給）。
 // 每首揭曉卡與本局排名表是功能元件（features/reveal），不在這裡。tile 內承載資訊的文字一律 --fg（DESIGN §15.1）。
 import type { CSSProperties } from 'react'
 import type { StageViewProps } from '../views'
-import { STAGE_EMPTY_TEXT, WAVE_BARS, preparingText, stageSongLine } from './meetLayout'
+import { STAGE_EMPTY_TEXT, WAVE_BARS, preparingText } from './meetLayout'
 
 export function MeetStage(props: StageViewProps) {
   switch (props.kind) {
@@ -38,7 +38,10 @@ export function MeetStage(props: StageViewProps) {
           ) : (
             <Waveform moving={props.playback === 'playing'} />
           )}
-          <p className="max-w-full truncate text-[12px] leading-[16px] text-fg">{stageSongLine(props.artist, props.index, props.total)}</p>
+          <div className="flex max-w-full flex-col items-center gap-[2px]">
+            <p className="max-w-full truncate text-[12px] leading-[16px] text-fg">{props.heading}</p>
+            {props.artistLine !== null && <p className="max-w-full truncate text-[12px] leading-[16px] text-fg">{props.artistLine}</p>}
+          </div>
         </div>
       )
   }

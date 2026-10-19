@@ -1,6 +1,7 @@
 // 猜歌 e2e：起真正的 server（隨機埠），以 socket.io-client 打 /song-guess（spec/song-guess/architecture.md §4／§5）
 // 題庫連 user/mock/itunes.mjs（真的走 itunes.ts 的 fetch、解析、快取與 picker）；計時以 AppOptions.songDurations 與假 iTunes 的短 trackTimeMillis 縮短。
-// 不打真 iTunes（§6）。
+// 不打真 iTunes（§6）。排行榜（Epic 18）也連假 iTunes 的 RSS 與 lookup。
+// 2026-10-16 Epic 18：round:setArtist → round:setSource（歌手模式 { source: 'artist', artist, hot }），artistDisplay → topic、lastArtist → lastTopic。
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { io, type Socket } from 'socket.io-client';
 import {
@@ -27,7 +28,7 @@ const mockPath = new URL('../../user/mock/itunes.mjs', import.meta.url).href;
 interface MockItunes {
   url: string;
   close(): Promise<void>;
-  requests: { method: string; path: string; term?: string }[];
+  requests: { method: string; path: string; term?: string; query?: Record<string, string> }[];
 }
 async function startMock(options: Record<string, unknown> = {}): Promise<MockItunes> {
   const mod = (await import(mockPath)) as { startMockItunes: (o?: Record<string, unknown>) => Promise<MockItunes> };
@@ -63,11 +64,12 @@ afterEach(async () => {
 /** 起假 iTunes 與 server（server 的搜尋器指向假 iTunes） */
 async function start(options: AppOptions = {}, mockOptions: Record<string, unknown> = {}): Promise<void> {
   mock = await startMock({ trackMs: TRACK_MS, slowMs: 300, ...mockOptions });
-  const client = createItunesClient({ url: mock.url, country: 'TW', timeoutMs: 2000, cacheMs: 600_000 });
+  const client = createItunesClient({ url: mock.url, country: 'TW', rssUrl: mock.url, timeoutMs: 2000, rssTimeoutMs: 2000, cacheMs: 600_000 });
   app = createApp({
     port: 0,
     host: '127.0.0.1',
     songSearch: client.search,
+    songChart: client.chart,
     songDurations: { startDelayMs: START_DELAY, revealMs: REVEAL_MS, previewCapMs: 30_000 },
     ...options,
   });
@@ -147,17 +149,18 @@ describe('e2e /song-guess', () => {
 
     expect(await request(A, 'round:volunteer')).toEqual({ ok: true, data: undefined });
     await waitFor(() => last()?.phase === 'choosing', 4000, 'choosing');
-    expect(await request(B, 'round:setArtist', { artist: '孫燕姿' })).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect(await request(B, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toMatchObject({ ok: false, error: 'NOT_SETTER' });
 
     // 先 ack 再廣播：出題者收到 ack 時還沒收到 playing 的 round:update
     let playingSeenAtAck: boolean | null = null;
-    const setAck = await new Promise<Ack<{ artistDisplay: string }>>((resolve) => {
-      (A.emit as unknown as (ev: string, ...a: unknown[]) => void)('round:setArtist', { artist: ' 孫燕姿 ' }, (r: Ack<{ artistDisplay: string }>) => {
+    const setAck = await new Promise<Ack<{ topic: string }>>((resolve) => {
+      const payload = { source: 'artist', artist: ' 孫燕姿 ', hot: true };
+      (A.emit as unknown as (ev: string, ...a: unknown[]) => void)('round:setSource', payload, (r: Ack<{ topic: string }>) => {
         playingSeenAtAck = roundsA.some((r2) => r2.phase === 'playing');
         resolve(r);
       });
     });
-    expect(setAck).toEqual({ ok: true, data: { artistDisplay: '孫燕姿' } });
+    expect(setAck).toEqual({ ok: true, data: { topic: '孫燕姿' } });
     expect(playingSeenAtAck).toBe(false);
     await waitFor(() => last()?.phase === 'playing', 4000, 'playing 1');
 
@@ -165,8 +168,10 @@ describe('e2e /song-guess', () => {
     expect(first).toMatchObject({
       gameNo: 1,
       setterId: idA,
+      source: 'artist',
       artist: '孫燕姿',
-      artistDisplay: '孫燕姿',
+      artistHot: true,
+      topic: '孫燕姿',
       songCount: SONGS_PER_GAME,
       participantIds: [idA, idB],
       results: null,
@@ -190,6 +195,7 @@ describe('e2e /song-guess', () => {
       await waitFor(() => last()?.phase === 'playing' && last()?.song?.index === i, 4000, `playing ${i}`);
       const title = answerOf(last());
       seenTitles.push(title);
+      expect(last()?.song?.artist).toContain('孫燕姿');
       expect(last()?.song?.titleLength).toBe([...normalizeTitle(title)].length);
 
       // 未猜對者含歌名但不完全相同 → 擋下
@@ -248,7 +254,8 @@ describe('e2e /song-guess', () => {
       phase: 'ended',
       song: null,
       endsAt: null,
-      lastArtist: '孫燕姿',
+      lastTopic: '孫燕姿',
+      lastSource: 'artist',
       reveal: { index: SONGS_PER_GAME },
       results: [
         { playerId: idB, nickname: 'Bob', rank: 1, gameScore: expectedB, correctCount: SONGS_PER_GAME },
@@ -278,24 +285,37 @@ describe('e2e /song-guess', () => {
     await request(A, 'round:volunteer');
     await waitFor(() => roundsB.at(-1)?.phase === 'choosing');
 
-    expect(await request(A, 'round:setArtist', { artist: '壞掉樂團' })).toEqual({ ok: false, error: 'SEARCH_FAILED', message: '搜尋失敗，請再試一次' });
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '壞掉樂團', hot: true })).toEqual({ ok: false, error: 'SEARCH_FAILED', message: '搜尋失敗，請再試一次' });
     const notFound = { ok: false, error: 'ARTIST_NOT_FOUND', message: '找不到這位歌手的歌（至少要 5 首有試聽的歌），換一位試試' };
-    expect(await request(A, 'round:setArtist', { artist: '三首樂團' })).toEqual(notFound);
-    expect(await request(A, 'round:setArtist', { artist: '沒有這個人' })).toEqual(notFound);
-    expect(await request(A, 'round:setArtist', { artist: '沒有這個人' })).toEqual(notFound);
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '三首樂團', hot: true })).toEqual(notFound);
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '沒有這個人', hot: true })).toEqual(notFound);
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '沒有這個人', hot: true })).toEqual(notFound);
     // 退回須過半：本人只有 2 首、結果被兩個團瓜分（最多 5／12）→ 不退回、不會出別人的歌
-    expect(await request(A, 'round:setArtist', { artist: '客串歌手' })).toEqual(notFound);
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '客串歌手', hot: true })).toEqual(notFound);
     expect(mock?.requests.filter((r) => r.term === '沒有這個人')).toHaveLength(1);
     expect(roundsB.at(-1)?.phase).toBe('choosing');
-    for (const bad of [{ artist: '   ' }, { artist: 123 }, {}, null, 'x']) {
-      expect(await request(A, 'round:setArtist', bad)).toMatchObject({ ok: false, error: 'ARTIST_INVALID' });
+    for (const bad of [{ source: 'artist', artist: '   ', hot: true }, { source: 'artist', artist: 123, hot: false }]) {
+      expect(await request(A, 'round:setSource', bad)).toMatchObject({ ok: false, error: 'ARTIST_INVALID' });
     }
-    expect(await request(A, 'round:setArtist')).toMatchObject({ ok: false, error: 'ARTIST_INVALID' });
+    const sourceInvalid = { ok: false, error: 'SOURCE_INVALID', message: '題庫來源不正確，請重新選擇' };
+    for (const bad of [{ artist: '孫燕姿' }, { source: 'artist', artist: '孫燕姿' }, { source: 'kpop' }, {}, null, 'x']) {
+      expect(await request(A, 'round:setSource', bad)).toEqual(sourceInvalid);
+    }
+    expect(await request(A, 'round:setSource')).toEqual(sourceInvalid);
+    // 舊事件名不保留別名：沒有 handler、不會回 ack
+    await expect(
+      Promise.race([
+        request(A, 'round:setArtist', { artist: '孫燕姿' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('no ack')), 300)),
+      ]),
+    ).rejects.toThrow('no ack');
 
-    expect(await request(A, 'round:setArtist', { artist: 'Jay Chou' })).toEqual({ ok: true, data: { artistDisplay: '周杰倫' } });
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: 'Jay Chou', hot: true })).toEqual({ ok: true, data: { topic: '周杰倫' } });
     await waitFor(() => roundsB.at(-1)?.phase === 'playing');
-    expect(roundsB.at(-1)).toMatchObject({ gameNo: 1, artist: 'Jay Chou', artistDisplay: '周杰倫', song: { index: 1 } });
-    expect(await request(A, 'round:setArtist', { artist: '孫燕姿' })).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
+    expect(roundsB.at(-1)).toMatchObject({ gameNo: 1, artist: 'Jay Chou', topic: '周杰倫', song: { index: 1 } });
+    // song.artist ＝本首 artistName：可能抽到合唱曲（「周杰倫 & 五月天 阿信」），只驗含正式名
+    expect(roundsB.at(-1)?.song?.artist).toContain('周杰倫');
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
     expect(await request(B, 'round:volunteer')).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
     expect(await request(A, 'round:cancel')).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
   });
@@ -309,9 +329,9 @@ describe('e2e /song-guess', () => {
     const roundsB = collect<RoundPublic>(B, 'round:update');
     await request(A, 'round:volunteer');
 
-    const slow = request<{ artistDisplay: string }>(A, 'round:setArtist', { artist: '慢慢來樂團' });
+    const slow = request<{ topic: string }>(A, 'round:setSource', { source: 'artist', artist: '慢慢來樂團', hot: true });
     await sleep(50);
-    expect(await request(A, 'round:setArtist', { artist: '孫燕姿' })).toEqual({ ok: false, error: 'SEARCH_BUSY', message: '搜尋中，請稍候' });
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: false, error: 'SEARCH_BUSY', message: '搜尋中，請稍候' });
     expect(await request(A, 'round:cancel')).toEqual({ ok: true, data: undefined });
     await waitFor(() => roundsB.at(-1)?.phase === 'idle');
     expect(await slow).toMatchObject({ ok: false, error: 'NOT_SETTER' });
@@ -321,7 +341,7 @@ describe('e2e /song-guess', () => {
 
     // 之後正常出題不受影響（慢慢來樂團已在快取，這次立刻成功）
     await request(B, 'round:volunteer');
-    expect(await request(B, 'round:setArtist', { artist: '慢慢來樂團' })).toEqual({ ok: true, data: { artistDisplay: '慢慢來樂團' } });
+    expect(await request(B, 'round:setSource', { source: 'artist', artist: '慢慢來樂團', hot: true })).toEqual({ ok: true, data: { topic: '慢慢來樂團' } });
     expect(mock?.requests.filter((r) => r.term === '慢慢來樂團')).toHaveLength(1);
   });
 
@@ -349,7 +369,7 @@ describe('e2e /song-guess', () => {
 
     // B 出題；B 猜對第 1 首後離開 → 不進排名；previewCapMs 120 < 假 iTunes 的全長 → durationMs 取上限
     await request(B, 'round:volunteer');
-    expect(await request(B, 'round:setArtist', { artist: '孫燕姿' })).toMatchObject({ ok: true });
+    expect(await request(B, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toMatchObject({ ok: true });
     await waitFor(() => roundsC.at(-1)?.phase === 'playing');
     expect(roundsC.at(-1)?.song?.durationMs).toBe(120);
     expect(await request(B, 'chat:send', { text: answerOf(roundsC.at(-1)) })).toMatchObject({ ok: true });
@@ -372,7 +392,10 @@ describe('e2e /song-guess', () => {
     await joinOk(A, 'Alice');
     await joinOk(B, 'Bob');
     await request(A, 'round:volunteer');
-    expect(await request(A, 'round:setArtist', { artist: '孫燕姿' })).toEqual({ ok: false, error: 'SEARCH_FAILED', message: '搜尋失敗，請再試一次' });
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: false, error: 'SEARCH_FAILED', message: '搜尋失敗，請再試一次' });
+    // Epic 18：ITUNES_RSS_URL 同樣指到連不上的位址 → CHART_FAILED
+    expect(process.env.ITUNES_RSS_URL).toBe('http://127.0.0.1:1');
+    expect(await request(A, 'round:setSource', { source: 'tw-hot' })).toEqual({ ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' });
     expect(app.songGuessRoom.currentRound().phase).toBe('choosing');
   });
 
@@ -381,7 +404,8 @@ describe('e2e /song-guess', () => {
     const A = await connect();
     const raw = (ev: string, ...a: unknown[]): void => void (A.emit as unknown as (ev: string, ...a: unknown[]) => void).call(A, ev, ...a);
     raw('player:join', { nickname: 'NoAck' });
-    raw('round:setArtist', { artist: '孫燕姿' });
+    raw('round:setSource', { source: 'artist', artist: '孫燕姿', hot: true });
+    raw('round:setSource', { source: 'tw-hot' });
     raw('chat:send');
     expect(await request(A, 'player:join', 'x')).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });
     expect(await request(A, 'player:join', { nickname: 5 })).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });
@@ -410,5 +434,125 @@ describe('e2e /song-guess', () => {
     // 猜歌的事件不會跑到另兩款
     expect(await request(s, 'round:volunteer')).toMatchObject({ ok: false, error: 'NOT_ENOUGH_PLAYERS' });
     expect(app?.drawContestRoom.currentRound().phase).toBe('idle');
+  });
+});
+
+// ─── Epic 18：題庫來源（台灣熱門、西洋熱門、只抽熱門歌） ───────────────
+
+/** 向假 iTunes 的 lookup 查榜單上全部的歌，記下 trackId → 歌名（測試當裁判用） */
+async function learnChart(country: 'tw' | 'us'): Promise<void> {
+  if (mock === null) throw new Error('假 iTunes 尚未啟動');
+  const rss = (await (await fetch(`${mock.url}/api/v2/${country}/music/most-played/100/songs.json`)).json()) as {
+    feed: { results: { id: string; name: string }[] };
+  };
+  for (const r of rss.feed.results) titleById.set(r.id, r.name);
+}
+
+describe('e2e /song-guess：題庫來源（Epic 18）', () => {
+  it('台灣熱門一局走完：topic、song.artist 逐首、ended 的 lastTopic／lastSource；同一榜單只打 RSS ＋ lookup 各一次', async () => {
+    await start();
+    await learnChart('tw');
+    const A = await connect();
+    const B = await connect();
+    await joinOk(A, 'Alice');
+    const b = await joinOk(B, 'Bob');
+    const roundsB = collect<RoundPublic>(B, 'round:update');
+    const chatB = collect<ChatMessage>(B, 'chat:message');
+    const last = () => roundsB.at(-1);
+    await request(A, 'round:volunteer');
+    await waitFor(() => last()?.phase === 'choosing');
+
+    expect(await request(A, 'round:setSource', { source: 'tw-hot', artist: '忽略', hot: 'x' })).toEqual({ ok: true, data: { topic: '台灣熱門' } });
+    await waitFor(() => last()?.phase === 'playing');
+    expect(last()).toMatchObject({ source: 'tw-hot', artist: null, artistHot: false, topic: '台灣熱門', lastTopic: null, lastSource: null });
+    await waitFor(() => chatB.some((m) => m.text === 'Alice 出題「台灣熱門」，共 5 首'), 4000, '出題訊息');
+
+    const artists = new Set<string>();
+    for (let i = 1; i <= SONGS_PER_GAME; i++) {
+      await waitFor(() => last()?.phase === 'playing' && last()?.song?.index === i, 4000, `playing ${i}`);
+      const song = last()?.song;
+      expect(typeof song?.artist).toBe('string');
+      artists.add(song?.artist ?? '');
+      expect(await request(B, 'chat:send', { text: stripSubtitle(answerOf(last())) })).toEqual({ ok: true, data: undefined });
+      await waitFor(() => last()?.phase === 'reveal' && last()?.reveal?.index === i, 4000, `reveal ${i}`);
+      expect(last()?.reveal?.artist).toBe(song?.artist);
+      expect(last()?.reveal?.scores.map((x) => x.playerId)).toEqual([b.snapshot.you]);
+      await sleep(310);
+    }
+    await waitFor(() => last()?.phase === 'ended', 4000, 'ended');
+    expect(last()).toMatchObject({ phase: 'ended', topic: '台灣熱門', lastTopic: '台灣熱門', lastSource: 'tw-hot' });
+    // 假台灣榜 12 首各是不同歌手（aespa 兩首除外），5 首至少 4 位不同歌手
+    expect(artists.size).toBeGreaterThanOrEqual(4);
+    const chartRequests = mock?.requests.filter((r) => r.path.startsWith('/api/v2/') || r.path === '/lookup') ?? [];
+    // learnChart 自己打了一次 RSS；server 打 RSS ＋ lookup 各一次
+    expect(chartRequests.map((r) => r.path)).toEqual([
+      '/api/v2/tw/music/most-played/100/songs.json',
+      '/api/v2/tw/music/most-played/100/songs.json',
+      '/lookup',
+    ]);
+    expect(chartRequests[2]?.query).toMatchObject({ country: 'TW' });
+
+    // 下一局同榜單：快取命中，不再打
+    await request(B, 'round:volunteer');
+    await waitFor(() => last()?.phase === 'choosing');
+    expect(last()).toMatchObject({ lastTopic: '台灣熱門', lastSource: 'tw-hot', source: null, topic: null });
+    expect(await request(B, 'round:setSource', { source: 'tw-hot' })).toEqual({ ok: true, data: { topic: '台灣熱門' } });
+    expect(mock?.requests.filter((r) => r.path.startsWith('/api/v2/') || r.path === '/lookup')).toHaveLength(3);
+  }, 30_000);
+
+  it('西洋熱門：chart us、topic 西洋熱門、song.artist 為西洋歌手', async () => {
+    await start();
+    const A = await connect();
+    const B = await connect();
+    await joinOk(A, 'Alice');
+    await joinOk(B, 'Bob');
+    const roundsB = collect<RoundPublic>(B, 'round:update');
+    await request(A, 'round:volunteer');
+    await waitFor(() => roundsB.at(-1)?.phase === 'choosing');
+    expect(await request(A, 'round:setSource', { source: 'western-hot' })).toEqual({ ok: true, data: { topic: '西洋熱門' } });
+    await waitFor(() => roundsB.at(-1)?.phase === 'playing');
+    expect(roundsB.at(-1)).toMatchObject({ source: 'western-hot', topic: '西洋熱門', artist: null, artistHot: false });
+    expect(roundsB.at(-1)?.song?.artist).toMatch(/^[\x20-\x7e]+$/);
+    expect(mock?.requests.find((r) => r.path.startsWith('/api/v2/'))?.path).toBe('/api/v2/us/music/most-played/100/songs.json');
+  });
+
+  it('CHART_FAILED：RSS 壞、lookup 壞 → 仍在 choosing，可改用歌手模式出題', async () => {
+    for (const mockOptions of [{ chartFail: true }, { lookupFail: true }]) {
+      await start({}, mockOptions);
+      const A = await connect();
+      const B = await connect();
+      await joinOk(A, 'Alice');
+      await joinOk(B, 'Bob');
+      const roundsB = collect<RoundPublic>(B, 'round:update');
+      await request(A, 'round:volunteer');
+      await waitFor(() => roundsB.at(-1)?.phase === 'choosing');
+      const failed = { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' };
+      expect(await request(A, 'round:setSource', { source: 'tw-hot' })).toEqual(failed);
+      expect(await request(A, 'round:setSource', { source: 'western-hot' })).toEqual(failed);
+      expect(app?.songGuessRoom.currentRound()).toMatchObject({ phase: 'choosing', source: null });
+      expect(await request(A, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: true, data: { topic: '孫燕姿' } });
+      for (const s of sockets.splice(0)) s.disconnect();
+      await app?.close();
+      app = null;
+      await mock?.close();
+      mock = null;
+    }
+  });
+
+  it('只抽熱門歌：熱門歌手 60 首，hot 時 5 首都在前 30；artistHot 跟著 payload', async () => {
+    await start({ songRandom: () => 0.999999 });
+    const A = await connect();
+    const B = await connect();
+    await joinOk(A, 'Alice');
+    await joinOk(B, 'Bob');
+    const roundsB = collect<RoundPublic>(B, 'round:update');
+    const rank = (r: RoundPublic | undefined) => Number(/\/preview\/(\d+)\.m4a$/.exec(r?.song?.previewUrl ?? '')?.[1]) - 1700;
+    await request(A, 'round:volunteer');
+    await waitFor(() => roundsB.at(-1)?.phase === 'choosing');
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '熱門歌手', hot: true })).toMatchObject({ ok: true });
+    await waitFor(() => roundsB.at(-1)?.phase === 'playing');
+    expect(roundsB.at(-1)).toMatchObject({ artistHot: true, topic: '熱門歌手' });
+    // 亂數恆接近 1：每次都抽候選最後面那首 → 第 1 首是第 30 名（hot）
+    expect(rank(roundsB.at(-1))).toBe(30);
   });
 });

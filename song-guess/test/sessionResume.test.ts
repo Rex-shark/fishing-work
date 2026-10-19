@@ -201,7 +201,7 @@ describe('server 事件接到 store（spec/song-guess/architecture.md §4 Server
   })
 })
 
-describe('出題動作的請求（round:volunteer／round:setArtist／round:cancel／chat:send）', () => {
+describe('出題動作的請求（round:volunteer／round:setSource／round:cancel／chat:send）', () => {
   /** 以假的 socket.timeout 記錄逾時與送出的事件，並回指定的 ack */
   async function loadConnected(ack: [Error | null, unknown]) {
     const { client, useGameStore } = await load(fakeSessionStorage())
@@ -217,17 +217,34 @@ describe('出題動作的請求（round:volunteer／round:setArtist／round:canc
     return { client, useGameStore, calls }
   }
 
-  it('送歌手名：事件與 payload 照契約；逾時放寬到 15 秒（server 要等題庫搜尋，預設最久 8 秒）', async () => {
-    const { client, calls } = await loadConnected([null, { ok: true, data: { artistDisplay: '孫燕姿' } }])
-    expect(client.SET_ARTIST_ACK_TIMEOUT_MS).toBe(15_000)
-    expect(await client.setArtist('孫燕姿')).toEqual({ ok: true })
-    expect(calls).toEqual([{ timeout: 15_000, event: 'round:setArtist', payload: { artist: '孫燕姿' } }])
+  it('送題庫來源：事件 round:setSource、payload 三種照契約原樣送出；逾時放寬到 25 秒（榜單 RSS 最久 12 秒 ＋ lookup 8 秒）', async () => {
+    const { client, calls } = await loadConnected([null, { ok: true, data: { topic: '孫燕姿' } }])
+    expect(client.SET_SOURCE_ACK_TIMEOUT_MS).toBe(25_000)
+    expect(await client.setSource({ source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: true })
+    expect(await client.setSource({ source: 'tw-hot' })).toEqual({ ok: true })
+    expect(await client.setSource({ source: 'western-hot' })).toEqual({ ok: true })
+    expect(calls).toEqual([
+      { timeout: 25_000, event: 'round:setSource', payload: { source: 'artist', artist: '孫燕姿', hot: true } },
+      { timeout: 25_000, event: 'round:setSource', payload: { source: 'tw-hot' } },
+      { timeout: 25_000, event: 'round:setSource', payload: { source: 'western-hot' } },
+    ])
   })
 
-  it('送歌手名失敗：錯誤碼與 server 的繁中訊息原樣帶回（可直接顯示）', async () => {
-    const message = '找不到這位歌手的歌（至少要 5 首有試聽的歌），換一位試試'
-    const { client } = await loadConnected([null, { ok: false, error: 'ARTIST_NOT_FOUND', message }])
-    expect(await client.setArtist('不存在')).toEqual({ ok: false, error: 'ARTIST_NOT_FOUND', message })
+  it('送題庫來源失敗：錯誤碼與 server 的繁中訊息原樣帶回（含新碼 CHART_FAILED、SOURCE_INVALID）', async () => {
+    for (const [error, message] of [
+      ['ARTIST_NOT_FOUND', '找不到這位歌手的歌（至少要 5 首有試聽的歌），換一位試試'],
+      ['CHART_FAILED', '取得排行榜失敗，請再試一次'],
+      ['SOURCE_INVALID', '題庫來源不正確，請重新選擇'],
+    ] as const) {
+      const { client } = await loadConnected([null, { ok: false, error, message }])
+      expect(await client.setSource({ source: 'tw-hot' })).toEqual({ ok: false, error, message })
+    }
+  })
+
+  it('送題庫來源沒等到 ack（25 秒逾時）→ TIMEOUT', async () => {
+    const { client, calls } = await loadConnected([new Error('timeout'), undefined])
+    expect(await client.setSource({ source: 'western-hot' })).toMatchObject({ ok: false, error: 'TIMEOUT' })
+    expect(calls).toEqual([{ timeout: 25_000, event: 'round:setSource', payload: { source: 'western-hot' } }])
   })
 
   it('其餘請求逾時 5 秒；沒等到 ack → TIMEOUT', async () => {
@@ -245,7 +262,7 @@ describe('出題動作的請求（round:volunteer／round:setArtist／round:canc
   it('未連線：不送出，回 DISCONNECTED', async () => {
     const { client } = await load(fakeSessionStorage())
     const timeout = vi.spyOn(client.socket, 'timeout')
-    for (const r of [await client.volunteer(), await client.setArtist('x'), await client.cancelRound(), await client.sendChat('x')]) {
+    for (const r of [await client.volunteer(), await client.setSource({ source: 'artist', artist: 'x', hot: true }), await client.cancelRound(), await client.sendChat('x')]) {
       expect(r).toMatchObject({ ok: false, error: 'DISCONNECTED' })
     }
     expect(timeout).not.toHaveBeenCalled()

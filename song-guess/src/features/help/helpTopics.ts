@@ -5,8 +5,10 @@
 // 六個主題（design §1）：怎麼玩、出題、猜歌、計分、聲音與耳機、切換偽裝。
 import {
   ARTIST_MAX,
+  CHART_SIZE,
   CHAT_MAX,
   CHOOSING_SECONDS,
+  HOT_POOL,
   MIN_PLAYERS,
   PREVIEW_CAP_MS,
   RECONNECT_GRACE_SECONDS,
@@ -14,6 +16,7 @@ import {
   SCORE_MAX,
   SCORE_MIN,
   SONGS_PER_GAME,
+  SOURCE_TITLE,
 } from '@fishing-work/shared/song-guess'
 import { START_PLAYBACK_LABEL } from '../player/playback'
 import { VOLUME_DEFAULT, VOLUME_MAX, VOLUME_MIN } from '../player/volume'
@@ -44,7 +47,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     id: 'how-to-play',
     title: '怎麼玩',
     paragraphs: [
-      `一個人出題、指定一位歌手，系統從這位歌手的歌裡隨機抽 ${SONGS_PER_GAME} 首；大家同時聽每首約 ${PREVIEW_SECONDS} 秒的試聽，在聊天室打字猜歌名，越快猜對分數越高。`,
+      `一個人出題、選一個題庫：指定一位歌手，或用今天的「${SOURCE_TITLE['tw-hot']}」「${SOURCE_TITLE['western-hot']}」排行榜，系統從裡面隨機抽 ${SONGS_PER_GAME} 首；大家同時聽每首約 ${PREVIEW_SECONDS} 秒的試聽，在聊天室打字猜歌名，越快猜對分數越高。`,
       `每首試聽播完就揭曉歌名、歌手、專輯封面與猜對的人，停 ${REVEAL_SECONDS} 秒自動播下一首；${SONGS_PER_GAME} 首都結束後顯示本局排名，一直停到有人再出題。`,
       `局進行中才加入的人會從目前進度接著聽，也可以猜、可以得分。斷線 ${RECONNECT_GRACE_SECONDS} 秒內回來（含重新整理）會自動接回原本的暱稱與分數，並從正確的位置接著播；同一個暱稱在別的分頁加入會接管，原分頁回到首頁。`,
     ],
@@ -54,9 +57,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     title: '出題',
     paragraphs: [
       `房間至少 ${MIN_PLAYERS} 人在線、沒有進行中的局時，按「{volunteer}」，你就是這一局的出題者。`,
-      `在 ${CHOOSING_SECONDS} 秒內輸入歌手名稱（1–${ARTIST_MAX} 字）並按 Enter，系統會去搜尋這位歌手；搜尋成功就立刻開始第 1 首。按 Esc 取消出題，逾時沒送出也會取消。`,
+      `先在上方選題庫來源：歌手、${SOURCE_TITLE['tw-hot']}或${SOURCE_TITLE['western-hot']}（每次出題都從「歌手」開始），在 ${CHOOSING_SECONDS} 秒內送出；系統取到歌就立刻開始第 1 首。按 Esc 取消出題，逾時沒送出也會取消。`,
+      `歌手：輸入歌手名稱（1–${ARTIST_MAX} 字）並按 Enter，系統會去搜尋這位歌手。「只抽熱門歌」預設勾選：搜尋結果本來就依 Apple 的熱門度排序，勾了只從最前面的 ${HOT_POOL} 首裡抽；取消勾選就從搜得到的全部歌裡抽，比較冷門的歌也會出現。勾不勾會記在你的瀏覽器，下次沿用。`,
       `這位歌手至少要有 ${SONGS_PER_GAME} 首有試聽的歌；找不到或搜尋失敗時會顯示原因，可以換一位或再試一次。`,
-      '出題者只決定歌手，不知道會抽到哪幾首，所以也和大家一起猜。歌手名稱會全程顯示給所有人。',
+      `${SOURCE_TITLE['tw-hot']}、${SOURCE_TITLE['western-hot']}：不用輸入，直接從今天的 Apple Music 熱門排行榜（${SOURCE_TITLE['tw-hot']}是台灣榜、${SOURCE_TITLE['western-hot']}是美國榜）前 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首，不分語言，台灣榜也會有韓文、英文歌；排行榜每天更新。取不到排行榜時會顯示原因，可以再試一次或換一個來源。`,
+      '出題者只決定題庫，不知道會抽到哪幾首，所以也和大家一起猜。題庫名稱、第幾首與這首歌的歌手會全程顯示給所有人；用排行榜時每首的歌手可能不同，是猜歌的提示。',
     ],
   },
   {

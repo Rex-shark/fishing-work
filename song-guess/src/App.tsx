@@ -14,7 +14,7 @@ import { AudioPlayer } from './features/player/AudioPlayer'
 import { VolumeControl } from './features/player/VolumeControl'
 import { PlayerList } from './features/players/PlayerList'
 import { showsLastResults } from './features/reveal/revealView'
-import { ArtistDialog } from './features/round/ArtistDialog'
+import { SourceDialog } from './features/round/SourceDialog'
 import { RoundStatus, VolunteerStatus } from './features/round/RoundStatus'
 import { countConnected, setterNameOf } from './features/round/roundDisplay'
 import { Stage } from './features/stage/Stage'
@@ -93,7 +93,7 @@ function App() {
             <>
               {/* 說明放最前：出題與它同時出現時疊在上面（同 z 層後渲染者在上） */}
               <HelpDialog />
-              <ArtistDialog />
+              <SourceDialog />
             </>
           }
         />

@@ -8,6 +8,8 @@
 // Epic 16：猜歌的 ITUNES_URL 預設是真的 https://itunes.apple.com（每 IP 約 20 次／分鐘）。沒注入搜尋器的測試
 // （例：另兩款的 e2e 以 createApp() 起整個 server）不會主動搜尋，但為了保險同樣指到連不上的位址；
 // 要測搜尋的測試一律注入 fetch、注入假搜尋器，或連 user/mock/itunes.mjs（spec/song-guess/architecture.md §6）。
+// Epic 18：排行榜 RSS 的 ITUNES_RSS_URL 預設是真的 https://rss.marketingtools.apple.com，同理指到連不上的位址；
+// 要測排行榜的測試一律注入 fetch 或假的排行榜取得器（真 Apple 樣本在 test/fixtures/song-guess.chart.json）。
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -17,6 +19,7 @@ export default defineConfig({
       OLLAMA_URL: 'http://127.0.0.1:1',
       COMMENT: 'off',
       ITUNES_URL: 'http://127.0.0.1:1',
+      ITUNES_RSS_URL: 'http://127.0.0.1:1',
     },
   },
 });

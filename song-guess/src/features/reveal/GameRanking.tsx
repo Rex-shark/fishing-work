@@ -1,17 +1,18 @@
 // 本局排名表（spec/song-guess/design.md §1「本局排名」）：名次、暱稱、本局得分、猜對首數；前三名 --accent；
-// 標題「本局結果 · <歌手>」。ended 顯示本局；idle 有上一局結果時同樣顯示（results／lastArtist 保留到下一局第 1 首開始）。
+// 標題「本局結果 · {lastTopic}」（歌手正式名、「台灣熱門」或「西洋熱門」）。ended 顯示本局；idle 有上一局結果時同樣顯示（results／lastTopic 保留到下一局第 1 首開始）。
 // 停到有人出題為止，沒有計時。色彩一律用 token class；不含任何偽裝字樣。
 import { useGameStore } from '../../store/game'
+import { rankingTopicOf } from '../round/roundDisplay'
 import { rankingRows, rankingTitle, type RankingRow } from './revealView'
 
 /** 接 store：有結果才渲染 */
 export function GameRanking() {
   const results = useGameStore((s) => s.round.results)
-  // lastArtist＝results 對應的歌手正式名（＝該局的 artistDisplay），與 results 同生命週期（events.ts）；沒帶到時退回本局的歌手名
-  const artist = useGameStore((s) => s.round.lastArtist ?? s.round.artistDisplay ?? s.round.artist)
+  // lastTopic＝results 對應的題庫標題（＝該局的 topic），與 results 同生命週期（events.ts）；沒帶到時退回本局的題庫標題
+  const topic = useGameStore((s) => rankingTopicOf(s.round))
   const me = useGameStore((s) => s.me)
   if (results === null || results.length === 0) return null
-  return <GameRankingView title={rankingTitle(artist)} rows={rankingRows(results, me)} />
+  return <GameRankingView title={rankingTitle(topic)} rows={rankingRows(results, me)} />
 }
 
 export function GameRankingView({ title, rows }: { title: string; rows: readonly RankingRow[] }) {

@@ -33,3 +33,9 @@ export const RECONNECT_GRACE_SECONDS = 15;
 export const SCORE_MAX = 100;
 /** 單首最低得分（試聽最後一刻猜對） */
 export const SCORE_MIN = 50;
+/** 歌手模式「只抽熱門歌」的候選數：過濾去重後保持 iTunes 回傳順序（＝熱門度）取前 30 首再抽（Epic 18） */
+export const HOT_POOL = 30;
+/** 排行榜抓幾首（RSS 路徑中的數字；Epic 18） */
+export const CHART_SIZE = 100;
+/** 榜單來源的題庫標題（RoundPublic.topic；對話框選項文字也用它；Epic 18） */
+export const SOURCE_TITLE = { 'tw-hot': '台灣熱門', 'western-hot': '西洋熱門' } as const;

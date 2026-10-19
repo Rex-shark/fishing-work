@@ -21,7 +21,7 @@ describe('初始狀態', () => {
   it('未加入、idle、沒有偏移', () => {
     expect(store().me).toBeNull()
     expect(store().round).toBe(initialRound)
-    expect(initialRound).toMatchObject({ gameNo: 0, phase: 'idle', setterId: null, song: null, reveal: null, results: null, lastArtist: null })
+    expect(initialRound).toMatchObject({ gameNo: 0, phase: 'idle', setterId: null, song: null, reveal: null, results: null, source: null, topic: null, artistHot: false, lastTopic: null, lastSource: null })
     expect(store().clockOffset).toBe(0)
     expect(store().gainBase).toBeNull()
   })

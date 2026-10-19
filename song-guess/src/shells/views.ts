@@ -8,12 +8,13 @@ import type { ChatKind, PlayerPublic } from '@fishing-work/shared/song-guess'
 
 /**
  * 對話框用途：殼層依用途決定位置、標題與外觀（meet：白卡片）。
- * 'artist'＝出題（features/round/ArtistDialog）：輸入歌手名；items 第一個＝送出（搜尋並開始）、第二個＝取消出題；
+ * 'source'＝出題（features/round/SourceDialog）：choices＝題庫來源三選一；歌手模式有 input（歌手名）與 toggle（只抽熱門歌），
+ *   榜單模式沒有 input、改以 description 一行說明；items 第一個＝送出、第二個＝取消出題；
  *   標題與按鈕文字由殼層決定（偽裝字樣只在殼層；spec/song-guess/design.md §1）。
  * 'help'（features/help/HelpDialog）：title 為對話框標題（「說明」或主題名稱）；沒有 body 時 items 為主題清單，
  *   有 body 時 items 為「返回」「關閉」，按鈕顯示選項原文（DESIGN §16）
  */
-export type DialogPurpose = 'artist' | 'help'
+export type DialogPurpose = 'source' | 'help'
 
 export interface DialogItem {
   id: string
@@ -38,14 +39,55 @@ export interface DialogField {
   maxLength?: number
   invalid?: boolean
   enterKeyHint?: 'go' | 'send' | 'done' | 'search'
+  /**
+   * 掛上時取得焦點（預設 true）。呼叫端在使用者切換來源後給 false：從榜單切回歌手時焦點留在三選一上，
+   * 方向鍵才能繼續切換（不被新掛上的欄位搶走）
+   */
+  autoFocus?: boolean
+}
+
+/** 單選的一個選項 */
+export interface DialogChoice {
+  id: string
+  label: string
+}
+
+/**
+ * 輸入框上方的單選（出題的題庫來源）：殼層以 role="radiogroup" 呈現（方向鍵、Home／End 切換，只有選中的那個在 Tab 順序裡）。
+ * locked（送出中）：不可切換，只設 aria-disabled，**不得用原生 disabled**（理由同 DialogProps.busy）
+ */
+export interface DialogChoices {
+  /** radiogroup 的無障礙名稱 */
+  label: string
+  options: readonly DialogChoice[]
+  value: string
+  onChange(id: string): void
+  locked?: boolean
+}
+
+/** 輸入框下方的勾選（出題的「只抽熱門歌」）；locked 同 DialogChoices */
+export interface DialogToggle {
+  label: string
+  checked: boolean
+  onChange(checked: boolean): void
+  locked?: boolean
 }
 
 export interface DialogProps {
   purpose: DialogPurpose
   /** 對話框的無障礙名稱 */
   label: string
+  /** 輸入框上方的單選；省略＝沒有 */
+  choices?: DialogChoices
   /** 輸入框；省略時為純選單（例如說明清單） */
   input?: DialogField
+  /** 輸入框下方的勾選；省略＝沒有 */
+  toggle?: DialogToggle
+  /**
+   * 沒有輸入框時的一行說明（出題的榜單模式；殼層以次要文字色呈現）；第一個選項的 detail（倒數）擺在它旁邊。
+   * 有輸入框時不用（detail 擺在欄位標籤旁）
+   */
+  description?: string
   /** 選單上方的提問文字 */
   title?: string
   /**
@@ -181,8 +223,8 @@ export type StagePlayback = 'idle' | 'waiting' | 'playing' | 'blocked' | 'over'
 /**
  * 舞台的三種「非結果」畫面（每首揭曉卡與本局排名表是功能元件 features/reveal，不經殼層）：
  * - empty：沒有局、也沒有上一局結果
- * - preparing：出題者正在輸入歌手（choosing）；自己是出題者時對話框疊在上面
- * - playing：某一首播放中：殼層畫「有聲音在播」的視覺（不得顯示歌名與封面）、歌手與第幾首；
+ * - preparing：出題者正在選題庫（choosing）；自己是出題者時對話框疊在上面
+ * - playing：某一首播放中：殼層畫「有聲音在播」的視覺（不得顯示歌名與封面）＋功能元件給的兩行字（題庫標題與第幾首、本首歌手）；
  *   playback 為 'blocked'（瀏覽器擋自動播放）時須顯示一個按鈕讓使用者點一下，呼叫 onStart
  */
 export type StageViewProps =
@@ -190,12 +232,10 @@ export type StageViewProps =
   | { kind: 'preparing'; setterName: string | null; isSetter: boolean }
   | {
       kind: 'playing'
-      /** 歌手名（iTunes 的正式名稱，沒有時為出題者輸入的；兩者皆無為 null） */
-      artist: string | null
-      /** 第幾首（1 起） */
-      index: number
-      /** 一局幾首 */
-      total: number
+      /** 第一行：「孫燕姿（熱門） · 第 2 / 5 首」「台灣熱門 · 第 2 / 5 首」（features/round/roundDisplay.playingStageLines） */
+      heading: string
+      /** 第二行：「歌手：周杰倫」；null＝不顯示（歌手模式且與題庫標題相同） */
+      artistLine: string | null
       playback: StagePlayback
       /** 手動起播按鈕的文字（features/player/playback.START_PLAYBACK_LABEL） */
       startLabel: string

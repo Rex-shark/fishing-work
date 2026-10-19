@@ -1,6 +1,6 @@
 // 猜歌的 Socket 連線（spec/song-guess/architecture.md §4）：namespace /song-guess、加入與重連接管、出題動作、聊天（兼猜歌）。
 // 重連憑證的寫法複製自我畫你猜（sessionStorage，每個分頁各自一份），鍵改為 fishing-work:song-guess:session（不與另兩款撞鍵）。
-// 客戶端不呼叫 iTunes：歌手名交給 server 搜尋（round:setArtist），試聽與封面網址由 round:update 帶來。
+// 客戶端不呼叫 iTunes：題庫來源（歌手名或排行榜）交給 server 取歌（round:setSource），試聽與封面網址由 round:update 帶來。
 import { io, type Socket } from 'socket.io-client'
 import {
   SONG_GUESS_NAMESPACE,
@@ -9,6 +9,7 @@ import {
   type ErrorCode,
   type JoinResult,
   type ServerToClientEvents,
+  type SongSourcePayload,
 } from '@fishing-work/shared/song-guess'
 import { useGameStore } from '../store/game'
 
@@ -29,10 +30,11 @@ export const SESSION_KEY = 'fishing-work:song-guess:session'
 const JOIN_TIMEOUT_MS = 5000
 const ACK_TIMEOUT_MS = 5000
 /**
- * 送歌手名要等 server 搜尋 iTunes（逾時 ITUNES_TIMEOUT_MS 預設 8 秒，architecture §3）才回 ack，逾時放寬到 15 秒。
- * 逾時只代表沒等到 ack：搜尋可能仍在進行（再送會得到 SEARCH_BUSY）或已成功（round:update 會把畫面帶進第 1 首）
+ * 送題庫來源要等 server 取歌才回 ack（歌手：搜尋 iTunes，ITUNES_TIMEOUT_MS 預設 8 秒；榜單：RSS 段 ITUNES_RSS_TIMEOUT_MS 預設 12 秒 ＋ lookup 段 8 秒，architecture §3），
+ * 逾時放寬到 25 秒（Epic 18 由 15 改 25，決策 14；architecture §7）。
+ * 逾時只代表沒等到 ack：取歌可能仍在進行（再送會得到 SEARCH_BUSY）或已成功（round:update 會把畫面帶進第 1 首）
  */
-export const SET_ARTIST_ACK_TIMEOUT_MS = 15_000
+export const SET_SOURCE_ACK_TIMEOUT_MS = 25_000
 
 export interface SavedSession {
   nickname: string
@@ -217,13 +219,13 @@ export function volunteer(): Promise<ActionOutcome> {
 }
 
 /**
- * 出題者送歌手名（phase = choosing）：server 搜尋後才回 ack。成功時 round:update 已把階段帶進第 1 首 playing；
- * 失敗（ARTIST_INVALID／ARTIST_NOT_FOUND／SEARCH_FAILED／SEARCH_BUSY）仍在 choosing，可以改名字再送
+ * 出題者送題庫來源（phase = choosing）：server 取歌後才回 ack。成功時 round:update 已把階段帶進第 1 首 playing；
+ * 失敗（ARTIST_INVALID／ARTIST_NOT_FOUND／SEARCH_FAILED／CHART_FAILED／SOURCE_INVALID／SEARCH_BUSY）仍在 choosing，可以改了再送或換來源
  */
-export function setArtist(artist: string): Promise<ActionOutcome> {
+export function setSource(payload: SongSourcePayload): Promise<ActionOutcome> {
   return new Promise((resolve) => {
     if (!socket.connected) return resolve(NOT_CONNECTED)
-    socket.timeout(SET_ARTIST_ACK_TIMEOUT_MS).emit('round:setArtist', { artist }, (err, res) => resolve(toOutcome(err, res)))
+    socket.timeout(SET_SOURCE_ACK_TIMEOUT_MS).emit('round:setSource', payload, (err, res) => resolve(toOutcome(err, res)))
   })
 }
 

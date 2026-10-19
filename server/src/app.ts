@@ -13,7 +13,7 @@ import { registerDrawContest, type DrawContestNamespace } from './games/draw-con
 import type { Room as DrawContestRoom, RoomDurations as DrawContestDurations } from './games/draw-contest/room';
 import { registerDrawGuess, type DrawGuessNamespace, type PendingBytesOf } from './games/draw-guess/register';
 import type { Clock, Room, RoomDurations } from './games/draw-guess/room';
-import type { SongSearcher } from './games/song-guess/itunes';
+import type { ChartFetcher, SongSearcher } from './games/song-guess/itunes';
 import { registerSongGuess, type SongGuessNamespace } from './games/song-guess/register';
 import type { Room as SongGuessRoom, RoomDurations as SongGuessDurations } from './games/song-guess/room';
 import { mountStatic } from './static';
@@ -41,6 +41,8 @@ export interface AppOptions {
   songDurations?: Partial<SongGuessDurations>;
   /** 猜歌：注入歌手搜尋器（測試用；預設依環境變數 ITUNES_URL 等建立帶快取的 iTunes 客戶端） */
   songSearch?: SongSearcher;
+  /** 猜歌：注入排行榜取得器（測試用；Epic 18；預設依環境變數 ITUNES_RSS_URL、ITUNES_URL 等建立） */
+  songChart?: ChartFetcher;
   /** 猜歌：注入抽歌用的亂數（測試用；預設 Math.random） */
   songRandom?: () => number;
 }
@@ -106,6 +108,7 @@ export function createApp(options: AppOptions = {}): App {
     clock: options.clock,
     durations: options.songDurations,
     search: options.songSearch,
+    chart: options.songChart,
     random: options.songRandom,
   });
 

@@ -1,10 +1,18 @@
 // 猜歌抽歌：spec/song-guess/architecture.md §4「答案判定」歌名去重、§5 choosing、§6 picker
-// fixture 為真 iTunes 回應裁出的樣本（server/test/fixtures/song-guess.itunes.json）。
+// fixture 為真 iTunes 回應裁出的樣本（server/test/fixtures/song-guess.itunes.json；排行榜 song-guess.chart.json，Epic 18）。
 import { describe, expect, it } from 'vitest';
-import { SONGS_PER_GAME, normalizeTitle } from '@fishing-work/shared/song-guess';
-import { isLiveVersion, majorityArtist, mostFrequentArtist, pick, topArtist, type PickedSong } from '../src/games/song-guess/picker';
+import { HOT_POOL, SONGS_PER_GAME, normalizeTitle } from '@fishing-work/shared/song-guess';
+import {
+  isLiveVersion,
+  majorityArtist,
+  mostFrequentArtist,
+  pick,
+  pickChart,
+  topArtist,
+  type PickedSong,
+} from '../src/games/song-guess/picker';
 import type { ItunesTrack } from '../src/games/song-guess/itunes';
-import { fixtureTracks, seededRandom, track, type FixtureTerm } from './helpers/songGuess';
+import { chartFixtureTracks, fixtureTracks, seededRandom, track, type FixtureTerm } from './helpers/songGuess';
 
 const N = SONGS_PER_GAME;
 
@@ -31,10 +39,10 @@ function mustPick(term: FixtureTerm, artist: string = term, seed = 7) {
 }
 
 describe('pick：基本', () => {
-  it('孫燕姿：抽 5 首、各不相同、都有試聽、歌手名含輸入、artistDisplay 為正式名稱', () => {
-    const { songs, artistDisplay } = mustPick('孫燕姿');
+  it('孫燕姿：抽 5 首、各不相同、都有試聽、歌手名含輸入、topic 為正式名稱', () => {
+    const { songs, topic } = mustPick('孫燕姿');
     expect(songs).toHaveLength(5);
-    expect(artistDisplay).toBe('孫燕姿');
+    expect(topic).toBe('孫燕姿');
     expect(new Set(songs.map((s) => normalizeTitle(s.title))).size).toBe(5);
     for (const s of songs) {
       expect(s.artist).toContain('孫燕姿');
@@ -56,7 +64,7 @@ describe('pick：基本', () => {
   });
 
   it('輸入不分大小寫、全形、空白', () => {
-    expect(pick(fixtureTracks('Taylor Swift'), 'ｔａｙｌｏｒ　ＳＷＩＦＴ', N, seededRandom(1))?.artistDisplay).toBe('Taylor Swift');
+    expect(pick(fixtureTracks('Taylor Swift'), 'ｔａｙｌｏｒ　ＳＷＩＦＴ', N, seededRandom(1))?.topic).toBe('Taylor Swift');
     expect(pick(fixtureTracks('Taylor Swift'), 'taylorswift', N, seededRandom(1))?.songs).toHaveLength(5);
   });
 
@@ -79,7 +87,7 @@ describe('pick：歌手過濾', () => {
     expect(pool.has(normalizeTitle('知足'))).toBe(false);
     expect(pool.has(normalizeTitle('我不該哭'))).toBe(false);
     expect(pool.has(normalizeTitle('不搖滾'))).toBe(false);
-    expect(mustPick('告五人').artistDisplay).toBe('告五人');
+    expect(mustPick('告五人').topic).toBe('告五人');
   });
 
   it('告五人的「唯一」是本人的版本，不是五月天 feat. 告五人的同名歌', () => {
@@ -96,12 +104,12 @@ describe('pick：歌手過濾', () => {
     expect(pool.has(normalizeTitle('The Joker And The Queen'))).toBe(false);
   });
 
-  it('artistDisplay 取過濾後出現最多次的 artistName（合唱曲的「A & B」不影響）', () => {
-    expect(mustPick('周杰倫').artistDisplay).toBe('周杰倫');
+  it('topic 取過濾後出現最多次的 artistName（合唱曲的「A & B」不影響）', () => {
+    expect(mustPick('周杰倫').topic).toBe('周杰倫');
     // 合唱曲佔多數時才會變
     const duet = [1, 2, 3].map((i) => track(i, `合唱${i}`, { artistName: '孫燕姿 & 蔡健雅' }));
     const solo = [4, 5].map((i) => track(i, `獨唱${i}`));
-    expect(pick([...duet, ...solo], '孫燕姿', 5)?.artistDisplay).toBe('孫燕姿 & 蔡健雅');
+    expect(pick([...duet, ...solo], '孫燕姿', 5)?.topic).toBe('孫燕姿 & 蔡健雅');
   });
 });
 
@@ -110,7 +118,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
     const tracks = fixtureTracks('Jay Chou');
     expect(tracks.some((t) => t.artistName.toLowerCase().includes('jay'))).toBe(false);
     const picked = mustPick('Jay Chou');
-    expect(picked.artistDisplay).toBe('周杰倫');
+    expect(picked.topic).toBe('周杰倫');
     expect(picked.songs).toHaveLength(5);
     for (const s of picked.songs) expect(s.artist).toContain('周杰倫');
   });
@@ -119,7 +127,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
     const mine = [1, 2, 3, 4, 5].map((i) => track(i, `我的歌${i}`, { artistName: '小樂團' }));
     const others = Array.from({ length: 20 }, (_, i) => track(100 + i, `別人的歌${i}`, { artistName: '大明星' }));
     const picked = pick([...others, ...mine], '小樂團', 5, seededRandom(2));
-    expect(picked?.artistDisplay).toBe('小樂團');
+    expect(picked?.topic).toBe('小樂團');
     expect(picked?.songs.every((s) => s.artist === '小樂團')).toBe(true);
   });
 
@@ -130,7 +138,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
     expect(top).toEqual({ name: '周杰倫', count: 17 });
     expect((top?.count ?? 0) * 2).toBeGreaterThan(tracks.length);
     expect(majorityArtist(tracks)).toBe('周杰倫');
-    expect(pick(tracks, 'Jay Chou', N, seededRandom(1))?.artistDisplay).toBe('周杰倫');
+    expect(pick(tracks, 'Jay Chou', N, seededRandom(1))?.topic).toBe('周杰倫');
   });
 
   it('退回須過半：190／200（真實比例）可退回', () => {
@@ -138,7 +146,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
       ...Array.from({ length: 190 }, (_, i) => track(i + 1, `周杰倫的歌${i}`, { artistName: '周杰倫' })),
       ...Array.from({ length: 10 }, (_, i) => track(500 + i, `合唱${i}`, { artistName: '温嵐 & 周杰倫' })),
     ];
-    expect(pick(tracks, 'Jay Chou', N, seededRandom(1))?.artistDisplay).toBe('周杰倫');
+    expect(pick(tracks, 'Jay Chou', N, seededRandom(1))?.topic).toBe('周杰倫');
   });
 
   it('退回須過半：結果被多位歌手瓜分、沒有人過半 → 不退回（null），不會出別人的歌', () => {
@@ -157,7 +165,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
     expect(topArtist(mixed)).toEqual({ name: '告五人', count: 15 });
     expect(mixed).toHaveLength(33);
     expect(pick(mixed, '對不上的名字', N)).toBeNull();
-    expect(pick(mixed, '告五人', N)?.artistDisplay).toBe('告五人');
+    expect(pick(mixed, '告五人', N)?.topic).toBe('告五人');
   });
 
   it('退回須過半的邊界：剛好一半不算，多一首才算', () => {
@@ -168,7 +176,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
     expect(pick([...mine(5), ...others(5)], 'Jay Chou', N)).toBeNull();
     // 6／11：過半 → 退回
     expect(majorityArtist([...mine(6), ...others(5)])).toBe('周杰倫');
-    expect(pick([...mine(6), ...others(5)], 'Jay Chou', N)?.artistDisplay).toBe('周杰倫');
+    expect(pick([...mine(6), ...others(5)], 'Jay Chou', N)?.topic).toBe('周杰倫');
     // 6／12：剛好一半 → 不退回
     expect(pick([...mine(6), ...others(6)], 'Jay Chou', N)).toBeNull();
     // 1／1、0 筆
@@ -181,7 +189,7 @@ describe('pick：最多次 artistName 退回（英文名、別名）', () => {
     const noPreview = Array.from({ length: 6 }, (_, i) => track(100 + i, `沒試聽${i}`, { artistName: `路人${i}`, previewUrl: null }));
     // 有試聽的全是周杰倫，但 6／12 不過半 → 不退回
     expect(pick([...mine, ...noPreview], 'Jay Chou', N)).toBeNull();
-    expect(pick([...mine, ...noPreview.slice(0, 5)], 'Jay Chou', N)?.artistDisplay).toBe('周杰倫');
+    expect(pick([...mine, ...noPreview.slice(0, 5)], 'Jay Chou', N)?.topic).toBe('周杰倫');
   });
 
   it('過半只看「完全相同的 artistName」：合唱寫法（A & B）各算各的', () => {
@@ -386,5 +394,182 @@ describe('mostFrequentArtist／topArtist', () => {
     expect(mostFrequentArtist(fixtureTracks('告五人'))).toBe('告五人');
     expect(mostFrequentArtist([track(1, 'a', { artistName: 'B' }), track(2, 'b', { artistName: 'A' })])).toBe('B');
     expect(mostFrequentArtist([])).toBeNull();
+  });
+});
+
+// ─── Epic 18：熱門（HOT_POOL）與排行榜 ──────────────────────────────
+
+/** n 首合成歌：歌名「第i名」，依名次排列（iTunes 回傳順序＝熱門度） */
+function ranked(count: number, overrides: (i: number) => Partial<ItunesTrack> = () => ({})): ItunesTrack[] {
+  return Array.from({ length: count }, (_, k) => track(k + 1, `第${k + 1}名`, overrides(k + 1)));
+}
+
+/** 多組亂數抽很多次，收集抽到過的 trackId */
+function idsOver(run: (random: () => number) => PickedSong[] | undefined, rounds = 300): Set<number> {
+  const ids = new Set<number>();
+  for (let seed = 1; seed <= rounds; seed++) for (const s of run(seededRandom(seed)) ?? []) ids.add(s.trackId);
+  return ids;
+}
+
+describe('pick：熱門（hot，Epic 18 決策 2）', () => {
+  it('HOT_POOL 為 30', () => {
+    expect(HOT_POOL).toBe(30);
+  });
+
+  it('hot：60 首裡只會抽到前 30 名；多抽幾次前 30 名都抽得到', () => {
+    const tracks = ranked(60);
+    const ids = idsOver((r) => pick(tracks, '孫燕姿', N, r, { hot: true })?.songs);
+    for (const id of ids) expect(id).toBeLessThanOrEqual(HOT_POOL);
+    expect(ids.size).toBe(HOT_POOL);
+  });
+
+  it('非 hot（預設與 hot: false）：會抽到 30 名之後', () => {
+    const tracks = ranked(60);
+    for (const options of [undefined, { hot: false }]) {
+      const ids = idsOver((r) => pick(tracks, '孫燕姿', N, r, options)?.songs);
+      expect([...ids].some((id) => id > HOT_POOL)).toBe(true);
+      expect(ids.size).toBe(60);
+    }
+  });
+
+  it('前 30 名以「過濾去重後」計：別人的歌、沒試聽、括號開頭與重複版本不佔名額', () => {
+    // 原始順序：前 40 筆裡夾著 10 首別人的、5 首沒試聽、5 首重複版本 → 本人可抽的第 30 首在原始第 50 筆左右
+    const tracks: ItunesTrack[] = [];
+    let id = 1;
+    for (let k = 1; k <= 40; k++) {
+      tracks.push(track(id++, `本人${k}`));
+      if (k <= 10) tracks.push(track(id++, `別人${k}`, { artistName: '路人' }));
+      if (k <= 5) tracks.push(track(id++, `沒試聽${k}`, { previewUrl: null }));
+      if (k <= 5) tracks.push(track(id++, `本人${k} (Live)`));
+    }
+    const titles = new Set<string>();
+    for (let seed = 1; seed <= 300; seed++) {
+      for (const s of pick(tracks, '孫燕姿', N, seededRandom(seed), { hot: true })?.songs ?? []) titles.add(normalizeTitle(s.title));
+    }
+    expect(titles).toEqual(new Set(Array.from({ length: 30 }, (_, k) => normalizeTitle(`本人${k + 1}`))));
+  });
+
+  it('去重留下的版本不改名次：Live 版排在前面時，該歌仍以第一次出現的名次計', () => {
+    // 第 1 筆是「第1名 (Live)」、錄音室版在最後（第 61 筆）→ 第1名仍在前 30，抽到的是錄音室版
+    const tracks = [track(1000, '第1名 (Live)'), ...ranked(60).slice(1), track(1, '第1名')];
+    const picked = new Map<string, number>();
+    for (let seed = 1; seed <= 300; seed++) {
+      for (const s of pick(tracks, '孫燕姿', N, seededRandom(seed), { hot: true })?.songs ?? []) picked.set(s.title, s.trackId);
+    }
+    expect(picked.get('第1名')).toBe(1);
+    expect(picked.has('第1名 (Live)')).toBe(false);
+    expect([...picked.values()].every((x) => x === 1 || x <= HOT_POOL)).toBe(true);
+  });
+
+  it('不足 30 首：hot 等同全部（12 首全抽得到），結果與非 hot 相同', () => {
+    const tracks = ranked(12);
+    expect(idsOver((r) => pick(tracks, '孫燕姿', N, r, { hot: true })?.songs).size).toBe(12);
+    for (let seed = 1; seed <= 20; seed++) {
+      expect(pick(tracks, '孫燕姿', N, seededRandom(seed), { hot: true })).toEqual(pick(tracks, '孫燕姿', N, seededRandom(seed)));
+    }
+  });
+
+  it('剛好 30 首與 31 首的邊界：31 首時第 31 名抽不到', () => {
+    expect(idsOver((r) => pick(ranked(30), '孫燕姿', N, r, { hot: true })?.songs).size).toBe(30);
+    const ids = idsOver((r) => pick(ranked(31), '孫燕姿', N, r, { hot: true })?.songs);
+    expect(ids.has(31)).toBe(false);
+    expect(ids.size).toBe(30);
+  });
+
+  it('退回（最多次 artistName）那一輪同樣套 hot：Jay Chou → 周杰倫 60 首，只抽前 30', () => {
+    const tracks = ranked(60, () => ({ artistName: '周杰倫' }));
+    const ids = idsOver((r) => {
+      const picked = pick(tracks, 'Jay Chou', N, r, { hot: true });
+      expect(picked?.topic).toBe('周杰倫');
+      return picked?.songs;
+    });
+    expect(Math.max(...ids)).toBeLessThanOrEqual(HOT_POOL);
+    expect(Math.max(...idsOver((r) => pick(tracks, 'Jay Chou', N, r, { hot: false })?.songs))).toBeGreaterThan(HOT_POOL);
+  });
+
+  it('topic 在 hot 時以前 30 首計：前 30 名多為合唱寫法時 topic 跟著變；非 hot 以全部計', () => {
+    // 前 30 名：20 首「孫燕姿 & 蔡健雅」＋10 首「孫燕姿」；之後 40 首「孫燕姿」
+    const tracks = ranked(70, (i) => ({ artistName: i <= 20 ? '孫燕姿 & 蔡健雅' : '孫燕姿' }));
+    expect(pick(tracks, '孫燕姿', N, seededRandom(1), { hot: true })?.topic).toBe('孫燕姿 & 蔡健雅');
+    expect(pick(tracks, '孫燕姿', N, seededRandom(1), { hot: false })?.topic).toBe('孫燕姿');
+  });
+
+  it('真回應（孫燕姿 15 首可抽，不足 30）：hot 與非 hot 的候選相同', () => {
+    const tracks = fixtureTracks('孫燕姿');
+    const hot = idsOver((r) => pick(tracks, '孫燕姿', N, r, { hot: true })?.songs, 200);
+    const all = idsOver((r) => pick(tracks, '孫燕姿', N, r)?.songs, 200);
+    expect(hot).toEqual(all);
+    expect(hot.size).toBe(15);
+  });
+});
+
+describe('pickChart（Epic 18：台灣熱門／西洋熱門）', () => {
+  it('真榜單樣本（tw 20 首、us 20 首）：抽 5 首、都有試聽、各不相同', () => {
+    for (const country of ['tw', 'us'] as const) {
+      const tracks = chartFixtureTracks(country);
+      expect(tracks).toHaveLength(20);
+      const songs = pickChart(tracks, N, seededRandom(3));
+      expect(songs).toHaveLength(5);
+      expect(new Set(songs?.map((s) => s.trackId)).size).toBe(5);
+      for (const s of songs ?? []) expect(s.previewUrl).toMatch(/^https:\/\/audio-ssl\.itunes\.apple\.com\//);
+    }
+  });
+
+  it('真台灣榜不過濾語言：韓團、中文歌都抽得到；20 首全部可抽', () => {
+    const ids = idsOver((r) => pickChart(chartFixtureTracks('tw'), N, r) ?? undefined, 300);
+    expect(ids.size).toBe(20);
+    const artists = new Set(chartFixtureTracks('tw').filter((t) => ids.has(t.trackId)).map((t) => t.artistName));
+    expect(artists.has('周杰倫')).toBe(true);
+    expect(artists.has('A2O & A2O LITE')).toBe(true);
+  });
+
+  it('去重鍵＝artistName ＋ normalizeTitle：同歌手同名（含副標、Live）只留一首，不同歌手同名各算一首', () => {
+    const tracks = [
+      track(1, '晴天', { artistName: '周杰倫' }),
+      track(2, '晴天 (Live)', { artistName: '周杰倫' }),
+      track(3, '晴天', { artistName: '別的歌手' }),
+      track(4, '歌4', { artistName: 'A' }),
+      track(5, '歌5', { artistName: 'B' }),
+    ];
+    expect(pickChart(tracks, 5)).toBeNull();
+    const four = pickChart(tracks, 4, seededRandom(1));
+    expect(four?.map((s) => s.trackId).sort()).toEqual([1, 3, 4, 5]);
+  });
+
+  it('排除：沒試聽、純符號歌名（normalizeTitle 空）、括號開頭（mainTitle 空）', () => {
+    const bad = [
+      track(1, '沒試聽', { previewUrl: null, artistName: 'A' }),
+      track(2, '...', { artistName: 'B' }),
+      track(3, "(I Can't Get No) Satisfaction", { artistName: 'C' }),
+    ];
+    const good = [4, 5, 6, 7].map((i) => track(i, `歌${i}`, { artistName: `歌手${i}` }));
+    expect(pickChart([...bad, ...good], N)).toBeNull();
+    const ids = idsOver((r) => pickChart([...bad, ...good, track(8, '歌8', { artistName: '歌手8' })], N, r) ?? undefined, 50);
+    expect([...ids].sort()).toEqual([4, 5, 6, 7, 8]);
+  });
+
+  it('不套 HOT_POOL：榜單 100 首裡第 31 名之後也抽得到', () => {
+    const tracks = Array.from({ length: 100 }, (_, k) => track(k + 1, `第${k + 1}名`, { artistName: `歌手${k + 1}` }));
+    expect(Math.max(...idsOver((r) => pickChart(tracks, N, r) ?? undefined))).toBeGreaterThan(HOT_POOL);
+  });
+
+  it('不足 n 首回 null（CHART_FAILED）；空陣列也是', () => {
+    expect(pickChart([], N)).toBeNull();
+    expect(pickChart(chartFixtureTracks('us').slice(0, 4), N)).toBeNull();
+    expect(pickChart(chartFixtureTracks('us').slice(0, 5), N)).toHaveLength(5);
+  });
+
+  it('同一組亂數 → 同一結果；不改動傳入的陣列', () => {
+    const tracks = chartFixtureTracks('us');
+    const before = JSON.stringify(tracks);
+    expect(pickChart(tracks, N, seededRandom(9))).toEqual(pickChart(tracks, N, seededRandom(9)));
+    expect(JSON.stringify(tracks)).toBe(before);
+  });
+
+  it('抽到的歌保留本首歌手與揭曉欄位（song.artist、封面、itunesUrl）', () => {
+    const [first] = pickChart(chartFixtureTracks('tw'), 20, () => 0) ?? [];
+    expect(first).toMatchObject({ trackId: 6820428730, title: 'NEON', artist: 'A2O & A2O LITE', album: 'NEON - Single' });
+    expect(first?.artworkUrl).toMatch(/100x100bb\.jpg$/);
+    expect(first?.trackTimeMillis).toBe(208000);
   });
 });

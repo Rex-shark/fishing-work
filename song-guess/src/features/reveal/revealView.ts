@@ -77,9 +77,9 @@ export function artworkAlt(reveal: Pick<SongReveal, 'title' | 'album'>): string 
 
 // ─── 本局排名表 ──────────────────────────────────────────────────
 
-/** 排名表標題：「本局結果 · 孫燕姿」；沒有歌手名時只有「本局結果」 */
-export function rankingTitle(artist: string | null): string {
-  return artist !== null && artist !== '' ? `本局結果 · ${artist}` : '本局結果'
+/** 排名表標題：「本局結果 · 孫燕姿」「本局結果 · 台灣熱門」（題庫標題＝lastTopic）；沒有標題時只有「本局結果」 */
+export function rankingTitle(topic: string | null): string {
+  return topic !== null && topic !== '' ? `本局結果 · ${topic}` : '本局結果'
 }
 
 /** 前幾名加強調色（design §1：前三名） */

@@ -3,16 +3,17 @@
 // 猜歌 Room 狀態機（純邏輯，不依賴 socket.io）：spec/song-guess/architecture.md §5
 // 每個方法回傳「要送出的效果」（Effect[]），由 register.ts 負責實際 emit / 斷線。
 // 計時器觸發的轉移（寬限期到期、出題期限、試聽播完、揭曉停留）沒有呼叫端可回傳，改走建構子注入的 onAsyncEffects。
-// 唯一的非同步動作是 setArtist（向 iTunes 搜尋）：回傳 Promise，搜尋回來才決定 ack 與效果；搜尋器由建構子注入。
+// 唯一的非同步動作是 setSource（Epic 18 前叫 setArtist；歌手模式向 iTunes 搜尋、榜單模式取排行榜）：回傳 Promise，
+// 取歌回來才決定 ack 與效果；搜尋器與排行榜取得器由建構子注入。
 //
 // 一局：idle → choosing → (playing → reveal) × SONGS_PER_GAME → ended（ended 視同 idle，可再 volunteer）。
-// - choosing：出題期限計時（含搜尋時間）；逾時／cancel／出題者離開 → idle（results、lastArtist 保留）。
-//   搜尋進行中再送 → SEARCH_BUSY；搜尋回來時已不是同一次 choosing → 結果丟棄、ack NOT_SETTER。
-// - 搜尋成功：gameNo++、參賽者＝此刻在線者、全員 gameScore 歸零、results／lastArtist 清空、進入第 1 首。
+// - choosing：出題期限計時（含取歌時間）；逾時／cancel／出題者離開 → idle（results、lastTopic、lastSource 保留）。
+//   取歌進行中再送 → SEARCH_BUSY（兩種來源共用同一個旗標）；取歌回來時已不是同一次 choosing → 結果丟棄、ack NOT_SETTER。
+// - 取歌成功：gameNo++、參賽者＝此刻在線者、全員 gameScore 歸零、results／lastTopic／lastSource 清空、進入第 1 首。
 // - playing：startedAt＝進入的 now + START_DELAY_MS（客戶端先下載試聽再同時起播），endsAt＝startedAt + durationMs；
 //   計時器到 → reveal。**不因全員猜對或人數不足提早結束**（每首播到底）。
 // - reveal：公布歌名與本首得分，停 REVEAL_SECONDS；計時器到 → 下一首 playing，最後一首 → ended。
-// - ended：results（ranking.ts）、lastArtist＝本局歌手正式名（artistDisplay）、reveal 保留最後一首；無計時器。
+// - ended：results（ranking.ts）、lastTopic＝本局 topic（歌手模式為正式名）、lastSource＝本局 source、reveal 保留最後一首；無計時器。
 //
 // 答案只在 server：歌名在 reveal 之前不出現在任何對外 payload（previewUrl 不含歌名，titleLength 只給去掉空白標點後的字數）。
 import { randomUUID } from 'node:crypto';
@@ -27,6 +28,7 @@ import {
   RECONNECT_GRACE_SECONDS,
   REVEAL_SECONDS,
   SONGS_PER_GAME,
+  SOURCE_TITLE,
   START_DELAY_MS,
   nicknameKey,
   titleLength,
@@ -36,7 +38,6 @@ import {
   type ChatKind,
   type ChatMessage,
   type ErrorCode,
-  type GameResultEntry,
   type JoinResult,
   type PlayerPublic,
   type RoomSnapshot,
@@ -44,10 +45,12 @@ import {
   type ServerToClientEvents,
   type SongPublic,
   type SongReveal,
+  type SongSource,
+  type SongSourcePayload,
 } from '@fishing-work/shared/song-guess';
 import { CHAT_ERROR_MESSAGES, guessScore, isRateLimited, judgeMessage, validateChatText } from './chat';
-import type { ItunesTrack, SongSearcher } from './itunes';
-import { pick, type PickedSong } from './picker';
+import type { ChartCountry, ChartFetcher, ItunesTrack, SongSearcher } from './itunes';
+import { pick, pickChart, type PickedSong } from './picker';
 import { rankGame, type GameStat } from './ranking';
 
 // ─── 時鐘與計時器抽象（測試注入假時鐘） ─────────────────────────────
@@ -130,6 +133,8 @@ export interface RoomOptions {
   durations?: Partial<RoomDurations>;
   /** 歌手搜尋器（預設：一律失敗，Room 本身不碰網路）；正式環境由 register 依環境變數建立（itunes.ts） */
   search?: SongSearcher;
+  /** 排行榜取得器（Epic 18；預設：一律失敗 → CHART_FAILED）；正式環境由 register 依環境變數建立（itunes.ts） */
+  chart?: ChartFetcher;
   /** 抽歌用的亂數，回 [0, 1)（預設 Math.random；測試注入） */
   random?: () => number;
 }
@@ -144,9 +149,28 @@ export interface ActionOutcome {
   effects: Effect[];
 }
 
-export interface SetArtistOutcome {
-  ack: Ack<{ artistDisplay: string }>;
+export interface SetSourceOutcome {
+  ack: Ack<{ topic: string }>;
   effects: Effect[];
+}
+
+/** 榜單來源對應的國家（Epic 18 決策 4：西洋熱門＝美國榜） */
+export const CHART_COUNTRY = { 'tw-hot': 'tw', 'western-hot': 'us' } as const satisfies Record<Exclude<SongSource, 'artist'>, ChartCountry>;
+
+/**
+ * 解析 round:setSource 的 payload（不信任客戶端；§5 choosing）：
+ * 不是物件、source 不是三值之一、歌手模式 hot 不是 boolean（含缺漏）→ SOURCE_INVALID；
+ * 歌手模式 artist 不是字串 → ARTIST_INVALID（歌手名的內容由 Room 以 validateArtist 驗）；榜單模式多帶的欄位忽略。
+ */
+export function parseSourcePayload(
+  payload: unknown,
+): { ok: true; payload: SongSourcePayload } | { ok: false; error: 'SOURCE_INVALID' | 'ARTIST_INVALID' } {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return { ok: false, error: 'SOURCE_INVALID' };
+  const p = payload as Record<string, unknown>;
+  if (p.source === 'tw-hot' || p.source === 'western-hot') return { ok: true, payload: { source: p.source } };
+  if (p.source !== 'artist' || typeof p.hot !== 'boolean') return { ok: false, error: 'SOURCE_INVALID' };
+  if (typeof p.artist !== 'string') return { ok: false, error: 'ARTIST_INVALID' };
+  return { ok: true, payload: { source: 'artist', artist: p.artist, hot: p.hot } };
 }
 
 /** 回合相關錯誤的繁中訊息（ack.message，客戶端直接顯示）；§5.3，其餘與繪圖比賽同文案 */
@@ -160,6 +184,8 @@ export const ROUND_ERROR_MESSAGES = {
   ARTIST_NOT_FOUND: `找不到這位歌手的歌（至少要 ${SONGS_PER_GAME} 首有試聽的歌），換一位試試`,
   SEARCH_FAILED: '搜尋失敗，請再試一次',
   SEARCH_BUSY: '搜尋中，請稍候',
+  SOURCE_INVALID: '題庫來源不正確，請重新選擇',
+  CHART_FAILED: '取得排行榜失敗，請再試一次',
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
 type RoundErrorCode = keyof typeof ROUND_ERROR_MESSAGES;
@@ -199,22 +225,34 @@ interface GameState {
 /** Room 內部保存的回合狀態：對外的 RoundPublic 少了 serverNow（送出當下才填） */
 type RoundState = Omit<RoundPublic, 'serverNow'>;
 
-/** idle 回合；gameNo、results、lastArtist 沿用上一局（排名停著，§4 欄位生命週期） */
-function idleRound(gameNo: number, results: GameResultEntry[] | null, lastArtist: string | null): RoundState {
+/** 上一局的排名與其題庫（§4 欄位生命週期：results、lastTopic、lastSource 一起保留、一起清空） */
+type LastGame = Pick<RoundPublic, 'results' | 'lastTopic' | 'lastSource'>;
+
+const NO_LAST_GAME: LastGame = { results: null, lastTopic: null, lastSource: null };
+
+/** idle 回合；gameNo、results、lastTopic、lastSource 沿用上一局（排名停著） */
+function idleRound(gameNo: number, last: LastGame): RoundState {
   return {
     gameNo,
     phase: 'idle',
     setterId: null,
+    source: null,
     artist: null,
-    artistDisplay: null,
+    artistHot: false,
+    topic: null,
     songCount: SONGS_PER_GAME,
     endsAt: null,
     song: null,
     reveal: null,
-    results,
-    lastArtist,
+    results: last.results,
+    lastTopic: last.lastTopic,
+    lastSource: last.lastSource,
     participantIds: [],
   };
+}
+
+function lastGameOf(r: RoundState): LastGame {
+  return { results: r.results, lastTopic: r.lastTopic, lastSource: r.lastSource };
 }
 
 function freezeSong(s: SongPublic | null): SongPublic | null {
@@ -241,7 +279,7 @@ function fail(error: RoundErrorCode): ActionOutcome {
   return { ack: { ok: false, error, message: ROUND_ERROR_MESSAGES[error] }, effects: [] };
 }
 
-function artistFail(error: RoundErrorCode): SetArtistOutcome {
+function sourceFail(error: RoundErrorCode): SetSourceOutcome {
   return { ack: { ok: false, error, message: ROUND_ERROR_MESSAGES[error] }, effects: [] };
 }
 
@@ -253,6 +291,8 @@ const OK: Ack = { ok: true, data: undefined };
 
 /** Room 未注入搜尋器時的預設：一律失敗（→ SEARCH_FAILED），確保純邏輯的 Room 不會碰網路 */
 const NO_SEARCH: SongSearcher = () => Promise.reject(new Error('未設定歌手搜尋器'));
+/** Room 未注入排行榜取得器時的預設：一律失敗（→ CHART_FAILED） */
+const NO_CHART: ChartFetcher = () => Promise.reject(new Error('未設定排行榜取得器'));
 
 // ─── Room ─────────────────────────────────────────────────────────
 
@@ -262,6 +302,7 @@ export class Room {
   private readonly onAsyncEffects: (effects: Effect[]) => void;
   private readonly durations: RoomDurations;
   private readonly search: SongSearcher;
+  private readonly chart: ChartFetcher;
   private readonly random: () => number;
 
   /** 依加入順序插入；playerList() 另依 joinedAt 排序 */
@@ -269,14 +310,14 @@ export class Room {
   private readonly bySocket = new Map<string, string>();
   private readonly byToken = new Map<string, string>();
 
-  protected round: RoundState = idleRound(0, null, null);
+  protected round: RoundState = idleRound(0, NO_LAST_GAME);
   private roundTimer: TimerHandle | null = null;
   /** 進行中的一局；playing／reveal 以外為 null */
   private game: GameState | null = null;
 
   /** 每次進入或離開 choosing 就 +1：搜尋回來時與出發時不同 → 已不是同一次 choosing，結果丟棄 */
   private choosingSeq = 0;
-  /** 本次 choosing 有搜尋進行中（SEARCH_BUSY 用）；離開 choosing 時清掉 */
+  /** 本次 choosing 有取歌進行中（SEARCH_BUSY 用；歌手搜尋與排行榜共用）；離開 choosing 時清掉 */
   private searching = false;
 
   /** 環狀緩衝：最多 CHAT_HISTORY 則 */
@@ -295,6 +336,7 @@ export class Room {
     }
     this.durations = durations;
     this.search = options.search ?? NO_SEARCH;
+    this.chart = options.chart ?? NO_CHART;
     this.random = options.random ?? Math.random;
   }
 
@@ -390,7 +432,7 @@ export class Room {
   // ─── 回合轉移 ───────────────────────────────────────────────────
 
   /**
-   * 出題：phase = idle／ended、在線人數 ≥ MIN_PLAYERS → choosing（results、lastArtist 保留，畫面繼續顯示上一局排名）。
+   * 出題：phase = idle／ended、在線人數 ≥ MIN_PLAYERS → choosing（results、lastTopic、lastSource 保留，畫面繼續顯示上一局排名）。
    * choosing／playing／reveal（不論是誰）→ ROUND_BUSY。
    */
   volunteer(socketId: string): ActionOutcome {
@@ -404,7 +446,7 @@ export class Room {
     this.searching = false;
     const now = this.clock.now();
     this.round = {
-      ...idleRound(this.round.gameNo, this.round.results, this.round.lastArtist),
+      ...idleRound(this.round.gameNo, lastGameOf(this.round)),
       phase: 'choosing',
       setterId: player.id,
       endsAt: now + this.durations.choosingMs,
@@ -414,39 +456,58 @@ export class Room {
   }
 
   /**
-   * 出題者送歌手名（非同步：向 iTunes 搜尋）。檢查順序（§5 choosing）：
-   * 未加入 → NOT_IN_ROOM；階段與身分（setterGate）；歌手名不合法 → ARTIST_INVALID；本次 choosing 搜尋進行中 → SEARCH_BUSY。
-   * 搜尋回來：
+   * 出題者送題庫來源（非同步；Epic 18 前為 setArtist）。payload 來自客戶端、不信任。
+   * 檢查順序（§5 choosing；SOURCE_INVALID → ARTIST_INVALID → SEARCH_BUSY，與 Epic 16 相同：先驗輸入再看忙碌）：
+   * payload 形狀（parseSourcePayload：SOURCE_INVALID，歌手模式 artist 不是字串 → ARTIST_INVALID；比照 Epic 16 在
+   * register 先驗形狀，所以早於身分檢查）→ 未加入 NOT_IN_ROOM → 階段與身分（setterGate）→ 歌手模式歌手名內容不合法
+   * ARTIST_INVALID → 本次 choosing 取歌進行中（兩種來源共用）SEARCH_BUSY。
+   * 取歌回來：
    * - 已不是同一次 choosing（逾時、取消、出題者離開，或之後又開了新的 choosing）→ 結果丟棄、ack NOT_SETTER。
-   * - 搜尋失敗 → SEARCH_FAILED；可抽的歌不足 → ARTIST_NOT_FOUND；兩者都仍在 choosing、期限不變，出題者可重試。
-   * - 成功 → 開始新的一局、進入第 1 首 playing，ack { artistDisplay }。
+   * - 歌手：搜尋失敗 → SEARCH_FAILED；可抽的歌不足 → ARTIST_NOT_FOUND。
+   * - 榜單：RSS／lookup 失敗或可抽的歌不足 → CHART_FAILED。
+   * - 失敗都仍在 choosing、期限不變，出題者可重試或換來源；成功 → 開始新的一局、進入第 1 首 playing，ack { topic }。
    * 效果在 ack 之後才送（register 先回 ack 再 emit）。
    */
-  setArtist(socketId: string, rawArtist: string): Promise<SetArtistOutcome> {
+  setSource(socketId: string, rawPayload: unknown): Promise<SetSourceOutcome> {
+    const parsed = parseSourcePayload(rawPayload);
+    if (!parsed.ok) return Promise.resolve(sourceFail(parsed.error));
+    const { payload } = parsed;
     const player = this.playerBySocket(socketId);
-    if (player === undefined) return Promise.resolve(artistFail('NOT_IN_ROOM'));
+    if (player === undefined) return Promise.resolve(sourceFail('NOT_IN_ROOM'));
     const denied = this.setterGate(player);
-    if (denied !== null) return Promise.resolve(artistFail(denied));
-    const check = validateArtist(rawArtist);
-    if (!check.ok) return Promise.resolve(artistFail('ARTIST_INVALID'));
-    if (this.searching) return Promise.resolve(artistFail('SEARCH_BUSY'));
+    if (denied !== null) return Promise.resolve(sourceFail(denied));
+
+    let artist: string | null = null;
+    if (payload.source === 'artist') {
+      const check = validateArtist(payload.artist);
+      if (!check.ok) return Promise.resolve(sourceFail('ARTIST_INVALID'));
+      artist = check.artist;
+    }
+    if (this.searching) return Promise.resolve(sourceFail('SEARCH_BUSY'));
 
     const seq = this.choosingSeq;
     this.searching = true;
     let request: Promise<ItunesTrack[]>;
     try {
-      request = this.search(check.artist);
+      request = artist !== null ? this.search(artist) : this.chart(CHART_COUNTRY[payload.source as Exclude<SongSource, 'artist'>]);
     } catch (err) {
       request = Promise.reject(err);
     }
+    const failCode: RoundErrorCode = artist !== null ? 'SEARCH_FAILED' : 'CHART_FAILED';
     return request.then(
       (tracks) => {
-        if (!this.finishSearch(seq)) return artistFail('NOT_SETTER');
-        const picked = pick(tracks, check.artist, SONGS_PER_GAME, this.random);
-        if (picked === null) return artistFail('ARTIST_NOT_FOUND');
-        return this.startGame(player, check.artist, picked.songs, picked.artistDisplay);
+        if (!this.finishSearch(seq)) return sourceFail('NOT_SETTER');
+        if (payload.source === 'artist' && artist !== null) {
+          const picked = pick(tracks, artist, SONGS_PER_GAME, this.random, { hot: payload.hot });
+          if (picked === null) return sourceFail('ARTIST_NOT_FOUND');
+          return this.startGame(player, { source: 'artist', artist, artistHot: payload.hot, topic: picked.topic }, picked.songs);
+        }
+        const songs = pickChart(tracks, SONGS_PER_GAME, this.random);
+        if (songs === null) return sourceFail('CHART_FAILED');
+        const source = payload.source as Exclude<SongSource, 'artist'>;
+        return this.startGame(player, { source, artist: null, artistHot: false, topic: SOURCE_TITLE[source] }, songs);
       },
-      () => (this.finishSearch(seq) ? artistFail('SEARCH_FAILED') : artistFail('NOT_SETTER')),
+      () => (this.finishSearch(seq) ? sourceFail(failCode) : sourceFail('NOT_SETTER')),
     );
   }
 
@@ -545,7 +606,7 @@ export class Room {
   // ─── 回合內部 ─────────────────────────────────────────────────────
 
   /**
-   * setArtist／cancel 的共同權限（§5「階段不符」）：choosing 的出題者通過（null）；
+   * setSource／cancel 的共同權限（§5「階段不符」）：choosing 的出題者通過（null）；
    * playing／reveal（不論是誰）→ ROUND_BUSY；idle／ended、或 choosing 的非出題者 → NOT_SETTER。
    */
   private setterGate(player: PlayerState): 'ROUND_BUSY' | 'NOT_SETTER' | null {
@@ -568,10 +629,15 @@ export class Room {
   }
 
   /**
-   * 搜尋成功 → 新的一局（§5 choosing）：gameNo++、參賽者＝此刻 connected 的玩家、全員本局統計歸零、
-   * results／lastArtist 清空、進入第 1 首。效果：round:update → players:update → 系統訊息。
+   * 取歌成功 → 新的一局（§5 choosing）：gameNo++、參賽者＝此刻 connected 的玩家、全員本局統計歸零、
+   * source／artist／artistHot／topic 定案、results／lastTopic／lastSource 清空、進入第 1 首。
+   * 效果：round:update → players:update → 系統訊息「X 出題「{topic}」，共 5 首」（不加「熱門」字樣）。
    */
-  private startGame(setter: PlayerState, artist: string, songs: PickedSong[], artistDisplay: string): SetArtistOutcome {
+  private startGame(
+    setter: PlayerState,
+    bank: Pick<RoundPublic, 'artist' | 'artistHot' | 'topic'> & { source: SongSource; topic: string },
+    songs: PickedSong[],
+  ): SetSourceOutcome {
     this.choosingSeq++;
     this.searching = false;
     for (const p of this.players.values()) {
@@ -581,16 +647,18 @@ export class Room {
     }
     this.game = { songs, index: 0, scores: [] };
     this.round = {
-      ...idleRound(this.round.gameNo + 1, null, null),
+      ...idleRound(this.round.gameNo + 1, NO_LAST_GAME),
       setterId: setter.id,
-      artist,
-      artistDisplay,
+      source: bank.source,
+      artist: bank.artist,
+      artistHot: bank.artistHot,
+      topic: bank.topic,
       participantIds: this.playerList().filter((p) => p.connected).map((p) => p.id),
     };
     const effects = this.playSong(0);
-    const msg = this.pushSystem(`${setter.nickname} 出題「${artistDisplay}」，共 ${songs.length} 首`);
+    const msg = this.pushSystem(`${setter.nickname} 出題「${bank.topic}」，共 ${songs.length} 首`);
     effects.push({ kind: 'emit', to: 'all', event: 'chat:message', payload: msg });
-    return { ack: { ok: true, data: { artistDisplay } }, effects };
+    return { ack: { ok: true, data: { topic: bank.topic } }, effects };
   }
 
   /**
@@ -618,6 +686,7 @@ export class Room {
       song: {
         index: index + 1,
         previewUrl: picked.previewUrl,
+        artist: picked.artist,
         startedAt,
         endsAt,
         durationMs,
@@ -687,7 +756,8 @@ export class Room {
   }
 
   /**
-   * reveal（最後一首）→ ended：results（§5.1）、lastArtist＝本局歌手正式名（artistDisplay，不是輸入值）、reveal 保留最後一首、song 清空；無計時器。
+   * reveal（最後一首）→ ended：results（§5.1）、lastTopic＝本局 topic（歌手模式為正式名，不是輸入值）、lastSource＝本局 source、
+   * reveal 保留最後一首、song 清空；無計時器。
    * 效果：round:update → players:update（hasGuessed 清空）→ 系統訊息。
    */
   private end(): Effect[] {
@@ -704,7 +774,8 @@ export class Room {
       endsAt: null,
       song: null,
       results,
-      lastArtist: this.round.artistDisplay,
+      lastTopic: this.round.topic,
+      lastSource: this.round.source,
     };
 
     const first = results[0];
@@ -744,14 +815,14 @@ export class Room {
     return [this.roundUpdate()];
   }
 
-  /** 出題階段中止：choosing → idle（results、lastArtist 保留；進行中的搜尋結果回來時丟棄） */
+  /** 出題階段中止：choosing → idle（results、lastTopic、lastSource 保留；進行中的取歌結果回來時丟棄） */
   private abort(cause: AbortCause, leftNickname?: string): Effect[] {
     const setter = this.round.setterId === null ? undefined : this.players.get(this.round.setterId);
     const nickname = setter?.nickname ?? leftNickname ?? '';
     this.clearRoundTimer();
     this.choosingSeq++;
     this.searching = false;
-    this.round = idleRound(this.round.gameNo, this.round.results, this.round.lastArtist);
+    this.round = idleRound(this.round.gameNo, lastGameOf(this.round));
 
     const text = {
       cancel: `${nickname} 取消出題`,

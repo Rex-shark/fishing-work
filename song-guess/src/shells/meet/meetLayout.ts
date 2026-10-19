@@ -54,15 +54,9 @@ export function songProgress(index: number, total: number): string {
 /** 舞台：沒有局也沒有結果（design §2 idle） */
 export const STAGE_EMPTY_TEXT = `尚無人${SHARE_AUDIO_LABEL}`
 
-/** 舞台：其他人看到出題者正在輸入歌手（design §2 choosing） */
+/** 舞台：其他人看到出題者正在選題庫（design §2 choosing） */
 export function preparingText(setterName: string | null): string {
   return `${setterName !== null && setterName !== '' ? setterName : SETTER_FALLBACK} 正在準備${SHARE_AUDIO_LABEL}…`
-}
-
-/** 舞台：波形下方的一行「歌手：孫燕姿 · 第 2 / 5 首」；沒有歌手名時只有第幾首 */
-export function stageSongLine(artist: string | null, index: number, total: number): string {
-  const progress = songProgress(index, total)
-  return artist !== null && artist !== '' ? `歌手：${artist} · ${progress}` : progress
 }
 
 /**
@@ -159,9 +153,9 @@ export function chatSenderName(nickname: string | null, isMine: boolean): string
 
 // ─── 對話框 ─────────────────────────────────────────────────────
 
-/** 對話框標題（design §1「出題」：對話框「分享音訊」）；說明（'help'）的標題為對話框的 title（「說明」或主題名稱），不在此表 */
+/** 對話框標題（design §1「出題（選題庫）」：對話框「分享音訊」）；說明（'help'）的標題為對話框的 title（「說明」或主題名稱），不在此表 */
 export const MEET_DIALOG_TITLE: Record<Exclude<DialogPurpose, 'help'>, string> = {
-  artist: SHARE_AUDIO_LABEL,
+  source: SHARE_AUDIO_LABEL,
 }
 
 /** 說明對話框的標題（沒有 title 時） */
@@ -174,7 +168,7 @@ export function meetDialogHeading(purpose: DialogPurpose, title: string | undefi
 
 /** 對話框按鈕文字：[第一個選項（主要）, 第二個選項]；第三個以後照選項文字。說明（'help'）一律照選項文字（「返回」「關閉」） */
 export const MEET_DIALOG_BUTTONS: Record<Exclude<DialogPurpose, 'help'>, readonly [string, string]> = {
-  artist: ['分享', '取消'],
+  source: ['分享', '取消'],
 }
 
 /** 自動重連畫面（screen 'resume'）的一行提示（DESIGN §15.2） */
@@ -194,6 +188,29 @@ export function meetDialogButtonText(purpose: DialogPurpose, index: number, labe
 export function meetDialogButtonLabel(purpose: DialogPurpose, index: number, label: string, pending: boolean = false): string {
   const text = meetDialogButtonText(purpose, index, label, pending)
   return text === label ? label : `${text}：${label}`
+}
+
+/**
+ * 題庫來源三選一（segmented）的方向鍵：←↑ 上一個、→↓ 下一個（頭尾循環）、Home／End 第一個／最後一個；其餘鍵回 null。
+ * current < 0（沒有選中）時 → 從第一個開始
+ */
+export function choiceKeyTarget(key: string, current: number, count: number): number | null {
+  if (count <= 0) return null
+  const from = current < 0 ? 0 : current
+  switch (key) {
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      return (from - 1 + count) % count
+    case 'ArrowRight':
+    case 'ArrowDown':
+      return (from + 1) % count
+    case 'Home':
+      return 0
+    case 'End':
+      return count - 1
+    default:
+      return null
+  }
 }
 
 /**

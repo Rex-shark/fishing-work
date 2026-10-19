@@ -1,6 +1,9 @@
-// meet 主題的對話框（ShellViews.Dialog；DESIGN.md §15.2「對話框」、§15.3；spec/song-guess/design.md §1「出題」）。
+// meet 主題的對話框（ShellViews.Dialog；DESIGN.md §15.2「對話框」、§15.3；spec/song-guess/design.md §1「出題（選題庫）」）。
 //   白卡片（--bg-panel、圓角 8px、--quickinput-shadow；--bg-quickinput 在 meet 是工具提示用的深灰）、標題 20px（出題＝「分享音訊」）、內文 14px、
-//   右下藍字文字按鈕（--accent-panel；出題「取消／分享」，搜尋中主要按鈕改顯示「搜尋中…」）。寬 420px，置中於殼層提供的定位容器（主畫面 tile）。
+//   右下藍字文字按鈕（--accent-panel；出題「取消／分享」，送出中主要按鈕改顯示「搜尋中…」／「取得排行榜…」）。寬 420px，置中於殼層提供的定位容器（主畫面 tile）。
+//   出題（Epic 18）：標題下方 segmented 三選一（choices，role="radiogroup"：選中者 --accent-panel 字＋ --bg-panel-hover 底）；
+//   歌手模式＝欄位＋下方勾選（toggle，原生 checkbox、accent-color --accent-panel）；榜單模式＝一行說明（description，--fg-on-panel-muted）＋右側倒數。
+//   design §1 寫說明用 --fg-muted，但白卡片上只用面板 token（下一行），對應的是 --fg-on-panel-muted。
 //   自動重連畫面只放一行提示（MeetResumeCard）。
 // 白底只用面板 token（--fg-on-panel／--fg-on-panel-muted／--border-panel／--accent-panel）與 --bg-input、--sem-error，不用深色區的 --fg。
 // 按鍵：Enter＝第一個選項（主要，畫面最右）：走 form 原生 submit（單一文字欄位的隱式送出），注音等輸入法選字的 Enter 不會觸發；
@@ -13,18 +16,19 @@
 import { useId, useRef, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { tip } from '../../layout/tooltipPlacement'
 import { useRestoreDialogFocus } from '../dialogFocus'
-import type { DialogItem, DialogProps, DialogPurpose } from '../views'
+import type { DialogChoices, DialogItem, DialogProps, DialogPurpose, DialogToggle } from '../views'
 import {
   HELP_CLOSE_TEXT,
   MEET_DIALOG_REFOCUS_SELECTORS,
   MEET_RESUME_TEXT,
+  choiceKeyTarget,
   dialogKeyAction,
   meetDialogButtonLabel,
   meetDialogButtonText,
   meetDialogHeading,
 } from './meetLayout'
 
-export function MeetDialog({ purpose, label, input, title, body, items, onEscape, busy = false, note, error }: DialogProps) {
+export function MeetDialog({ purpose, label, choices, input, toggle, description, title, body, items, onEscape, busy = false, note, error }: DialogProps) {
   const fieldId = useId()
   const rootRef = useRef<(HTMLFormElement & HTMLDivElement) | null>(null)
   // 保險：busy 結束時焦點若已不在對話框內（掉到 body），放回輸入框或第一個可用選項；Esc／Enter 掛在對話框上，焦點在外面就收不到
@@ -62,6 +66,17 @@ export function MeetDialog({ purpose, label, input, title, body, items, onEscape
       {title !== undefined && purpose !== 'help' && <p className="mb-[12px] text-[14px] leading-[20px] text-fg-on-panel">{title}</p>}
       {body !== undefined && <div className="flex flex-col gap-[8px] text-[14px] leading-[20px] text-fg-on-panel">{body}</div>}
 
+      {choices !== undefined && <Segmented choices={choices} onEnter={() => run(primary)} />}
+
+      {input === undefined && description !== undefined && (
+        <div className="mb-[4px] flex items-baseline justify-between gap-[8px]">
+          <p className="min-w-0 text-[14px] leading-[20px] text-fg-on-panel-muted">{description}</p>
+          {primary?.detail !== undefined && (
+            <span className="shrink-0 text-[12px] text-fg-on-panel-muted tabular-nums">{primary.detail}</span>
+          )}
+        </div>
+      )}
+
       {input !== undefined && (
         <div className="mb-[4px]">
           <div className="mb-[4px] flex items-baseline justify-between gap-[8px]">
@@ -74,7 +89,7 @@ export function MeetDialog({ purpose, label, input, title, body, items, onEscape
           </div>
           <input
             id={fieldId}
-            autoFocus
+            autoFocus={input.autoFocus ?? true}
             value={input.value}
             onChange={(e) => input.onChange(e.target.value)}
             // 送出中：readOnly＋aria-busy，不用原生 disabled（會失去焦點）
@@ -89,6 +104,7 @@ export function MeetDialog({ purpose, label, input, title, body, items, onEscape
             data-dialog-input=""
             className="block h-[40px] w-full rounded-[4px] border border-border-panel bg-input px-[12px] text-[14px] text-fg-on-panel outline-none placeholder:text-fg-on-panel-muted focus:border-accent-panel aria-[invalid=true]:border-sem-error aria-busy:cursor-default aria-busy:opacity-60"
           />
+          {toggle !== undefined && <Toggle toggle={toggle} />}
         </div>
       )}
 
@@ -120,6 +136,92 @@ export function MeetDialog({ purpose, label, input, title, body, items, onEscape
         </div>
       )}
     </MeetCard>
+  )
+}
+
+/**
+ * 出題的題庫來源（segmented 三選一）：role="radiogroup"，一個選項一顆 role="radio" 的按鈕；
+ * 只有選中的那顆在 Tab 順序裡（roving tabindex），←→↑↓／Home／End 切換並選取（meetLayout.choiceKeyTarget）；Enter＝送出（同主要按鈕）。
+ * locked（送出中）：aria-disabled、點了或按方向鍵都不切換，焦點留在原處（不用原生 disabled）
+ */
+function Segmented({ choices, onEnter }: { choices: DialogChoices; onEnter: () => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([])
+  const { options, value, onChange, locked = false } = choices
+  const current = options.findIndex((o) => o.id === value)
+
+  function select(index: number) {
+    const option = options[index]
+    if (locked || option === undefined) return
+    if (option.id !== value) onChange(option.id)
+    refs.current[index]?.focus()
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Enter') {
+      if (e.nativeEvent.isComposing) return
+      // type="button" 的按鈕按 Enter 原本是「點一下」；這裡改成送出，與在欄位裡按 Enter 一致
+      e.preventDefault()
+      onEnter()
+      return
+    }
+    const target = choiceKeyTarget(e.key, current, options.length)
+    if (target === null) return
+    e.preventDefault()
+    select(target)
+  }
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label={choices.label}
+      aria-disabled={locked || undefined}
+      onKeyDown={handleKeyDown}
+      className="mb-[16px] flex rounded-full border border-border-panel p-[2px]"
+    >
+      {options.map((option, i) => {
+        const checked = option.id === value
+        return (
+          <button
+            key={option.id}
+            ref={(el) => {
+              refs.current[i] = el
+            }}
+            type="button"
+            role="radio"
+            aria-checked={checked}
+            aria-disabled={locked || undefined}
+            tabIndex={checked || (current < 0 && i === 0) ? 0 : -1}
+            data-source-option={option.id}
+            onClick={() => select(i)}
+            className={`h-[32px] min-w-0 flex-1 truncate rounded-full px-[8px] text-[14px] transition-colors duration-100 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-panel ${
+              checked ? 'bg-panel-hover font-medium text-accent-panel' : 'text-fg-on-panel'
+            } ${locked ? 'cursor-default' : checked ? 'cursor-pointer' : 'cursor-pointer hover:bg-panel-hover'}`}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 歌手欄位下方的勾選：原生 checkbox（Space 切換）；locked 時 aria-disabled、onChange 不理會（受控值不變），焦點留在原處 */
+function Toggle({ toggle }: { toggle: DialogToggle }) {
+  const { label, checked, onChange, locked = false } = toggle
+  return (
+    <label className={`mt-[8px] flex w-fit items-center gap-[8px] text-[14px] leading-[20px] text-fg-on-panel ${locked ? 'cursor-default opacity-60' : 'cursor-pointer'}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        aria-disabled={locked || undefined}
+        onChange={(e) => {
+          if (!locked) onChange(e.target.checked)
+        }}
+        data-dialog-toggle=""
+        className="size-[16px] shrink-0 cursor-[inherit] accent-accent-panel"
+      />
+      {label}
+    </label>
   )
 }
 

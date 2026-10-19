@@ -2,8 +2,17 @@
 
 export const SONG_GUESS_NAMESPACE = '/song-guess';
 
-/** idle：沒有局；choosing：出題者輸入歌手（含 server 搜尋中）；playing：某一首播放中；reveal：該首揭曉（REVEAL_SECONDS）；ended：第 5 首揭曉後的本局排名 */
+/** idle：沒有局；choosing：出題者選題庫（含 server 取歌中）；playing：某一首播放中；reveal：該首揭曉（REVEAL_SECONDS）；ended：第 5 首揭曉後的本局排名 */
 export type SongPhase = 'idle' | 'choosing' | 'playing' | 'reveal' | 'ended';
+
+/** 題庫來源（Epic 18）：artist＝出題者填歌手；tw-hot＝Apple Music 台灣熱門榜（當日前 100）；western-hot＝西洋熱門（美國榜當日前 100） */
+export type SongSource = 'artist' | 'tw-hot' | 'western-hot';
+
+/** round:setSource 的 payload；artist 模式的 hot＝只從搜尋結果前 HOT_POOL 首抽（對話框預設勾） */
+export type SongSourcePayload =
+  | { source: 'artist'; artist: string; hot: boolean }
+  | { source: 'tw-hot' }
+  | { source: 'western-hot' };
 
 export interface PlayerPublic {
   id: string;            // server 產生的穩定 id（重連接管後不變）
@@ -20,6 +29,7 @@ export interface PlayerPublic {
 export interface SongPublic {
   index: number;         // 第幾首，1..SONGS_PER_GAME
   previewUrl: string;    // Apple 試聽網址（網址不含歌名）；客戶端直接以 <audio> 載入
+  artist: string;        // 本首歌手（iTunes artistName）；playing 起顯示，是提示的一部分（榜單模式每首不同；Epic 18）
   startedAt: number;     // 開始播放 epoch ms（server 時鐘）＝ 進入 playing 的 now + START_DELAY_MS（讓客戶端先下載試聽）；計分從 startedAt 起算；中途加入者以 serverNow − startedAt 定位
   endsAt: number;        // 試聽結束 epoch ms（= startedAt + durationMs）
   durationMs: number;    // 本首播放長度 = min(trackTimeMillis ?? SONG_PREVIEW_CAP_MS, SONG_PREVIEW_CAP_MS)
@@ -51,14 +61,17 @@ export interface RoundPublic {
   gameNo: number;                // 第幾局（從 1 起；從未開始為 0）
   phase: SongPhase;
   setterId: string | null;       // 出題者；idle 為 null
-  artist: string | null;         // 出題者輸入的歌手名（choosing 搜尋成功起所有人看得到；idle 為 null）
-  artistDisplay: string | null;  // iTunes 回傳的歌手正式名稱（第一首開始起；顯示用）
+  source: SongSource | null;     // 題庫來源（第一首開始起；idle 為 null）
+  artist: string | null;         // source = 'artist' 時出題者輸入的歌手名（第一首開始起所有人看得到）；其餘 null
+  artistHot: boolean;            // source = 'artist' 時是否只抽熱門歌（HOT_POOL）；其餘 false
+  topic: string | null;          // 題庫標題（顯示用；第一首開始起）：'artist' ＝ iTunes 回傳的歌手正式名；'tw-hot'／'western-hot' ＝ SOURCE_TITLE（「台灣熱門」／「西洋熱門」）
   songCount: number;             // = SONGS_PER_GAME
   endsAt: number | null;         // choosing：出題期限；playing：= song.endsAt；reveal：下一首開始時間；其餘 null
   song: SongPublic | null;       // playing／reveal 時有值
   reveal: SongReveal | null;     // reveal 時為本首；ended 時為最後一首；其餘 null
   results: GameResultEntry[] | null;  // ended 才有；下一局搜尋成功、進入第 1 首時才清空（idle／choosing 期間保留，畫面顯示上一局排名）
-  lastArtist: string | null;     // results 對應的歌手正式名（= 該局 artistDisplay）；與 results 同生命週期
+  lastTopic: string | null;      // results 對應的題庫標題（= 該局 topic）；與 results 同生命週期
+  lastSource: SongSource | null; // results 對應的題庫來源（= 該局 source）；與 results 同生命週期
   serverNow: number;             // 送出當下的 server 時鐘 epoch ms（客戶端算時鐘偏移用）
   participantIds: string[];      // 本局參賽者（choosing 搜尋成功時定案＝此刻 connected 的玩家；寬限期滿離開者移除；中途加入者不加入但可猜）
 }
@@ -86,7 +99,7 @@ export interface JoinResult { token: string; snapshot: RoomSnapshot }
 export type ErrorCode =
   | 'NICKNAME_INVALID' | 'NICKNAME_TAKEN' | 'NOT_IN_ROOM' | 'ROOM_FULL'
   | 'ROUND_BUSY' | 'NOT_SETTER' | 'NOT_ENOUGH_PLAYERS' | 'ARTIST_INVALID'
-  | 'ARTIST_NOT_FOUND' | 'SEARCH_FAILED' | 'SEARCH_BUSY'
+  | 'ARTIST_NOT_FOUND' | 'SEARCH_FAILED' | 'SEARCH_BUSY' | 'SOURCE_INVALID' | 'CHART_FAILED'
   | 'MESSAGE_INVALID' | 'SPOILER_BLOCKED' | 'RATE_LIMITED';
 
 export type Ack<T = void> =
@@ -97,8 +110,9 @@ export interface ClientToServerEvents {
   'player:join': (payload: { nickname: string; token?: string }, ack: (r: Ack<JoinResult>) => void) => void;
   /** 出題：idle／ended 且在線 ≥ MIN_PLAYERS → choosing */
   'round:volunteer': (ack: (r: Ack) => void) => void;
-  /** 出題者送歌手名 → server 搜尋 iTunes；成功 ack 後進入第 1 首 playing；失敗 ack 帶 ARTIST_NOT_FOUND／SEARCH_FAILED，仍在 choosing */
-  'round:setArtist': (payload: { artist: string }, ack: (r: Ack<{ artistDisplay: string }>) => void) => void;
+  /** 出題者送題庫來源 → server 取歌（artist：搜尋 iTunes；tw-hot／western-hot：排行榜 RSS ＋ lookup）；成功 ack 後進入第 1 首 playing；
+   *  失敗 ack 帶 ARTIST_INVALID／ARTIST_NOT_FOUND／SEARCH_FAILED／CHART_FAILED／SOURCE_INVALID，仍在 choosing */
+  'round:setSource': (payload: SongSourcePayload, ack: (r: Ack<{ topic: string }>) => void) => void;
   /** 出題者在 choosing 取消 → idle */
   'round:cancel': (ack: (r: Ack) => void) => void;
   'chat:send': (payload: { text: string }, ack: (r: Ack) => void) => void;

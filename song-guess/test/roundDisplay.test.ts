@@ -1,26 +1,42 @@
 // 回合狀態列各階段的文字（features/round/roundDisplay；spec/song-guess/design.md §2「字幕列」欄逐列）、
 // 歌名字數提示、「出題」顯示條件、報讀文字、出題對話框的文字。
 import { describe, expect, it } from 'vitest'
-import { MIN_PLAYERS, REVEAL_SECONDS, SONGS_PER_GAME } from '@fishing-work/shared/song-guess'
+import { CHART_SIZE, MIN_PLAYERS, REVEAL_SECONDS, SONGS_PER_GAME, SOURCE_TITLE } from '@fishing-work/shared/song-guess'
 import {
   ARTIST_CANCEL_LABEL,
   ARTIST_FIELD_LABEL,
   ARTIST_PLACEHOLDER,
   ARTIST_SEARCHING_LABEL,
   ARTIST_SUBMIT_LABEL,
-  artistNameOf,
+  CHART_LOADING_LABEL,
+  CHART_NOTES,
+  CHART_SUBMIT_LABEL,
+  DEFAULT_SOURCE,
+  NOBODY_SCORED_TEXT,
+  HOT_SUFFIX,
+  HOT_TOGGLE_LABEL,
+  SOURCE_GROUP_LABEL,
+  SOURCE_OPTIONS,
   canVolunteer,
   captionText,
   countConnected,
+  isChartSource,
+  playingStageLines,
+  rankingTopicOf,
   roundAnnouncement,
   roundCaption,
   setterNameOf,
+  songProgressText,
+  sourcePayload,
+  submitLabel,
   titleBlanks,
+  topicLabel,
+  topicOf,
   volunteerAriaLabel,
   winnerOf,
   type CaptionInput,
 } from '../src/features/round/roundDisplay'
-import { player, playingRound, result, reveal, round, song } from './fixtures'
+import { chartRound, player, playingRound, result, reveal, round, song } from './fixtures'
 
 /** 殼層給的出題按鈕文字（測試用假名，證明句子是用參數組的、沒有寫死） */
 const SHARE = '開始出題'
@@ -85,8 +101,18 @@ describe('回合狀態列文字（design §2 逐列）', () => {
   it('ended：本局第一名：X（n 分）；沒有結果時「本局結束」', () => {
     const r = round({ phase: 'ended', results: [result('p2', 1, 412, 5, 'amy'), result('p1', 2, 300, 4, 'rex')] })
     expect(captionText(input({ round: r }))).toBe('本局第一名：amy（412 分）')
+    // 第一名只要有分（最低單首 50 分）就照舊顯示
+    expect(captionText(input({ round: round({ phase: 'ended', results: [result('p1', 1, 50, 1, 'rex'), result('p2', 2, 0, 0, 'amy')] }) }))).toBe('本局第一名：rex（50 分）')
     expect(captionText(input({ round: round({ phase: 'ended', results: [] }) }))).toBe('本局結束')
     expect(captionText(input({ round: round({ phase: 'ended', results: null }) }))).toBe('本局結束')
+  })
+
+  it('ended：第一名 0 分（沒有人猜對）→「本局結束：沒有人猜對」（與聊天系統訊息一致，不顯示「第一名：X（0 分）」）', () => {
+    const r = round({ phase: 'ended', results: [result('p1', 1, 0, 0, 'rex'), result('p2', 2, 0, 0, 'amy')] })
+    expect(captionText(input({ round: r }))).toBe('本局結束：沒有人猜對')
+    expect(roundCaption(input({ round: r }))).toEqual({ head: '本局結束：沒有人猜對', tail: '' })
+    expect(NOBODY_SCORED_TEXT).toBe('本局結束：沒有人猜對')
+    expect(captionText(input({ round: round({ phase: 'ended', results: [result('p1', 1, 0, 0, 'rex')] }) }))).not.toContain('0 分')
   })
 
   it('沒有倒數（remaining 為 null）時不帶時間', () => {
@@ -130,10 +156,18 @@ describe('出題條件與名稱', () => {
     expect(setterNameOf({ setterId: 'gone' }, players)).toBeNull()
   })
 
-  it('artistNameOf：正式名稱優先，沒有才用出題者輸入的', () => {
-    expect(artistNameOf({ artist: 'jay chou', artistDisplay: '周杰倫' })).toBe('周杰倫')
-    expect(artistNameOf({ artist: '孫燕姿', artistDisplay: null })).toBe('孫燕姿')
-    expect(artistNameOf({ artist: null, artistDisplay: null })).toBeNull()
+  it('topicOf：題庫標題（正式名或榜單名）優先，沒有才用出題者輸入的歌手名', () => {
+    expect(topicOf({ artist: 'jay chou', topic: '周杰倫' })).toBe('周杰倫')
+    expect(topicOf({ artist: null, topic: '台灣熱門' })).toBe('台灣熱門')
+    expect(topicOf({ artist: '孫燕姿', topic: null })).toBe('孫燕姿')
+    expect(topicOf({ artist: null, topic: null })).toBeNull()
+  })
+
+  it('rankingTopicOf：lastTopic 優先（與 results 同生命週期），沒有才退回本局的題庫標題', () => {
+    expect(rankingTopicOf({ lastTopic: '西洋熱門', topic: null, artist: null })).toBe('西洋熱門')
+    expect(rankingTopicOf({ lastTopic: '周杰倫', topic: '台灣熱門', artist: null })).toBe('周杰倫')
+    expect(rankingTopicOf({ lastTopic: null, topic: '周杰倫', artist: 'jay chou' })).toBe('周杰倫')
+    expect(rankingTopicOf({ lastTopic: null, topic: null, artist: null })).toBeNull()
   })
 
   it('winnerOf：rank 最小的那筆（不依賴陣列順序）', () => {
@@ -165,8 +199,10 @@ describe('報讀文字（design §4：第 n 首開始、猜對、揭曉歌名；
 
   it('出題中、本局結束、idle', () => {
     expect(roundAnnouncement({ ...base, round: round({ phase: 'choosing' }) })).toBe('rex 正在出題')
-    expect(roundAnnouncement({ ...base, isSetter: true, round: round({ phase: 'choosing' }) })).toBe('請輸入歌手名稱')
+    expect(roundAnnouncement({ ...base, isSetter: true, round: round({ phase: 'choosing' }) })).toBe('請選擇題庫來源')
     expect(roundAnnouncement({ ...base, round: round({ phase: 'ended', results: [result('p2', 1, 412, 5, 'amy')] }) })).toBe('本局結束，第一名：amy（412 分）')
+    expect(roundAnnouncement({ ...base, round: round({ phase: 'ended', results: [result('p2', 1, 0, 0, 'amy')] }) })).toBe('本局結束：沒有人猜對')
+    expect(roundAnnouncement({ ...base, round: round({ phase: 'ended', results: null }) })).toBe('本局結束')
     expect(roundAnnouncement({ ...base, round: round({ phase: 'idle' }) })).toBe('')
   })
 
@@ -174,6 +210,84 @@ describe('報讀文字（design §4：第 n 首開始、猜對、揭曉歌名；
     for (const r of [playingRound(), round({ phase: 'choosing' }), round({ phase: 'reveal', song: song(), reveal: reveal() })]) {
       expect(roundAnnouncement({ ...base, round: r })).not.toMatch(/\d\d:\d\d/)
     }
+  })
+})
+
+describe('播放中舞台的兩行字（design §1「播放中的試聽」；plan 決策 10）', () => {
+  it('歌手模式、熱門：第一行「孫燕姿（熱門） · 第 2 / 5 首」；本首歌手與題庫標題相同 → 省略第二行', () => {
+    const r = playingRound({ artistHot: true }, { index: 2, artist: '孫燕姿' })
+    expect(playingStageLines(r)).toEqual({ heading: '孫燕姿（熱門） · 第 2 / 5 首', artistLine: null })
+    expect(HOT_SUFFIX).toBe('（熱門）')
+  })
+
+  it('歌手模式、不限熱門：沒有「（熱門）」', () => {
+    expect(playingStageLines(playingRound({ artistHot: false }, { index: 3 }))).toEqual({ heading: '孫燕姿 · 第 3 / 5 首', artistLine: null })
+  })
+
+  it('歌手模式、本首歌手與題庫標題不同（合唱、別名）：顯示第二行「歌手：…」', () => {
+    const r = playingRound({ artist: 'jay chou', topic: '周杰倫', artistHot: true }, { index: 1, artist: '周杰倫 & 費玉清' })
+    expect(playingStageLines(r)).toEqual({ heading: '周杰倫（熱門） · 第 1 / 5 首', artistLine: '歌手：周杰倫 & 費玉清' })
+  })
+
+  it('榜單模式：第一行「台灣熱門 · 第 2 / 5 首」（不加熱門字樣）；第二行一律顯示該首歌手', () => {
+    const tw = chartRound('tw-hot', SOURCE_TITLE['tw-hot'], {}, { index: 2, artist: '告五人' })
+    expect(playingStageLines(tw)).toEqual({ heading: '台灣熱門 · 第 2 / 5 首', artistLine: '歌手：告五人' })
+    const us = chartRound('western-hot', SOURCE_TITLE['western-hot'], {}, { index: 5, artist: 'Taylor Swift' })
+    expect(playingStageLines(us)).toEqual({ heading: '西洋熱門 · 第 5 / 5 首', artistLine: '歌手：Taylor Swift' })
+    // 即使歌手名剛好等於題庫標題也照樣顯示（只有歌手模式才省略）
+    expect(playingStageLines(chartRound('tw-hot', '台灣熱門', {}, { artist: '台灣熱門' })).artistLine).toBe('歌手：台灣熱門')
+    // 榜單模式 artistHot 永遠 false；萬一帶 true 也不加熱門字樣
+    expect(topicLabel({ source: 'tw-hot', topic: '台灣熱門', artist: null, artistHot: true })).toBe('台灣熱門')
+  })
+
+  it('沒有題庫標題時第一行只有第幾首；本首沒有歌手名時沒有第二行', () => {
+    const r = playingRound({ source: 'artist', artist: null, topic: null }, { index: 4, artist: '' })
+    expect(playingStageLines(r)).toEqual({ heading: '第 4 / 5 首', artistLine: null })
+    expect(songProgressText(2, SONGS_PER_GAME)).toBe('第 2 / 5 首')
+  })
+
+  it('topic 還沒到時退回出題者輸入的歌手名（不會整行空白）', () => {
+    expect(topicLabel({ source: 'artist', topic: null, artist: '孫燕姿', artistHot: true })).toBe('孫燕姿（熱門）')
+    expect(topicLabel({ source: null, topic: null, artist: null, artistHot: false })).toBeNull()
+  })
+})
+
+describe('出題對話框的來源與 payload（design §1「出題（選題庫）」；architecture §4 SongSourcePayload）', () => {
+  it('三選一：歌手／台灣熱門／西洋熱門（榜單文字用 SOURCE_TITLE），預設歌手', () => {
+    expect(SOURCE_OPTIONS.map((o) => [o.id, o.label])).toEqual([
+      ['artist', '歌手'],
+      ['tw-hot', '台灣熱門'],
+      ['western-hot', '西洋熱門'],
+    ])
+    expect(SOURCE_OPTIONS[1]?.label).toBe(SOURCE_TITLE['tw-hot'])
+    expect(DEFAULT_SOURCE).toBe('artist')
+    expect(SOURCE_GROUP_LABEL).toBe('題庫來源')
+    expect(isChartSource('artist')).toBe(false)
+    expect(isChartSource('tw-hot')).toBe(true)
+    expect(isChartSource('western-hot')).toBe(true)
+  })
+
+  it('榜單模式的說明（數字由 CHART_SIZE、SONGS_PER_GAME 推導）', () => {
+    expect(CHART_NOTES['tw-hot']).toBe('從今天的 Apple Music 台灣熱門 100 首隨機抽 5 首')
+    expect(CHART_NOTES['western-hot']).toBe('從今天的 Apple Music 美國熱門 100 首隨機抽 5 首')
+    expect(CHART_NOTES['tw-hot']).toContain(`${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`)
+  })
+
+  it('送出的 payload 三種：歌手帶 artist 與 hot、榜單只有 source', () => {
+    expect(sourcePayload('artist', '孫燕姿', true)).toEqual({ source: 'artist', artist: '孫燕姿', hot: true })
+    expect(sourcePayload('artist', ' Jay Chou ', false)).toEqual({ source: 'artist', artist: ' Jay Chou ', hot: false })
+    // 榜單模式即使欄位裡還留著字，也不送 artist／hot
+    expect(sourcePayload('tw-hot', '孫燕姿', true)).toEqual({ source: 'tw-hot' })
+    expect(sourcePayload('western-hot', '', false)).toEqual({ source: 'western-hot' })
+  })
+
+  it('送出選項的文字：歌手「搜尋並開始」→ 送出中「搜尋中…」；榜單「抽歌並開始」→ 送出中「取得排行榜…」', () => {
+    expect(submitLabel('artist', false)).toBe(ARTIST_SUBMIT_LABEL)
+    expect(submitLabel('artist', true)).toBe('搜尋中…')
+    expect(submitLabel('tw-hot', false)).toBe(CHART_SUBMIT_LABEL)
+    expect(submitLabel('western-hot', true)).toBe('取得排行榜…')
+    expect(CHART_LOADING_LABEL).toBe('取得排行榜…')
+    expect(HOT_TOGGLE_LABEL).toBe('只抽熱門歌')
   })
 })
 

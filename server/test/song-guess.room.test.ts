@@ -1,5 +1,7 @@
 // 猜歌 Room：spec/song-guess/architecture.md §5（狀態機、搜尋、猜題、計分、揭曉、排名、離開、重連）
-// 假時鐘＋注入的搜尋器與亂數，決定性地跑；搜尋結果經 promise 回報，所以 setArtist 一律 await。
+// 假時鐘＋注入的搜尋器與亂數，決定性地跑；搜尋結果經 promise 回報，所以 setSource 一律 await。
+// 2026-10-16 Epic 18：round:setArtist → round:setSource；既有案例以 setArtist()（歌手模式、hot 預設 true）呼叫，
+// 欄位 artistDisplay → topic、lastArtist → lastTopic；新來源（台灣熱門／西洋熱門）與 SOURCE_INVALID 等見檔尾。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ARTIST_INVALID_MESSAGE,
@@ -20,9 +22,18 @@ import {
 } from '@fishing-work/shared/song-guess';
 import { CHAT_ERROR_MESSAGES } from '../src/games/song-guess/chat';
 import { ItunesSearchError, type ItunesTrack, type SongSearcher } from '../src/games/song-guess/itunes';
-import { ROUND_ERROR_MESSAGES, Room, type Effect, type EmitEffect, type RoomOptions } from '../src/games/song-guess/room';
+import { ItunesChartError, type ChartCountry, type ChartFetcher } from '../src/games/song-guess/itunes';
+import {
+  CHART_COUNTRY,
+  ROUND_ERROR_MESSAGES,
+  Room,
+  parseSourcePayload,
+  type Effect,
+  type EmitEffect,
+  type RoomOptions,
+} from '../src/games/song-guess/room';
 import { FakeClock } from './helpers/fakeClock';
-import { ManualSearch, flush, track } from './helpers/songGuess';
+import { ManualChart, ManualSearch, chartFixtureTracks, flush, track } from './helpers/songGuess';
 
 const GRACE_MS = RECONNECT_GRACE_SECONDS * 1000;
 const CHOOSING_MS = CHOOSING_SECONDS * 1000;
@@ -107,11 +118,16 @@ function toChoosing(n = 2): void {
   ok(room.volunteer('s1'));
 }
 
+/** 歌手模式出題（Epic 18 前的 setArtist）；hot 預設 true（對話框預設勾） */
+function setArtist(socketId: string, artist: string, hot = true) {
+  return room.setSource(socketId, { source: 'artist', artist, hot });
+}
+
 /** n 人加入 → s1 出題 → 搜尋成功 → 第 1 首 playing（時鐘不前進） */
 async function toPlaying(n = 2, artist = '孫燕姿') {
   toChoosing(n);
-  const out = await room.setArtist('s1', artist);
-  if (!out.ack.ok) throw new Error(`setArtist 失敗：${out.ack.error}`);
+  const out = await setArtist('s1', artist);
+  if (!out.ack.ok) throw new Error(`setSource 失敗：${out.ack.error}`);
   return out;
 }
 
@@ -183,14 +199,17 @@ describe('加入', () => {
       gameNo: 0,
       phase: 'idle',
       setterId: null,
+      source: null,
       artist: null,
-      artistDisplay: null,
+      artistHot: false,
+      topic: null,
       songCount: SONGS_PER_GAME,
       endsAt: null,
       song: null,
       reveal: null,
       results: null,
-      lastArtist: null,
+      lastTopic: null,
+      lastSource: null,
       serverNow: clock.now(),
       participantIds: [],
     });
@@ -264,14 +283,17 @@ describe('round:volunteer', () => {
       gameNo: 0,
       phase: 'choosing',
       setterId: A,
+      source: null,
       artist: null,
-      artistDisplay: null,
+      artistHot: false,
+      topic: null,
       songCount: SONGS_PER_GAME,
       endsAt: clock.now() + CHOOSING_MS,
       song: null,
       reveal: null,
       results: null,
-      lastArtist: null,
+      lastTopic: null,
+      lastSource: null,
       serverNow: clock.now(),
       participantIds: [],
     });
@@ -341,21 +363,21 @@ describe('choosing：取消、逾時、出題者離開', () => {
     const back = joinOk('s9', 'ignored', 'id2');
     expect(back.data.snapshot.you).toBe(A);
     expect(back.data.snapshot.round).toMatchObject({ phase: 'choosing', setterId: A });
-    expect((await room.setArtist('s9', '孫燕姿')).ack).toEqual({ ok: true, data: { artistDisplay: '孫燕姿' } });
+    expect((await setArtist('s9', '孫燕姿')).ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
   });
 });
 
 describe('階段不符的錯誤碼（§5）', () => {
   it('idle：setArtist／cancel → NOT_SETTER', async () => {
     joinPlayers(2);
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toEqual({ ok: false, error: 'NOT_SETTER', message: '只有本回合的出題者可以這麼做' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toEqual({ ok: false, error: 'NOT_SETTER', message: '只有本回合的出題者可以這麼做' });
     expect(room.cancel('s1').ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
     expect(searched).toEqual([]);
   });
 
   it('choosing：非出題者 setArtist／cancel → NOT_SETTER', async () => {
     toChoosing(2);
-    expect((await room.setArtist('s2', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect((await setArtist('s2', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
     expect(room.cancel('s2').ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
     expect(searched).toEqual([]);
     expect(room.currentRound().phase).toBe('choosing');
@@ -367,7 +389,7 @@ describe('階段不符的錯誤碼（§5）', () => {
       expect(room.currentRound().phase).toBe(phase);
       for (const s of ['s1', 's2', 's3']) {
         expect(room.volunteer(s).ack).toEqual({ ok: false, error: 'ROUND_BUSY', message: '目前已有回合進行中' });
-        expect((await room.setArtist(s, '周杰倫')).ack).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
+        expect((await setArtist(s, '周杰倫')).ack).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
         expect(room.cancel(s).ack).toMatchObject({ ok: false, error: 'ROUND_BUSY' });
       }
       finishSong();
@@ -379,13 +401,13 @@ describe('階段不符的錯誤碼（§5）', () => {
     await toPlaying();
     for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
     expect(room.currentRound().phase).toBe('ended');
-    expect((await room.setArtist('s1', '周杰倫')).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect((await setArtist('s1', '周杰倫')).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
     expect(room.cancel('s1').ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
     ok(room.volunteer('s2'));
   });
 
   it('未加入 → NOT_IN_ROOM', async () => {
-    expect((await room.setArtist('nobody', '孫燕姿')).ack).toEqual({ ok: false, error: 'NOT_IN_ROOM', message: '請先加入房間' });
+    expect((await setArtist('nobody', '孫燕姿')).ack).toEqual({ ok: false, error: 'NOT_IN_ROOM', message: '請先加入房間' });
     expect(room.cancel('nobody').ack).toMatchObject({ ok: false, error: 'NOT_IN_ROOM' });
   });
 });
@@ -396,7 +418,7 @@ describe('round:setArtist：驗證', () => {
   it('歌手名不合法 → ARTIST_INVALID（不搜尋）；仍在 choosing', async () => {
     toChoosing(2);
     for (const bad of ['', '   ', '　', 'x'.repeat(31), '孫\n燕姿', '孫\t燕姿']) {
-      expect((await room.setArtist('s1', bad)).ack).toEqual({ ok: false, error: 'ARTIST_INVALID', message: ARTIST_INVALID_MESSAGE });
+      expect((await setArtist('s1', bad)).ack).toEqual({ ok: false, error: 'ARTIST_INVALID', message: ARTIST_INVALID_MESSAGE });
     }
     expect(ARTIST_INVALID_MESSAGE).toBe('歌手名稱需為 1～30 個字，不可含控制字元，也不能只有空白');
     expect(searched).toEqual([]);
@@ -406,7 +428,7 @@ describe('round:setArtist：驗證', () => {
   it('去頭尾空白後送去搜尋；30 個字合法', async () => {
     toChoosing(2);
     const long = '孫'.repeat(30);
-    await room.setArtist('s1', `  ${long}　`);
+    await setArtist('s1', `  ${long}　`);
     expect(searched).toEqual([long]);
   });
 });
@@ -417,11 +439,11 @@ describe('round:setArtist：搜尋失敗與查無 → 仍在 choosing，可重�
     room = makeRoom({ search: () => (fail ? Promise.reject(new ItunesSearchError('HTTP 500')) : Promise.resolve(TRACKS)) });
     toChoosing(2);
     const endsAt = room.currentRound().endsAt;
-    const out = await room.setArtist('s1', '孫燕姿');
+    const out = await setArtist('s1', '孫燕姿');
     expect(out).toEqual({ ack: { ok: false, error: 'SEARCH_FAILED', message: '搜尋失敗，請再試一次' }, effects: [] });
     expect(room.currentRound()).toMatchObject({ phase: 'choosing', setterId: A, endsAt, gameNo: 0, artist: null });
     fail = false;
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toEqual({ ok: true, data: { artistDisplay: '孫燕姿' } });
+    expect((await setArtist('s1', '孫燕姿')).ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
   });
 
   it('搜尋器同步丟例外、或沒注入搜尋器 → SEARCH_FAILED', async () => {
@@ -431,11 +453,11 @@ describe('round:setArtist：搜尋失敗與查無 → 仍在 choosing，可重�
       },
     });
     toChoosing(2);
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'SEARCH_FAILED' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'SEARCH_FAILED' });
     room.dispose();
     room = makeRoom({ search: undefined });
     toChoosing(2);
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'SEARCH_FAILED' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'SEARCH_FAILED' });
   });
 
   it('ARTIST_NOT_FOUND（查無、不足 5 首）後換一位成功', async () => {
@@ -443,14 +465,14 @@ describe('round:setArtist：搜尋失敗與查無 → 仍在 choosing，可重�
     room = makeRoom({ search: (artist) => Promise.resolve(byArtist[artist] ?? []) });
     toChoosing(2);
     for (const artist of ['沒有這個人', '三首樂團']) {
-      const out = await room.setArtist('s1', artist);
+      const out = await setArtist('s1', artist);
       expect(out).toEqual({
         ack: { ok: false, error: 'ARTIST_NOT_FOUND', message: '找不到這位歌手的歌（至少要 5 首有試聽的歌），換一位試試' },
         effects: [],
       });
       expect(room.currentRound()).toMatchObject({ phase: 'choosing', setterId: A, gameNo: 0, results: null });
     }
-    expect((await room.setArtist('s1', '孫燕姿')).ack.ok).toBe(true);
+    expect((await setArtist('s1', '孫燕姿')).ack.ok).toBe(true);
     expect(room.currentRound()).toMatchObject({ phase: 'playing', gameNo: 1 });
   });
 
@@ -458,18 +480,18 @@ describe('round:setArtist：搜尋失敗與查無 → 仍在 choosing，可重�
     room = makeRoom({ search: () => Promise.resolve([]) });
     toChoosing(2);
     clock.advance(CHOOSING_MS - 10);
-    await room.setArtist('s1', '沒有這個人');
+    await setArtist('s1', '沒有這個人');
     clock.advance(10);
     expect(room.currentRound().phase).toBe('idle');
   });
 
-  it('英文名退回最多次的 artistName：Jay Chou → artistDisplay 周杰倫，artist 保留輸入', async () => {
+  it('英文名退回最多次的 artistName：Jay Chou → topic 周杰倫，artist 保留輸入', async () => {
     const jay = TRACKS.map((t) => ({ ...t, artistName: '周杰倫' }));
     room = makeRoom({ search: () => Promise.resolve(jay) });
     toChoosing(2);
-    const out = await room.setArtist('s1', ' Jay Chou ');
-    expect(out.ack).toEqual({ ok: true, data: { artistDisplay: '周杰倫' } });
-    expect(room.currentRound()).toMatchObject({ artist: 'Jay Chou', artistDisplay: '周杰倫' });
+    const out = await setArtist('s1', ' Jay Chou ');
+    expect(out.ack).toEqual({ ok: true, data: { topic: '周杰倫' } });
+    expect(room.currentRound()).toMatchObject({ artist: 'Jay Chou', topic: '周杰倫' });
   });
 
   it('退回須過半：結果裡最多的歌手沒過半 → ARTIST_NOT_FOUND，仍在 choosing', async () => {
@@ -482,32 +504,32 @@ describe('round:setArtist：搜尋失敗與查無 → 仍在 choosing，可重�
     ];
     room = makeRoom({ search: () => Promise.resolve(tracks) });
     toChoosing(2);
-    expect((await room.setArtist('s1', '客串歌手')).ack).toMatchObject({ ok: false, error: 'ARTIST_NOT_FOUND' });
+    expect((await setArtist('s1', '客串歌手')).ack).toMatchObject({ ok: false, error: 'ARTIST_NOT_FOUND' });
     expect(room.currentRound()).toMatchObject({ phase: 'choosing', gameNo: 0 });
     // 直接打過濾得到 5 首的歌手名仍可出題
-    expect((await room.setArtist('s1', '大團乙')).ack).toEqual({ ok: true, data: { artistDisplay: '大團乙' } });
+    expect((await setArtist('s1', '大團乙')).ack).toEqual({ ok: true, data: { topic: '大團乙' } });
   });
 
   it('括號開頭的歌名不會被抽到：扣掉後不足 5 首 → ARTIST_NOT_FOUND', async () => {
     const tracks = [track(1, '(......醉鬼阿Q) [feat. 孫燕姿]'), ...[2, 3, 4, 5].map((i) => track(i, `歌${i}`))];
     room = makeRoom({ search: () => Promise.resolve(tracks) });
     toChoosing(2);
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'ARTIST_NOT_FOUND' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ ok: false, error: 'ARTIST_NOT_FOUND' });
   });
 
-  it('lastArtist 是正式名（artistDisplay），不是出題者輸入值', async () => {
+  it('lastTopic 是正式名（topic），不是出題者輸入值', async () => {
     const jay = TRACKS.map((t) => ({ ...t, artistName: '周杰倫' }));
     room = makeRoom({ search: () => Promise.resolve(jay) });
     toChoosing(2);
-    await room.setArtist('s1', 'Jay Chou');
-    expect(room.currentRound()).toMatchObject({ artist: 'Jay Chou', artistDisplay: '周杰倫', lastArtist: null });
+    await setArtist('s1', 'Jay Chou');
+    expect(room.currentRound()).toMatchObject({ artist: 'Jay Chou', topic: '周杰倫', lastTopic: null });
     for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
-    expect(room.currentRound()).toMatchObject({ phase: 'ended', artist: 'Jay Chou', artistDisplay: '周杰倫', lastArtist: '周杰倫' });
+    expect(room.currentRound()).toMatchObject({ phase: 'ended', artist: 'Jay Chou', topic: '周杰倫', lastTopic: '周杰倫' });
     // 下一局 choosing／idle 保留的也是正式名
     ok(room.volunteer('s2'));
-    expect(room.currentRound()).toMatchObject({ phase: 'choosing', artist: null, lastArtist: '周杰倫' });
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', artist: null, lastTopic: '周杰倫' });
     ok(room.cancel('s2'));
-    expect(room.currentRound()).toMatchObject({ phase: 'idle', lastArtist: '周杰倫' });
+    expect(room.currentRound()).toMatchObject({ phase: 'idle', lastTopic: '周杰倫' });
   });
 });
 
@@ -520,29 +542,29 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('搜尋中再送 → SEARCH_BUSY（不重複搜尋）；搜尋回來後成功', async () => {
     toChoosing(2);
-    const first = room.setArtist('s1', '孫燕姿');
-    expect(await room.setArtist('s1', '周杰倫')).toEqual({ ack: { ok: false, error: 'SEARCH_BUSY', message: '搜尋中，請稍候' }, effects: [] });
-    expect(await room.setArtist('s1', '孫燕姿')).toMatchObject({ ack: { ok: false, error: 'SEARCH_BUSY' } });
+    const first = setArtist('s1', '孫燕姿');
+    expect(await setArtist('s1', '周杰倫')).toEqual({ ack: { ok: false, error: 'SEARCH_BUSY', message: '搜尋中，請稍候' }, effects: [] });
+    expect(await setArtist('s1', '孫燕姿')).toMatchObject({ ack: { ok: false, error: 'SEARCH_BUSY' } });
     expect(manual.calls).toHaveLength(1);
     // 搜尋中 round 沒有變化（仍是 choosing、artist 尚未公開）
-    expect(room.currentRound()).toMatchObject({ phase: 'choosing', artist: null, artistDisplay: null });
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', artist: null, topic: null });
     manual.calls[0]?.resolve(TRACKS);
-    expect((await first).ack).toEqual({ ok: true, data: { artistDisplay: '孫燕姿' } });
+    expect((await first).ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
     expect(room.currentRound().phase).toBe('playing');
   });
 
   it('搜尋中歌手名不合法 → ARTIST_INVALID（驗證在 SEARCH_BUSY 之前）', async () => {
     toChoosing(2);
-    void room.setArtist('s1', '孫燕姿');
-    expect((await room.setArtist('s1', '   ')).ack).toMatchObject({ ok: false, error: 'ARTIST_INVALID' });
+    void setArtist('s1', '孫燕姿');
+    expect((await setArtist('s1', '   ')).ack).toMatchObject({ ok: false, error: 'ARTIST_INVALID' });
   });
 
   it('搜尋失敗回來後可以再送（SEARCH_BUSY 解除）', async () => {
     toChoosing(2);
-    const first = room.setArtist('s1', '孫燕姿');
+    const first = setArtist('s1', '孫燕姿');
     manual.calls[0]?.reject(new ItunesSearchError('逾時（8000 ms）'));
     expect((await first).ack).toMatchObject({ ok: false, error: 'SEARCH_FAILED' });
-    const second = room.setArtist('s1', '孫燕姿');
+    const second = setArtist('s1', '孫燕姿');
     expect(manual.calls).toHaveLength(2);
     manual.calls[1]?.resolve(TRACKS);
     expect((await second).ack.ok).toBe(true);
@@ -550,7 +572,7 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('搜尋中取消 → 立刻 idle；搜尋回來時結果丟棄、ack NOT_SETTER、不開局', async () => {
     toChoosing(2);
-    const pending = room.setArtist('s1', '孫燕姿');
+    const pending = setArtist('s1', '孫燕姿');
     ok(room.cancel('s1'));
     expect(room.currentRound().phase).toBe('idle');
     manual.calls[0]?.resolve(TRACKS);
@@ -561,14 +583,14 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('搜尋中出題期限到 → idle；搜尋回來（成功或失敗）都是 NOT_SETTER', async () => {
     toChoosing(2);
-    const pending = room.setArtist('s1', '孫燕姿');
+    const pending = setArtist('s1', '孫燕姿');
     clock.advance(CHOOSING_MS);
     expect(room.currentRound().phase).toBe('idle');
     manual.calls[0]?.resolve(TRACKS);
     expect((await pending).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
 
     ok(room.volunteer('s1'));
-    const again = room.setArtist('s1', '孫燕姿');
+    const again = setArtist('s1', '孫燕姿');
     clock.advance(CHOOSING_MS);
     manual.calls[1]?.reject(new Error('timeout'));
     expect((await again).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
@@ -577,7 +599,7 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('搜尋中出題者寬限期滿離開 → idle；搜尋回來 NOT_SETTER', async () => {
     toChoosing(3);
-    const pending = room.setArtist('s1', '孫燕姿');
+    const pending = setArtist('s1', '孫燕姿');
     room.disconnect('s1');
     clock.advance(GRACE_MS);
     expect(room.currentRound().phase).toBe('idle');
@@ -588,25 +610,25 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('取消後別人又開了新的 choosing：舊搜尋回來不會開局，也不影響新出題者', async () => {
     toChoosing(2);
-    const stale = room.setArtist('s1', '孫燕姿');
+    const stale = setArtist('s1', '孫燕姿');
     ok(room.cancel('s1'));
     ok(room.volunteer('s2'));
     // 新出題者不會因為舊搜尋還沒回來而 SEARCH_BUSY
-    const fresh = room.setArtist('s2', '周杰倫');
+    const fresh = setArtist('s2', '周杰倫');
     expect(manual.calls.map((c) => c.artist)).toEqual(['孫燕姿', '周杰倫']);
     manual.calls[0]?.resolve(TRACKS);
     expect((await stale).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
     expect(room.currentRound()).toMatchObject({ phase: 'choosing', setterId: B, gameNo: 0 });
     // 舊搜尋回來沒有清掉新出題者的「搜尋中」
-    expect((await room.setArtist('s2', '五月天')).ack).toMatchObject({ ok: false, error: 'SEARCH_BUSY' });
+    expect((await setArtist('s2', '五月天')).ack).toMatchObject({ ok: false, error: 'SEARCH_BUSY' });
     manual.calls[1]?.resolve(TRACKS.map((t) => ({ ...t, artistName: '周杰倫' })));
-    expect((await fresh).ack).toEqual({ ok: true, data: { artistDisplay: '周杰倫' } });
+    expect((await fresh).ack).toEqual({ ok: true, data: { topic: '周杰倫' } });
     expect(room.currentRound()).toMatchObject({ phase: 'playing', setterId: B, gameNo: 1 });
   });
 
   it('同一人取消後自己再出題：舊搜尋回來同樣丟棄', async () => {
     toChoosing(2);
-    const stale = room.setArtist('s1', '孫燕姿');
+    const stale = setArtist('s1', '孫燕姿');
     ok(room.cancel('s1'));
     ok(room.volunteer('s1'));
     manual.calls[0]?.resolve(TRACKS);
@@ -616,7 +638,7 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('出題者斷線（寬限期內）搜尋成功 → 局照開；他不在參賽者裡', async () => {
     toChoosing(3);
-    const pending = room.setArtist('s1', '孫燕姿');
+    const pending = setArtist('s1', '孫燕姿');
     room.disconnect('s1');
     manual.calls[0]?.resolve(TRACKS);
     expect((await pending).ack.ok).toBe(true);
@@ -625,7 +647,7 @@ describe('round:setArtist：搜尋進行中', () => {
 
   it('dispose 後搜尋才回來 → 丟棄', async () => {
     toChoosing(2);
-    const pending = room.setArtist('s1', '孫燕姿');
+    const pending = setArtist('s1', '孫燕姿');
     room.dispose();
     manual.calls[0]?.resolve(TRACKS);
     expect((await pending).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
@@ -637,22 +659,25 @@ describe('round:setArtist：搜尋進行中', () => {
 // ─── 一局 ─────────────────────────────────────────────────────────
 
 describe('搜尋成功 → 第 1 首 playing', () => {
-  it('ack { artistDisplay }；round 欄位；效果順序 round:update → players:update → 系統訊息', async () => {
+  it('ack { topic }；round 欄位；效果順序 round:update → players:update → 系統訊息', async () => {
     const out = await toPlaying(2, ' 孫燕姿 ');
     const now = clock.now();
-    expect(out.ack).toEqual({ ok: true, data: { artistDisplay: '孫燕姿' } });
+    expect(out.ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
     expect(eventsOf(out.effects)).toEqual(['round:update', 'players:update', 'chat:message']);
     expect(rounds(out.effects)[0]).toEqual({
       gameNo: 1,
       phase: 'playing',
       setterId: A,
+      source: 'artist',
       artist: '孫燕姿',
-      artistDisplay: '孫燕姿',
+      artistHot: true,
+      topic: '孫燕姿',
       songCount: 5,
       endsAt: now + START_DELAY_MS + CAP,
       song: {
         index: 1,
         previewUrl: 'https://audio.example/preview/1.m4a',
+        artist: '孫燕姿',
         startedAt: now + START_DELAY_MS,
         endsAt: now + START_DELAY_MS + CAP,
         durationMs: CAP,
@@ -661,7 +686,8 @@ describe('搜尋成功 → 第 1 首 playing', () => {
       },
       reveal: null,
       results: null,
-      lastArtist: null,
+      lastTopic: null,
+      lastSource: null,
       serverNow: now,
       participantIds: [A, B],
     });
@@ -677,7 +703,7 @@ describe('搜尋成功 → 第 1 首 playing', () => {
     joinPlayers(4);
     room.disconnect('s3');
     ok(room.volunteer('s2'));
-    const out = await room.setArtist('s2', '孫燕姿');
+    const out = await setArtist('s2', '孫燕姿');
     expect(rounds(out.effects)[0]).toMatchObject({ setterId: B, participantIds: [A, B, D] });
   });
 
@@ -710,10 +736,10 @@ describe('完整一局 5 首（假時鐘）', () => {
         gameNo: 1,
         phase: 'playing',
         artist: '孫燕姿',
-        artistDisplay: '孫燕姿',
+        topic: '孫燕姿',
         reveal: null,
         results: null,
-        lastArtist: null,
+        lastTopic: null,
         endsAt: enteredAt + START_DELAY_MS + (DURATIONS[i] as number),
         song: {
           index: i + 1,
@@ -768,10 +794,10 @@ describe('完整一局 5 首（假時鐘）', () => {
       phase: 'ended',
       setterId: A,
       artist: '孫燕姿',
-      artistDisplay: '孫燕姿',
+      topic: '孫燕姿',
       endsAt: null,
       song: null,
-      lastArtist: '孫燕姿',
+      lastTopic: '孫燕姿',
       participantIds: [A, B],
       results: [
         { playerId: A, nickname: 'Alice', rank: 1, gameScore: 0, correctCount: 0 },
@@ -858,7 +884,7 @@ describe('猜題：猜對', () => {
   it('計分：100 − floor(50 × 已用毫秒 / 播放毫秒)，從 startedAt 起算', async () => {
     joinPlayers(4);
     ok(room.volunteer('s1'));
-    await room.setArtist('s1', '孫燕姿');
+    await setArtist('s1', '孫燕姿');
     clock.advance(START_DELAY_MS); // startedAt
     ok(room.chat('s1', '遇見')); // 0 秒
     clock.advance(599);
@@ -939,7 +965,7 @@ describe('猜題：猜對', () => {
   it('各種算對的打法：歌名本身、完整歌名、全形、大小寫、標點', async () => {
     joinPlayers(4);
     ok(room.volunteer('s1'));
-    await room.setArtist('s1', '孫燕姿');
+    await setArtist('s1', '孫燕姿');
     nextSong(); // 第 2 首：如果可以 (電影"月老"主題曲)
     ok(room.chat('s1', '如果可以'));
     ok(room.chat('s2', '如果可以 (電影"月老"主題曲)'));
@@ -1068,13 +1094,13 @@ describe('ended：本局排名與得分累計', () => {
     ]);
   });
 
-  it('results／lastArtist 生命週期：ended 有值 → 下一局 choosing 與取消回 idle 都保留 → 搜尋成功進第 1 首才清', async () => {
+  it('results／lastTopic 生命週期：ended 有值 → 下一局 choosing 與取消回 idle 都保留 → 搜尋成功進第 1 首才清', async () => {
     await toPlaying();
     ok(room.chat('s2', '遇見'));
     for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
     const results = room.currentRound().results;
     expect(results).toHaveLength(2);
-    expect(room.currentRound()).toMatchObject({ phase: 'ended', lastArtist: '孫燕姿' });
+    expect(room.currentRound()).toMatchObject({ phase: 'ended', lastTopic: '孫燕姿', lastSource: 'artist' });
 
     // 下一局 choosing：保留；reveal、artist、participantIds 清掉；上一局出題者的 isSetter 清掉
     ok(room.volunteer('s2'));
@@ -1083,11 +1109,12 @@ describe('ended：本局排名與得分累計', () => {
       gameNo: 1,
       setterId: B,
       artist: null,
-      artistDisplay: null,
+      topic: null,
       song: null,
       reveal: null,
       results,
-      lastArtist: '孫燕姿',
+      lastTopic: '孫燕姿',
+      lastSource: 'artist',
       participantIds: [],
     });
     expect(room.playerList().map((p) => p.isSetter)).toEqual([false, true]);
@@ -1096,26 +1123,26 @@ describe('ended：本局排名與得分累計', () => {
 
     // 取消 → idle：仍保留
     ok(room.cancel('s2'));
-    expect(room.currentRound()).toMatchObject({ phase: 'idle', setterId: null, results, lastArtist: '孫燕姿' });
+    expect(room.currentRound()).toMatchObject({ phase: 'idle', setterId: null, results, lastTopic: '孫燕姿', lastSource: 'artist' });
     // 中途加入者的快照也看得到上一局排名
-    expect(joinOk('s3', 'Carol').data.snapshot.round).toMatchObject({ phase: 'idle', results, lastArtist: '孫燕姿' });
+    expect(joinOk('s3', 'Carol').data.snapshot.round).toMatchObject({ phase: 'idle', results, lastTopic: '孫燕姿' });
 
     // 搜尋失敗：仍保留
     room.dispose();
   });
 
-  it('下一局搜尋成功：gameNo 2、results／lastArtist 清空、全員 gameScore 歸零、總分保留', async () => {
+  it('下一局搜尋成功：gameNo 2、results／lastTopic 清空、全員 gameScore 歸零、總分保留', async () => {
     await toPlaying();
     ok(room.chat('s2', '遇見'));
     for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
     ok(room.volunteer('s2'));
-    const out = await room.setArtist('s2', '孫燕姿');
+    const out = await setArtist('s2', '孫燕姿');
     expect(rounds(out.effects)[0]).toMatchObject({
       gameNo: 2,
       phase: 'playing',
       setterId: B,
       results: null,
-      lastArtist: null,
+      lastTopic: null,
       reveal: null,
       song: { index: 1, correctIds: [] },
     });
@@ -1136,11 +1163,11 @@ describe('ended：本局排名與得分累計', () => {
     const { results } = room.currentRound();
     ok(room.volunteer('s1'));
     tracks = null;
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toMatchObject({ error: 'SEARCH_FAILED' });
-    expect(room.currentRound()).toMatchObject({ phase: 'choosing', results, lastArtist: '孫燕姿' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ error: 'SEARCH_FAILED' });
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', results, lastTopic: '孫燕姿' });
     tracks = [];
-    expect((await room.setArtist('s1', '孫燕姿')).ack).toMatchObject({ error: 'ARTIST_NOT_FOUND' });
-    expect(room.currentRound()).toMatchObject({ phase: 'choosing', results, lastArtist: '孫燕姿', gameNo: 1 });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ error: 'ARTIST_NOT_FOUND' });
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', results, lastTopic: '孫燕姿', gameNo: 1 });
   });
 });
 
@@ -1156,7 +1183,7 @@ describe('中途加入', () => {
     expect(round).toMatchObject({
       phase: 'playing',
       artist: '孫燕姿',
-      artistDisplay: '孫燕姿',
+      topic: '孫燕姿',
       serverNow: clock.now(),
       participantIds: [A, B],
       song: { index: 1, previewUrl: 'https://audio.example/preview/1.m4a', startedAt, durationMs: CAP },
@@ -1198,7 +1225,7 @@ describe('中途加入', () => {
     clock.advance(REVEAL_MS);
     for (let i = 1; i < SONGS_PER_GAME; i++) nextSong();
     const inEnded = joinOk('s4', 'Dave').data.snapshot.round;
-    expect(inEnded).toMatchObject({ phase: 'ended', song: null, reveal: { index: 5 }, lastArtist: '孫燕姿' });
+    expect(inEnded).toMatchObject({ phase: 'ended', song: null, reveal: { index: 5 }, lastTopic: '孫燕姿' });
     expect(inEnded.results?.map((r) => r.playerId)).toEqual([A, B]);
   });
 });
@@ -1349,12 +1376,12 @@ describe('重連（token 接管）', () => {
     ok(room.chat('s9', '遇見'));
   });
 
-  it('ended 後重連：快照帶 results、lastArtist、最後一首的揭曉', async () => {
+  it('ended 後重連：快照帶 results、lastTopic、最後一首的揭曉', async () => {
     await toPlaying();
     for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
     room.disconnect('s1');
     const back = joinOk('s9', 'x', 'id2');
-    expect(back.data.snapshot.round).toMatchObject({ phase: 'ended', lastArtist: '孫燕姿', reveal: { index: 5 }, song: null });
+    expect(back.data.snapshot.round).toMatchObject({ phase: 'ended', lastTopic: '孫燕姿', reveal: { index: 5 }, song: null });
     expect(back.data.snapshot.round.results).toHaveLength(2);
   });
 
@@ -1374,7 +1401,7 @@ describe('計時長度與定格', () => {
     room = makeRoom({ durations: { startDelayMs: 100, previewCapMs: 2000, revealMs: 300, choosingMs: undefined } });
     toChoosing(2);
     expect(room.currentRound().endsAt).toBe(clock.now() + CHOOSING_MS);
-    await room.setArtist('s1', '孫燕姿');
+    await setArtist('s1', '孫燕姿');
     const now = clock.now();
     expect(room.currentRound().song).toMatchObject({ startedAt: now + 100, durationMs: 2000, endsAt: now + 2100 });
     clock.advance(2100);
@@ -1393,7 +1420,7 @@ describe('計時長度與定格', () => {
     ];
     room = makeRoom({ search: () => Promise.resolve(tracks) });
     toChoosing(2);
-    await room.setArtist('s1', '孫燕姿');
+    await setArtist('s1', '孫燕姿');
     const seen: number[] = [];
     for (let i = 0; i < SONGS_PER_GAME; i++) {
       seen.push(room.currentRound().song?.durationMs as number);
@@ -1416,7 +1443,7 @@ describe('計時長度與定格', () => {
     const choosing = rounds(vol.effects)[0] as RoundPublic;
     expect((choosing.endsAt as number) - choosing.serverNow).toBe(CHOOSING_MS);
 
-    const set = await room.setArtist('s1', '孫燕姿');
+    const set = await setArtist('s1', '孫燕姿');
     const playing = rounds(set.effects)[0] as RoundPublic;
     expect((playing.song?.startedAt as number) - playing.serverNow).toBe(START_DELAY_MS);
     expect((playing.endsAt as number) - playing.serverNow).toBe(START_DELAY_MS + CAP);
@@ -1464,3 +1491,306 @@ describe('計時長度與定格', () => {
     expect(room.recipients({ only: B })).toEqual([]);
   });
 });
+
+// ─── Epic 18：題庫來源（round:setSource） ───────────────────────────
+
+describe('parseSourcePayload（§5 choosing：payload 形狀）', () => {
+  it('不是物件、source 不是三值、歌手模式 hot 不是 boolean（含缺漏）→ SOURCE_INVALID', () => {
+    const bad: unknown[] = [
+      undefined,
+      null,
+      '孫燕姿',
+      42,
+      ['artist'],
+      {},
+      { artist: '孫燕姿' },
+      { source: 'uk-hot' },
+      { source: 'ARTIST', artist: '孫燕姿', hot: true },
+      { source: 'artist', artist: '孫燕姿' },
+      { source: 'artist', artist: '孫燕姿', hot: 'true' },
+      { source: 'artist', artist: '孫燕姿', hot: 1 },
+      { source: 'artist', artist: '孫燕姿', hot: null },
+    ];
+    for (const payload of bad) expect(parseSourcePayload(payload)).toEqual({ ok: false, error: 'SOURCE_INVALID' });
+  });
+
+  it('歌手模式 artist 不是字串 → ARTIST_INVALID（hot 合法時）', () => {
+    for (const artist of [undefined, null, 42, ['孫燕姿']]) {
+      expect(parseSourcePayload({ source: 'artist', artist, hot: true })).toEqual({ ok: false, error: 'ARTIST_INVALID' });
+    }
+  });
+
+  it('合法：歌手模式帶 artist＋hot；榜單模式多帶的欄位忽略', () => {
+    expect(parseSourcePayload({ source: 'artist', artist: ' 周杰倫 ', hot: false, extra: 1 })).toEqual({
+      ok: true,
+      payload: { source: 'artist', artist: ' 周杰倫 ', hot: false },
+    });
+    expect(parseSourcePayload({ source: 'tw-hot', artist: '周杰倫', hot: 'x' })).toEqual({ ok: true, payload: { source: 'tw-hot' } });
+    expect(parseSourcePayload({ source: 'western-hot' })).toEqual({ ok: true, payload: { source: 'western-hot' } });
+  });
+
+  it('榜單來源對應國家：台灣熱門 tw、西洋熱門 us', () => {
+    expect(CHART_COUNTRY).toEqual({ 'tw-hot': 'tw', 'western-hot': 'us' });
+  });
+});
+
+describe('round:setSource：錯誤碼與檢查順序（SOURCE_INVALID → ARTIST_INVALID → SEARCH_BUSY）', () => {
+  it('SOURCE_INVALID 文案照 §5.3；不取歌、仍在 choosing、期限不變', async () => {
+    const charted: ChartCountry[] = [];
+    room = makeRoom({ chart: (c) => (charted.push(c), Promise.resolve(chartFixtureTracks('tw'))) });
+    toChoosing(2);
+    const endsAt = room.currentRound().endsAt;
+    expect(await room.setSource('s1', { source: 'kpop-hot' })).toEqual({
+      ack: { ok: false, error: 'SOURCE_INVALID', message: '題庫來源不正確，請重新選擇' },
+      effects: [],
+    });
+    expect(ROUND_ERROR_MESSAGES.SOURCE_INVALID).toBe('題庫來源不正確，請重新選擇');
+    expect(ROUND_ERROR_MESSAGES.CHART_FAILED).toBe('取得排行榜失敗，請再試一次');
+    expect(searched).toEqual([]);
+    expect(charted).toEqual([]);
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', endsAt });
+  });
+
+  it('payload 形狀先驗（比照 Epic 16 在 register 驗形狀）：未加入、非出題者送壞 payload 也是 SOURCE_INVALID', async () => {
+    expect((await room.setSource('nobody', null)).ack).toMatchObject({ error: 'SOURCE_INVALID' });
+    toChoosing(2);
+    expect((await room.setSource('s2', { source: 'artist', artist: '孫燕姿' })).ack).toMatchObject({ error: 'SOURCE_INVALID' });
+    expect((await room.setSource('s2', { source: 'tw-hot' })).ack).toMatchObject({ error: 'NOT_SETTER' });
+  });
+
+  it('取歌進行中：壞 payload → SOURCE_INVALID、壞歌手名 → ARTIST_INVALID、合法 → SEARCH_BUSY', async () => {
+    const manual = new ManualSearch();
+    room = makeRoom({ search: manual.search });
+    toChoosing(2);
+    const first = setArtist('s1', '孫燕姿');
+    expect((await room.setSource('s1', { source: 'artist', artist: '周杰倫', hot: 'yes' })).ack).toMatchObject({ error: 'SOURCE_INVALID' });
+    expect((await setArtist('s1', '  ')).ack).toMatchObject({ error: 'ARTIST_INVALID' });
+    expect((await setArtist('s1', '周杰倫')).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toEqual({ ok: false, error: 'SEARCH_BUSY', message: '搜尋中，請稍候' });
+    expect(manual.calls).toHaveLength(1);
+    manual.calls[0]?.resolve(TRACKS);
+    expect((await first).ack.ok).toBe(true);
+  });
+
+  it('SEARCH_BUSY 兩種來源共用旗標：榜單取歌中再送歌手或另一個榜單 → SEARCH_BUSY', async () => {
+    const manual = new ManualChart();
+    room = makeRoom({ chart: manual.chart });
+    toChoosing(2);
+    const first = room.setSource('s1', { source: 'tw-hot' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    expect((await room.setSource('s1', { source: 'western-hot' })).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    expect(manual.calls.map((c) => c.country)).toEqual(['tw']);
+    expect(searched).toEqual([]);
+    manual.calls[0]?.resolve(chartFixtureTracks('tw'));
+    expect((await first).ack).toEqual({ ok: true, data: { topic: '台灣熱門' } });
+  });
+});
+
+describe('round:setSource：台灣熱門／西洋熱門', () => {
+  function chartRoom(country: ChartCountry = 'tw', extra: Partial<RoomOptions> = {}): ChartCountry[] {
+    const calls: ChartCountry[] = [];
+    const chart: ChartFetcher = (c) => {
+      calls.push(c);
+      return Promise.resolve(chartFixtureTracks(country));
+    };
+    room = makeRoom({ chart, ...extra });
+    return calls;
+  }
+
+  it('台灣熱門：chart("tw")、ack { topic: 台灣熱門 }、round 欄位、系統訊息「X 出題「台灣熱門」，共 5 首」', async () => {
+    const calls = chartRoom('tw');
+    toChoosing(2);
+    const out = await room.setSource('s1', { source: 'tw-hot' });
+    expect(calls).toEqual(['tw']);
+    expect(searched).toEqual([]);
+    expect(out.ack).toEqual({ ok: true, data: { topic: '台灣熱門' } });
+    expect(eventsOf(out.effects)).toEqual(['round:update', 'players:update', 'chat:message']);
+    expect(rounds(out.effects)[0]).toMatchObject({
+      gameNo: 1,
+      phase: 'playing',
+      source: 'tw-hot',
+      artist: null,
+      artistHot: false,
+      topic: '台灣熱門',
+      results: null,
+      lastTopic: null,
+      lastSource: null,
+      participantIds: [A, B],
+      song: { index: 1, artist: 'A2O & A2O LITE', titleLength: normalizeLength('NEON') },
+    });
+    expect(chats(out.effects)[0]?.text).toBe('Alice 出題「台灣熱門」，共 5 首');
+  });
+
+  it('西洋熱門：chart("us")、topic 西洋熱門', async () => {
+    const calls = chartRoom('us');
+    toChoosing(2);
+    const out = await room.setSource('s1', { source: 'western-hot' });
+    expect(calls).toEqual(['us']);
+    expect(out.ack).toEqual({ ok: true, data: { topic: '西洋熱門' } });
+    expect(room.currentRound()).toMatchObject({ source: 'western-hot', artist: null, artistHot: false, topic: '西洋熱門' });
+    expect(room.currentRound().song?.artist).toBe('Ella Langley');
+  });
+
+  it('榜單模式 song.artist 逐首是該首歌手；揭曉的 artist 一致；答案在 reveal 前不外洩', async () => {
+    chartRoom('tw');
+    toChoosing(2);
+    const out = await room.setSource('s1', { source: 'tw-hot' });
+    expect(JSON.stringify([out, room.currentRound()])).not.toContain('NEON');
+    const seen: [string | undefined, string | undefined][] = [];
+    for (let i = 0; i < SONGS_PER_GAME; i++) {
+      const song = room.currentRound().song;
+      finishSong();
+      seen.push([song?.artist, room.currentRound().reveal?.artist]);
+      clock.advance(REVEAL_MS);
+    }
+    expect(seen).toEqual([
+      ['A2O & A2O LITE', 'A2O & A2O LITE'],
+      ['李佳薇', '李佳薇'],
+      ['JEON SOYEON', 'JEON SOYEON'],
+      ['田馥甄', '田馥甄'],
+      ['周杰倫', '周杰倫'],
+    ]);
+  });
+
+  it('ended：lastTopic 台灣熱門、lastSource tw-hot；下一局 choosing 保留、換歌手模式開局才清', async () => {
+    chartRoom('tw');
+    toChoosing(2);
+    await room.setSource('s1', { source: 'tw-hot' });
+    for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
+    expect(room.currentRound()).toMatchObject({ phase: 'ended', source: 'tw-hot', topic: '台灣熱門', lastTopic: '台灣熱門', lastSource: 'tw-hot' });
+    ok(room.volunteer('s2'));
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', source: null, topic: null, lastTopic: '台灣熱門', lastSource: 'tw-hot' });
+    const out = await setArtist('s2', '孫燕姿');
+    expect(rounds(out.effects)[0]).toMatchObject({
+      gameNo: 2,
+      source: 'artist',
+      artist: '孫燕姿',
+      artistHot: true,
+      topic: '孫燕姿',
+      lastTopic: null,
+      lastSource: null,
+    });
+  });
+
+  it('CHART_FAILED：取得器失敗 → 仍在 choosing、期限不變；可重試，也可換來源', async () => {
+    let fail = true;
+    room = makeRoom({ chart: () => (fail ? Promise.reject(new ItunesChartError('RSS HTTP 500')) : Promise.resolve(chartFixtureTracks('us'))) });
+    toChoosing(2);
+    const endsAt = room.currentRound().endsAt;
+    expect(await room.setSource('s1', { source: 'tw-hot' })).toEqual({
+      ack: { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' },
+      effects: [],
+    });
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', endsAt, setterId: A, source: null });
+    // 換另一個榜單：同樣 CHART_FAILED；恢復後成功
+    expect((await room.setSource('s1', { source: 'western-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+    fail = false;
+    expect((await room.setSource('s1', { source: 'western-hot' })).ack).toEqual({ ok: true, data: { topic: '西洋熱門' } });
+  });
+
+  it('CHART_FAILED 後換歌手模式成功', async () => {
+    room = makeRoom({ chart: () => Promise.reject(new Error('lookup HTTP 500')) });
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
+  });
+
+  it('取得器同步丟例外也是 CHART_FAILED', async () => {
+    room = makeRoom({
+      chart: () => {
+        throw new Error('boom');
+      },
+    });
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+  });
+
+  it('可抽不足 5 首（去重後）→ CHART_FAILED，不是 ARTIST_NOT_FOUND', async () => {
+    const four = chartFixtureTracks('tw').slice(0, 4);
+    const dupes = four.map((t) => ({ ...t, trackId: t.trackId + 1, trackName: `${t.trackName} (Live)` }));
+    room = makeRoom({ chart: () => Promise.resolve([...four, ...dupes]) });
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+    expect(room.currentRound().phase).toBe('choosing');
+  });
+
+  it('未注入取得器（預設）→ CHART_FAILED（Room 不碰網路）', async () => {
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+  });
+
+  it('取歌回來已不是同一次 choosing（取消、逾時）→ 成功與失敗都 ack NOT_SETTER、結果丟棄', async () => {
+    const manual = new ManualChart();
+    room = makeRoom({ chart: manual.chart });
+    toChoosing(2);
+    const cancelled = room.setSource('s1', { source: 'tw-hot' });
+    ok(room.cancel('s1'));
+    manual.calls[0]?.resolve(chartFixtureTracks('tw'));
+    expect((await cancelled).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect(room.currentRound()).toMatchObject({ phase: 'idle', source: null, topic: null });
+
+    ok(room.volunteer('s1'));
+    const timedOut = room.setSource('s1', { source: 'western-hot' });
+    clock.advance(CHOOSING_MS);
+    manual.calls[1]?.reject(new ItunesChartError('lookup 逾時（8000 ms）'));
+    expect((await timedOut).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect(room.currentRound().phase).toBe('idle');
+  });
+
+  it('階段不符：idle／ended → NOT_SETTER；playing → ROUND_BUSY（榜單同歌手）', async () => {
+    chartRoom('tw');
+    joinPlayers(2);
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'NOT_SETTER' });
+    ok(room.volunteer('s1'));
+    await room.setSource('s1', { source: 'tw-hot' });
+    expect((await room.setSource('s1', { source: 'western-hot' })).ack).toMatchObject({ error: 'ROUND_BUSY' });
+    for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'NOT_SETTER' });
+  });
+});
+
+describe('round:setSource：歌手模式的 hot 與 song.artist', () => {
+  /** 60 首依名次排列；亂數恆接近 1 時每次都抽候選裡最後面的 */
+  const SIXTY = Array.from({ length: 60 }, (_, k) => track(k + 1, `第${k + 1}名`));
+
+  it('hot: true → artistHot true、只抽前 30；hot: false → artistHot false、抽得到 30 之後', async () => {
+    room = makeRoom({ search: () => Promise.resolve(SIXTY), random: () => 0.999999 });
+    toChoosing(2);
+    await setArtist('s1', '孫燕姿', true);
+    expect(room.currentRound()).toMatchObject({ artistHot: true, source: 'artist' });
+    const hotIds: number[] = [];
+    for (let i = 0; i < SONGS_PER_GAME; i++) {
+      hotIds.push(Number(room.currentRound().song?.previewUrl.match(/(\d+)\.m4a$/)?.[1]));
+      nextSong();
+    }
+    expect(Math.max(...hotIds)).toBeLessThanOrEqual(30);
+
+    ok(room.volunteer('s1'));
+    await setArtist('s1', '孫燕姿', false);
+    expect(room.currentRound()).toMatchObject({ artistHot: false });
+    expect(Number(room.currentRound().song?.previewUrl.match(/(\d+)\.m4a$/)?.[1])).toBeGreaterThan(30);
+  });
+
+  it('song.artist ＝本首 artistName（合唱曲照寫）；topic 仍是最多次的正式名', async () => {
+    const tracks = [track(1, '合唱', { artistName: '孫燕姿 & 蔡健雅' }), ...[2, 3, 4, 5, 6].map((i) => track(i, `歌${i}`))];
+    room = makeRoom({ search: () => Promise.resolve(tracks) });
+    toChoosing(2);
+    const out = await setArtist('s1', '孫燕姿');
+    expect(out.ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
+    expect(room.currentRound().song?.artist).toBe('孫燕姿 & 蔡健雅');
+    nextSong();
+    expect(room.currentRound().song?.artist).toBe('孫燕姿');
+  });
+
+  it('系統訊息不加「熱門」字樣（hot 與否相同）', async () => {
+    toChoosing(2);
+    const out = await setArtist('s1', '孫燕姿', true);
+    expect(chats(out.effects)[0]?.text).toBe('Alice 出題「孫燕姿」，共 5 首');
+  });
+});
+
+/** titleLength 的期望值（與 shared 的 titleLength 同義；這裡只用在純英數歌名） */
+function normalizeLength(title: string): number {
+  return [...title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')].length;
+}

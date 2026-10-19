@@ -56,7 +56,7 @@ describe("ShellProps screen 'resume' 插槽：只有 notice 與 connection", () 
 
   it('對話框不再有 join 用途與 footer（登入改在首頁）', () => {
     const views = read('../src/shells/views.ts')
-    expect(views).toContain("export type DialogPurpose = 'artist' | 'help'")
+    expect(views).toContain("export type DialogPurpose = 'source' | 'help'")
     expect(views).not.toMatch(/footer\?:/)
   })
 })
