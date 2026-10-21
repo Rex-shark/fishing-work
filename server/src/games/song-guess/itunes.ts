@@ -6,10 +6,14 @@
 //   一次 lookup（${ITUNES_URL}/lookup?id=<逗號分隔>&country=${ITUNES_COUNTRY}）補 previewUrl／trackTimeMillis；
 //   RSS 段逾時 ITUNES_RSS_TIMEOUT_MS（12 秒；Apple RSS 偶發 8～15 秒才回，決策 14）、lookup 段 ITUNES_TIMEOUT_MS（8 秒）；
 //   任一段失敗或 RSS 沒有歌一律拋 ItunesChartError（對外即 CHART_FAILED）。快取鍵＝國家。
+// - animePool()（Epic 19，動漫熱門）：ANIME_TERMS（anime／アニメ／動漫）各打一次 Search（不帶 attribute），三次**並行**、
+//   各自 ITUNES_TIMEOUT_MS 逾時；任一失敗（逾時、連不上、非 2xx、解析失敗）整體拋 ItunesChartError（對外即 CHART_FAILED）。
+//   合併：同一首（trackId）只留一筆，排名＝它在三份結果中的最小索引，依排名升冪（同排名依關鍵字順序）。
+//   快取鍵 'anime'，存的是合併後、**尚未排除**原聲帶／翻唱的結果（排除與去重在 picker.pickAnime）。
 // - 環境變數在本檔讀取（比照 draw-contest/judge/index.ts）：ITUNES_URL、ITUNES_COUNTRY、ITUNES_RSS_URL、ITUNES_TIMEOUT_MS、ITUNES_RSS_TIMEOUT_MS、
 //   ITUNES_CACHE_MS、SONG_PREVIEW_CAP_MS。
 // 啟動時**不**探測 iTunes（省限流額度；連不上時出題者會收到 SEARCH_FAILED 並可重試）。
-import { CHART_SIZE, PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
+import { ANIME_TERMS, CHART_SIZE, PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
 import { log } from '../../lib/log';
 
 /** 測試可注入的 fetch（只用到這個形狀） */
@@ -44,14 +48,17 @@ export class ItunesSearchError extends Error {
   }
 }
 
-/** 排行榜失敗（RSS 或 lookup 逾時、連不上、非 2xx、回應不是預期的 JSON、RSS 沒有歌）；room 一律回 CHART_FAILED */
+/**
+ * 題庫取得失敗（排行榜：RSS 或 lookup 逾時、連不上、非 2xx、回應不是預期的 JSON、RSS 沒有歌；
+ * 動漫熱門（Epic 19）：任一關鍵字搜尋失敗）；room 一律回 CHART_FAILED
+ */
 export class ItunesChartError extends Error {
   readonly code = 'CHART_FAILED';
   constructor(
     readonly reason: string,
     options?: { cause?: unknown },
   ) {
-    super(`取得排行榜失敗：${reason}`, options);
+    super(`取得題庫失敗：${reason}`, options);
     this.name = 'ItunesChartError';
   }
 }
@@ -265,6 +272,61 @@ export async function chart(country: ChartCountry, options: ChartOptions): Promi
   return parseLookupBody(lookup, ids);
 }
 
+// ─── 動漫熱門（Epic 19） ───────────────────────────────────────────
+
+/** 組動漫熱門的搜尋網址：`${url}/search?term=<kw>&entity=song&country=…&media=music&limit=200`（**不帶 attribute**；參數順序照 §6） */
+export function buildAnimeSearchUrl(term: string, options: Pick<SearchOptions, 'url' | 'country'>): string {
+  const query = new URLSearchParams({
+    term,
+    entity: 'song',
+    country: options.country,
+    media: 'music',
+    limit: String(SEARCH_LIMIT),
+  });
+  return `${options.url.replace(/\/+$/, '')}/search?${query.toString()}`;
+}
+
+/** 同一首歌的合併鍵：有 trackId 用 trackId；沒有（toTrack 給 0）退回歌手＋歌名＋專輯 */
+function mergeKey(t: ItunesTrack): string {
+  return t.trackId > 0 ? `id:${t.trackId}` : `raw:${t.artistName}\u0000${t.trackName}\u0000${t.collectionName ?? ''}`;
+}
+
+/**
+ * 合併多份搜尋結果（依關鍵字順序傳入）：同一首（mergeKey）只留一筆、排名＝它在各份結果中的最小索引；
+ * 依排名升冪，同排名依關鍵字順序（＝lists 的順序）。留下的那一筆是達到最小索引、關鍵字較前的那份裡的資料。
+ */
+export function mergeAnimeResults(lists: readonly (readonly ItunesTrack[])[]): ItunesTrack[] {
+  const best = new Map<string, { track: ItunesTrack; rank: number; term: number }>();
+  lists.forEach((tracks, term) => {
+    tracks.forEach((track, rank) => {
+      const key = mergeKey(track);
+      const prev = best.get(key);
+      // lists 依關鍵字順序走訪：只有「索引更小」才取代，同索引留關鍵字較前者
+      if (prev === undefined || rank < prev.rank) best.set(key, { track, rank, term });
+    });
+  });
+  return [...best.values()].sort((a, b) => a.rank - b.rank || a.term - b.term).map((x) => x.track);
+}
+
+/**
+ * 取動漫熱門的題庫（不快取）：ANIME_TERMS 三次 Search **並行**、各自 timeoutMs 逾時；任一失敗拋 ItunesChartError
+ * （原因帶關鍵字）。成功回合併後的結果（依合併排名；**尚未**排除原聲帶／翻唱、尚未去重）。
+ */
+export async function animePool(options: SearchOptions): Promise<ItunesTrack[]> {
+  const doFetch = options.fetch ?? defaultFetch;
+  const lists = await Promise.all(
+    ANIME_TERMS.map(async (term) => {
+      const body = await fetchText(buildAnimeSearchUrl(term, options), options.timeoutMs, doFetch, (reason, cause) => new ItunesChartError(`search ${term} ${reason}`, { cause }));
+      try {
+        return parseSearchBody(body);
+      } catch (err) {
+        throw new ItunesChartError(`search ${term} ${err instanceof ItunesSearchError ? err.reason : String(err)}`, { cause: err });
+      }
+    }),
+  );
+  return mergeAnimeResults(lists);
+}
+
 // ─── 快取 ─────────────────────────────────────────────────────────
 
 /** room 使用的搜尋器：給歌手名（已驗證、去頭尾空白），回原始搜尋結果；失敗 reject */
@@ -273,12 +335,18 @@ export type SongSearcher = (artist: string) => Promise<ItunesTrack[]>;
 /** room 使用的排行榜取得器（Epic 18）：給國家，回依名次排序、有試聽的歌；失敗 reject */
 export type ChartFetcher = (country: ChartCountry) => Promise<ItunesTrack[]>;
 
+/** room 使用的動漫熱門題庫取得器（Epic 19）：回三關鍵字合併後的結果（依合併排名、尚未排除）；失敗 reject */
+export type AnimePoolFetcher = () => Promise<ItunesTrack[]>;
+
+/** 動漫熱門的快取鍵（Epic 19 決策 4） */
+export const ANIME_CACHE_KEY = 'anime';
+
 export interface ItunesConfig {
   url: string;
   country: string;
   /** 排行榜 RSS 根網址（ITUNES_RSS_URL；Epic 18） */
   rssUrl: string;
-  /** 搜尋與 lookup 的逾時（ITUNES_TIMEOUT_MS） */
+  /** 搜尋（含動漫熱門的三次搜尋）與 lookup 的逾時（ITUNES_TIMEOUT_MS） */
   timeoutMs: number;
   /** 排行榜 RSS 段的逾時（ITUNES_RSS_TIMEOUT_MS；決策 14） */
   rssTimeoutMs: number;
@@ -305,6 +373,15 @@ export interface ChartLogInfo {
   reason?: string;
 }
 
+export interface AnimeLogInfo {
+  /** 合併後的筆數（失敗時無） */
+  count?: number;
+  ms: number;
+  cached: boolean;
+  /** 失敗原因（成功時無） */
+  reason?: string;
+}
+
 export interface ItunesClientOptions {
   fetch?: FetchLike;
   /** 快取時效用的時鐘（預設 Date.now；測試注入） */
@@ -313,16 +390,22 @@ export interface ItunesClientOptions {
   onSearch?: (info: SearchLogInfo) => void;
   /** 每次取排行榜（含快取命中、失敗）回報一次（Epic 18） */
   onChart?: (info: ChartLogInfo) => void;
+  /** 每次取動漫熱門題庫（含快取命中、失敗）回報一次（Epic 19） */
+  onAnime?: (info: AnimeLogInfo) => void;
 }
 
 export interface ItunesClient {
   search: SongSearcher;
   /** 排行榜（Epic 18）：快取鍵＝國家，規則同 search（只快取成功、同鍵進行中共用請求） */
   chart: ChartFetcher;
+  /** 動漫熱門（Epic 19）：快取鍵 'anime'，規則同 search（只快取成功、進行中共用請求） */
+  animePool: AnimePoolFetcher;
   /** 目前快取的歌手數（測試與 log 用） */
   cacheSize(): number;
   /** 目前快取的榜單數（測試用） */
   chartCacheSize(): number;
+  /** 目前快取的動漫熱門題庫數（0 或 1；測試用） */
+  animeCacheSize(): number;
 }
 
 /**
@@ -366,10 +449,12 @@ export function createItunesClient(config: ItunesConfig, options: ItunesClientOp
   const now = options.now ?? (() => Date.now());
   const searches = createCache<ItunesTrack[]>(config.cacheMs, now);
   const charts = createCache<ItunesTrack[]>(config.cacheMs, now);
+  const animes = createCache<ItunesTrack[]>(config.cacheMs, now);
 
   return {
     cacheSize: searches.size,
     chartCacheSize: charts.size,
+    animeCacheSize: animes.size,
     search: (artist) => {
       const key = artistKey(artist);
       const hit = searches.get(key);
@@ -423,6 +508,29 @@ export function createItunesClient(config: ItunesConfig, options: ItunesClientOp
         },
       );
       return charts.track(country, run);
+    },
+    animePool: () => {
+      const hit = animes.get(ANIME_CACHE_KEY);
+      if (hit !== undefined) {
+        options.onAnime?.({ count: hit.value.length, ms: 0, cached: true });
+        return Promise.resolve(hit.value);
+      }
+      const inFlight = animes.pending(ANIME_CACHE_KEY);
+      if (inFlight !== undefined) return inFlight;
+
+      const startedAt = Date.now();
+      const run = animePool({ url: config.url, country: config.country, timeoutMs: config.timeoutMs, fetch: options.fetch }).then(
+        (tracks) => {
+          options.onAnime?.({ count: tracks.length, ms: Date.now() - startedAt, cached: false });
+          return tracks;
+        },
+        (err: unknown) => {
+          const reason = err instanceof ItunesChartError ? err.reason : String(err);
+          options.onAnime?.({ ms: Date.now() - startedAt, cached: false, reason });
+          throw err;
+        },
+      );
+      return animes.track(ANIME_CACHE_KEY, run);
     },
   };
 }
@@ -490,6 +598,8 @@ export function readSongGuessConfig(env: NodeJS.ProcessEnv = process.env, warn: 
 export interface SongGuessSetup {
   search: SongSearcher;
   chart: ChartFetcher;
+  /** 動漫熱門題庫（Epic 19；與搜尋器共用同一個 iTunes 客戶端） */
+  animePool: AnimePoolFetcher;
   previewCapMs: number;
 }
 
@@ -505,6 +615,10 @@ export function songGuessSetupFromEnv(env: NodeJS.ProcessEnv = process.env, warn
       if (info.reason !== undefined) log.warn('song-guess.itunes.chartFailed', { ...info });
       else log.info('song-guess.itunes.chart', { ...info });
     },
+    onAnime: (info) => {
+      if (info.reason !== undefined) log.warn('song-guess.itunes.animeFailed', { ...info });
+      else log.info('song-guess.itunes.anime', { ...info });
+    },
   });
-  return { search: client.search, chart: client.chart, previewCapMs: config.previewCapMs };
+  return { search: client.search, chart: client.chart, animePool: client.animePool, previewCapMs: config.previewCapMs };
 }

@@ -26,6 +26,12 @@
 //   壞掉樂團       一律回 500 → 測 SEARCH_FAILED（不必重啟成 MOCK_ITUNES_FAIL=1）
 //   熱門歌手       60 筆，歌名「熱門第n首」依 n 排列（trackId＝1700＋n，n 即 iTunes 回傳的名次）→ 測「只抽熱門歌」（Epic 18）：
 //                  hot 時只會抽到第 1～30 首，不勾可抽到第 31 首之後
+//   anime／アニメ／動漫（Epic 19，動漫熱門的三個關鍵字；MOCK_ANIME）：各回一份固定清單（10／9／9 筆，三份有交集），
+//                  共 18 首（trackId 2301～2318，依 MOCK_ANIME.tracks 的順序）。合併去重、排除後**可抽 14 首（2301～2314）**；
+//                  不可抽的 4 首：2315 Call of Silence（專輯「…オリジナルサウンドトラック」，原聲帶）、
+//                  2316 紅蓮華 (Cover)（翻唱）、2317 Departure!（專輯「… Original Soundtrack」，原聲帶）、
+//                  2318 紅蓮華（LiSA 另一張專輯的同名歌：與 2301 同歌手同歌名，合併排名較後 → 去重掉）。
+//                  2314「LOST IN PARADISE (feat. AKLO)」標題含 LOST：OST 以單字邊界比對，不可誤殺（可抽）。
 //   其他任何 term  查無（resultCount 0）
 // 排行榜（MOCK_CHARTS，Epic 18）：tw 12 首（中文、韓團、英文混合；trackId 2101～2112）、us 12 首西洋（trackId 2201～2212），
 //   依名次排列；歌名、歌手、歌手＋歌名皆不重複（去重後 12 首都可抽）。
@@ -38,16 +44,18 @@
 //   MOCK_ITUNES_FAIL=1 node user/mock/itunes.mjs                # /search 一律回 500
 //   MOCK_ITUNES_CHART_FAIL=1 node user/mock/itunes.mjs          # 排行榜 RSS 一律回 500（→ CHART_FAILED）
 //   MOCK_ITUNES_LOOKUP_FAIL=1 node user/mock/itunes.mjs         # /lookup 一律回 500（→ CHART_FAILED）
+//   MOCK_ITUNES_FAIL_TERM=アニメ node user/mock/itunes.mjs       # 只有 term＝アニメ 的 /search 回 500（動漫熱門 → CHART_FAILED；Epic 19）
 //   ITUNES_URL=http://127.0.0.1:11535 ITUNES_RSS_URL=http://127.0.0.1:11535 HOST=127.0.0.1 PORT=3411 node server/dist/index.js
 //                                                               # server 的搜尋、lookup 與排行榜都指向假 iTunes
 // 環境變數：MOCK_ITUNES_PORT（預設 11535）、MOCK_ITUNES_HOST（預設 127.0.0.1）、
 //           MOCK_ITUNES_DELAY_MS（每次 /search、排行榜、/lookup 回應前的延遲，預設 0）、MOCK_ITUNES_FAIL=1（/search 一律回 500）、
 //           MOCK_ITUNES_CHART_FAIL=1（排行榜 RSS 一律回 500）、MOCK_ITUNES_LOOKUP_FAIL=1（/lookup 一律回 500）、
+//           MOCK_ITUNES_FAIL_TERM=<關鍵字>（只有該 term 的 /search 回 500，比對方式同 term；Epic 19）、
 //           MOCK_ITUNES_TRACK_MS（每首的 trackTimeMillis，預設 2000；想在瀏覽器聽久一點可設 30000 以上，server 會夾在 30 秒）、
 //           MOCK_ITUNES_SLOW_MS（「慢慢來樂團」額外的延遲，預設 1500）、
 //           MOCK_ITUNES_PUBLIC_URL（previewUrl 的根網址；預設用請求的 Host 標頭。要讓區網另一台電腦的瀏覽器也播得到時設成 http://<本機 IP>:<埠>，並把 MOCK_ITUNES_HOST 設 0.0.0.0）。
 // 也可在程式內 import { startMockItunes } 啟動（測試用，回傳 { url, port, close, requests }）；
-// 選項 chartFail、lookupFail 對應上面兩個環境變數。
+// 選項 chartFail、lookupFail、failTerm 對應上面三個環境變數。
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
@@ -201,6 +209,39 @@ export const MOCK_CHARTS = {
   },
 };
 
+/**
+ * 動漫熱門（Epic 19）：三個關鍵字的固定清單。tracks 為 [歌名, artistName, 專輯]（trackId＝idBase＋索引＋1）；
+ * lists 為各關鍵字回傳的 tracks 索引（依回傳順序＝熱門度）。可抽／不可抽的推算見檔頭。
+ */
+export const MOCK_ANIME = {
+  idBase: 2300,
+  tracks: [
+    ['紅蓮華', 'LiSA', '紅蓮華 - EP'], //                                           0 → 2301
+    ['残響散歌', 'Aimer', '残響散歌 / 朝が来る - EP'], //                            1 → 2302
+    ['怪物', 'YOASOBI', '怪物 - Single'], //                                         2 → 2303
+    ['祝福', 'YOASOBI', '祝福 - Single'], //                                         3 → 2304
+    ['SPECIALZ', 'King Gnu', 'SPECIALZ - Single'], //                                4 → 2305
+    ['One Last Kiss', '宇多田光', 'One Last Kiss'], //                               5 → 2306
+    ['打上花火', 'DAOKO × 米津玄師', '打上花火 - Single'], //                       6 → 2307
+    ['Cry Baby', 'Official髭男dism', 'Cry Baby - Single'], //                       7 → 2308
+    ['アイドル', 'YOASOBI', 'アイドル - Single'], //                                 8 → 2309
+    ['青のすみか', 'キタニタツヤ', '青のすみか - Single'], //                       9 → 2310
+    ['KICK BACK', '米津玄師', 'KICK BACK - Single'], //                             10 → 2311
+    ['Mixed Nuts', 'Official髭男dism', 'Mixed Nuts - EP'], //                       11 → 2312
+    ['炎', 'LiSA', '炎 - Single'], //                                               12 → 2313
+    ['LOST IN PARADISE (feat. AKLO)', 'ALI', 'LOST IN PARADISE - EP'], //           13 → 2314（OST 不可誤殺）
+    ['Call of Silence', '澤野弘之', 'TVアニメ「進撃の巨人」Season 2 オリジナルサウンドトラック'], // 14 → 2315（原聲帶）
+    ['紅蓮華 (Cover)', '歌ってみた太郎', 'アニソン歌ってみた Vol.1'], //             15 → 2316（翻唱）
+    ['Departure!', '平野義久', 'HUNTER×HUNTER Original Soundtrack'], //             16 → 2317（原聲帶）
+    ['紅蓮華', 'LiSA', 'LEO-NiNE'], //                                              17 → 2318（與 2301 重複 → 去重）
+  ],
+  lists: {
+    anime: [1, 5, 2, 0, 4, 14, 6, 13, 10, 7],
+    アニメ: [14, 0, 3, 15, 8, 1, 9, 16, 12],
+    動漫: [0, 3, 2, 17, 11, 5, 9, 15, 4],
+  },
+};
+
 /** 一律回 500 的歌手（term 正規化後相同） */
 export const MOCK_FAILING_ARTIST = '壞掉樂團';
 
@@ -278,10 +319,17 @@ function resultsFor(artist, publicUrl, trackMs) {
   return artist.tracks.map((t, i) => trackResult(artist.idBase + i + 1, t, publicUrl, trackMs));
 }
 
-/** trackId → [歌名, artistName, 專輯]：所有歌手的歌與兩個榜單（lookup 用） */
+/** trackId → [歌名, artistName, 專輯]：所有歌手的歌、兩個榜單與動漫熱門（lookup 用） */
 const TRACK_BY_ID = new Map();
-for (const group of [...MOCK_ARTISTS, ...Object.values(MOCK_CHARTS)]) {
+for (const group of [...MOCK_ARTISTS, ...Object.values(MOCK_CHARTS), MOCK_ANIME]) {
   group.tracks.forEach((t, i) => TRACK_BY_ID.set(group.idBase + i + 1, t));
+}
+
+/** 動漫熱門某個關鍵字的 results（term 正規化後比對；不是三個關鍵字之一回 null） */
+function animeResultsFor(key, publicUrl, trackMs) {
+  const entry = Object.entries(MOCK_ANIME.lists).find(([term]) => termKey(term) === key);
+  if (entry === undefined) return null;
+  return entry[1].map((i) => trackResult(MOCK_ANIME.idBase + i + 1, MOCK_ANIME.tracks[i], publicUrl, trackMs));
 }
 
 /** 排行榜 RSS 的 feed（形狀同 rss.marketingtools.apple.com；沒有 previewUrl、trackTimeMillis） */
@@ -332,9 +380,9 @@ function sendJson(res, status, obj, contentType = 'text/javascript; charset=utf-
 
 /**
  * 啟動假 iTunes。
- * @param {{ port?: number, host?: string, delayMs?: number, fail?: boolean, chartFail?: boolean, lookupFail?: boolean, trackMs?: number, slowMs?: number, publicUrl?: string }} [options]
+ * @param {{ port?: number, host?: string, delayMs?: number, fail?: boolean, chartFail?: boolean, lookupFail?: boolean, failTerm?: string, trackMs?: number, slowMs?: number, publicUrl?: string }} [options]
  *   delayMs：每次 /search、排行榜、/lookup 回應前的延遲；fail：/search 一律回 500；chartFail：排行榜 RSS 一律回 500；
- *   lookupFail：/lookup 一律回 500；trackMs：每首的 trackTimeMillis；
+ *   lookupFail：/lookup 一律回 500；failTerm：只有該 term（正規化後相同）的 /search 回 500（Epic 19）；trackMs：每首的 trackTimeMillis；
  *   slowMs：「慢慢來樂團」額外的延遲；publicUrl：previewUrl 的根網址（預設用請求的 Host 標頭）
  * @returns {Promise<{ url: string, port: number, close: () => Promise<void>, requests: Array<{ method: string, path: string, term?: string, query?: Record<string, string>, country?: string, ids?: string[] }> }>}
  */
@@ -361,11 +409,11 @@ export function startMockItunes(options = {}) {
       const publicUrl = (options.publicUrl ?? `http://${req.headers.host ?? `${host}:${server.address().port}`}`).replace(/\/+$/, '');
       const reply = () => {
         if (res.destroyed) return;
-        if (options.fail || key === termKey(MOCK_FAILING_ARTIST)) {
+        if (options.fail || key === termKey(MOCK_FAILING_ARTIST) || (options.failTerm !== undefined && key === termKey(options.failTerm))) {
           sendJson(res, 500, { errorMessage: 'mock iTunes: internal error' });
           return;
         }
-        const results = artist ? resultsFor(artist, publicUrl, trackMs) : [];
+        const results = artist ? resultsFor(artist, publicUrl, trackMs) : (animeResultsFor(key, publicUrl, trackMs) ?? []);
         sendJson(res, 200, { resultCount: results.length, results });
       };
       const wait = delayMs + (artist?.slow ? slowMs : 0);
@@ -451,6 +499,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const fail = process.env.MOCK_ITUNES_FAIL === '1';
   const chartFail = process.env.MOCK_ITUNES_CHART_FAIL === '1';
   const lookupFail = process.env.MOCK_ITUNES_LOOKUP_FAIL === '1';
+  const failTerm = process.env.MOCK_ITUNES_FAIL_TERM ? process.env.MOCK_ITUNES_FAIL_TERM : undefined;
   const mock = await startMockItunes({
     port: num('MOCK_ITUNES_PORT', 11535),
     host: process.env.MOCK_ITUNES_HOST ?? '127.0.0.1',
@@ -458,13 +507,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     fail,
     chartFail,
     lookupFail,
+    failTerm,
     trackMs,
     slowMs: num('MOCK_ITUNES_SLOW_MS', 1500),
     ...(process.env.MOCK_ITUNES_PUBLIC_URL ? { publicUrl: process.env.MOCK_ITUNES_PUBLIC_URL } : {}),
   });
   console.log(
     `假 iTunes 已啟動：${mock.url}（delay ${delayMs} ms、trackTimeMillis ${trackMs}${fail ? '、/search 一律回 500' : ''}` +
-      `${chartFail ? '、排行榜一律回 500' : ''}${lookupFail ? '、/lookup 一律回 500' : ''}）`,
+      `${chartFail ? '、排行榜一律回 500' : ''}${lookupFail ? '、/lookup 一律回 500' : ''}${failTerm ? `、term＝${failTerm} 回 500` : ''}）`,
   );
   const stop = () => mock.close().then(() => process.exit(0));
   process.on('SIGINT', stop);

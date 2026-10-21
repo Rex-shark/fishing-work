@@ -78,7 +78,7 @@ export function playingRound(over: Partial<RoundPublic> = {}, songOver: Partial<
   })
 }
 
-/** 榜單模式（台灣熱門／西洋熱門）播放中的局：artist＝null、artistHot＝false、topic＝SOURCE_TITLE */
-export function chartRound(source: 'tw-hot' | 'western-hot', topic: string, over: Partial<RoundPublic> = {}, songOver: Partial<SongPublic> = {}): RoundPublic {
+/** 非歌手來源（台灣熱門／西洋熱門／動漫熱門）播放中的局：artist＝null、artistHot＝false、topic＝SOURCE_TITLE */
+export function chartRound(source: 'tw-hot' | 'western-hot' | 'anime-hot', topic: string, over: Partial<RoundPublic> = {}, songOver: Partial<SongPublic> = {}): RoundPublic {
   return playingRound({ source, artist: null, artistHot: false, topic, ...over }, songOver)
 }

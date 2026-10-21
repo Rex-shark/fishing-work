@@ -298,9 +298,9 @@ function dialogHelpers(s: Shown) {
     primary: () => button('submit'),
     cancel: () => button('button'),
     type: (value: string) => act(async () => handlersOf(s.one((n) => n.tagName === 'INPUT' && 'data-dialog-input' in n.attrs)).onChange?.({ target: { value } })),
-    /** 點三選一的某個選項 */
+    /** 點四選一的某個選項 */
     pick: (id: string) => act(async () => handlersOf(radio(id)).onClick?.()),
-    /** 在三選一上按鍵（方向鍵、Home／End、Enter） */
+    /** 在四選一上按鍵（方向鍵、Home／End、Enter） */
     groupKey: (k: string) => key(s.one((n) => n.attrs.role === 'radiogroup'), k),
     toggleHot: (checked: boolean) =>
       act(async () => handlersOf(s.one((n) => n.tagName === 'INPUT' && 'data-dialog-toggle' in n.attrs)).onChange?.({ target: { checked } })),
@@ -359,7 +359,7 @@ describe('出題對話框的流程（歌手模式：搜尋中、失敗、取消�
     expect(d.active).toBe(d.input)
     await d.submit()
     expect(setSource).toHaveBeenCalledTimes(1)
-    // 送出中三選一與勾選不可切換（只設 aria-disabled）
+    // 送出中四選一與勾選不可切換（只設 aria-disabled）
     expect(d.radio('tw-hot').attrs['aria-disabled']).toBe('true')
     expect(d.checkbox().attrs['aria-disabled']).toBe('true')
     await d.pick('tw-hot')
@@ -469,8 +469,8 @@ describe('出題對話框的流程（歌手模式：搜尋中、失敗、取消�
   })
 })
 
-describe('出題對話框的流程（來源三選一、榜單模式、本機偏好）', () => {
-  const CHART_FAILED: ActionOutcome = { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' }
+describe('出題對話框的流程（來源四選一、榜單模式、動漫熱門、本機偏好）', () => {
+  const CHART_FAILED: ActionOutcome = { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' }
   const SOURCE_INVALID: ActionOutcome = { ok: false, error: 'SOURCE_INVALID', message: '題庫來源不正確，請重新選擇' }
   const choosing = () => round({ phase: 'choosing', setterId: 'p1', endsAt: T0 + 52_000 })
 
@@ -478,10 +478,10 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     return dialogHelpers(await show(choosing()))
   }
 
-  it('開啟：三選一「歌手／台灣熱門／西洋熱門」預設歌手；歌手模式有欄位與勾選（預設勾）、沒有榜單說明', async () => {
+  it('開啟：四選一「歌手／台灣熱門／西洋熱門／動漫熱門」預設歌手；歌手模式有欄位與勾選（預設勾）、沒有榜單說明', async () => {
     const d = await openDialog()
     expect(d.group().attrs['aria-label']).toBe('題庫來源')
-    expect(d.all().filter((n) => n.attrs.role === 'radio').map((n) => textOf(n))).toEqual(['歌手', '台灣熱門', '西洋熱門'])
+    expect(d.all().filter((n) => n.attrs.role === 'radio').map((n) => textOf(n))).toEqual(['歌手', '台灣熱門', '西洋熱門', '動漫熱門'])
     expect(d.checkedSource()).toBe('artist')
     expect(d.maybeInput()).not.toBeNull()
     expect(d.checkbox().checked).toBe(true)
@@ -490,7 +490,7 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     expect(d.active).toBe(d.input)
   })
 
-  it('切到台灣熱門：欄位與勾選消失、出現一行說明與倒數；焦點留在三選一；再切回歌手時欄位不搶焦點、原本打的字還在', async () => {
+  it('切到台灣熱門：欄位與勾選消失、出現一行說明與倒數；焦點留在四選一；再切回歌手時欄位不搶焦點、原本打的字還在', async () => {
     const d = await openDialog()
     await d.type('孫燕姿')
     await d.pick('tw-hot')
@@ -501,7 +501,7 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     expect(textOf(d.form)).toContain('00:52')
     expect(d.active).toBe(d.radio('tw-hot'))
     // 只有選中的那顆在 Tab 順序裡
-    expect(['artist', 'tw-hot', 'western-hot'].map((id) => d.radio(id).attrs.tabindex)).toEqual(['-1', '0', '-1'])
+    expect(['artist', 'tw-hot', 'western-hot', 'anime-hot'].map((id) => d.radio(id).attrs.tabindex)).toEqual(['-1', '0', '-1', '-1'])
     await d.pick('western-hot')
     expect(textOf(d.form)).toContain('從今天的 Apple Music 美國熱門 100 首隨機抽 5 首')
     await d.pick('artist')
@@ -510,7 +510,7 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     expect(d.checkbox().checked).toBe(true)
   })
 
-  it('三選一的鍵盤：→／← 循環切換、Home／End；Enter＝送出', async () => {
+  it('四選一的鍵盤：→／← 循環切換（歌手→台灣熱門→西洋熱門→動漫熱門→歌手）、↓／↑ 同順序（換兩列時也一樣）、Home／End；Enter＝送出', async () => {
     vi.mocked(setSource).mockResolvedValue(CHART_FAILED)
     const d = await openDialog()
     await d.groupKey('ArrowRight')
@@ -519,21 +519,33 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     await d.groupKey('ArrowRight')
     expect(d.checkedSource()).toBe('western-hot')
     await d.groupKey('ArrowRight')
+    expect(d.checkedSource()).toBe('anime-hot')
+    expect(d.active).toBe(d.radio('anime-hot'))
+    await d.groupKey('ArrowRight')
     expect(d.checkedSource()).toBe('artist')
     // 切回歌手時欄位掛上但不搶焦點，方向鍵可以繼續切
     expect(d.active).toBe(d.radio('artist'))
     await d.groupKey('ArrowLeft')
+    expect(d.checkedSource()).toBe('anime-hot')
+    await d.groupKey('ArrowLeft')
     expect(d.checkedSource()).toBe('western-hot')
+    // ↓／↑ 與 →／← 同順序（2×2 時不是上下跳格）
+    await d.groupKey('ArrowDown')
+    expect(d.checkedSource()).toBe('anime-hot')
+    await d.groupKey('ArrowDown')
+    expect(d.checkedSource()).toBe('artist')
+    await d.groupKey('ArrowUp')
+    expect(d.checkedSource()).toBe('anime-hot')
     await d.groupKey('Home')
     expect(d.checkedSource()).toBe('artist')
     await d.groupKey('End')
-    expect(d.checkedSource()).toBe('western-hot')
+    expect(d.checkedSource()).toBe('anime-hot')
     await d.groupKey('Enter')
     expect(setSource).toHaveBeenCalledTimes(1)
-    expect(setSource).toHaveBeenLastCalledWith({ source: 'western-hot' })
+    expect(setSource).toHaveBeenLastCalledWith({ source: 'anime-hot' })
   })
 
-  it('榜單送出：payload 只有 source；送出中按鈕「取得排行榜…」、三選一鎖住；失敗顯示 CHART_FAILED 文案、焦點留在「分享」按鈕；可重試或換來源', async () => {
+  it('榜單送出：payload 只有 source；送出中按鈕「取得排行榜…」、四選一鎖住；失敗顯示 CHART_FAILED 文案、焦點留在「分享」按鈕；可重試或換來源', async () => {
     const first = deferred()
     vi.mocked(setSource).mockReturnValueOnce(first.promise)
     const d = await openDialog()
@@ -554,7 +566,7 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     expect(setSource).toHaveBeenCalledTimes(1)
     expect(d.active).toBe(d.primary())
     await first.settle(CHART_FAILED)
-    expect(textOf(d.one((n) => n.attrs.role === 'alert'))).toBe('取得排行榜失敗，請再試一次')
+    expect(textOf(d.one((n) => n.attrs.role === 'alert'))).toBe('取得題庫失敗，請再試一次')
     expect(textOf(d.primary())).toBe('分享')
     expect(d.active).toBe(d.primary())
     expect(d.checkedSource()).toBe('tw-hot')
@@ -566,6 +578,52 @@ describe('出題對話框的流程（來源三選一、榜單模式、本機偏�
     await d.submit()
     expect(setSource).toHaveBeenLastCalledWith({ source: 'western-hot' })
     expect(textOf(d.one((n) => n.attrs.role === 'alert'))).toBe('題庫來源不正確，請重新選擇')
+  })
+
+  it('動漫熱門（Epic 19）：沒有欄位與勾選、一行說明；送出 { source: anime-hot }、送出中「搜尋中…」、四選一鎖住；失敗顯示 CHART_FAILED、焦點留在「分享」', async () => {
+    const first = deferred()
+    vi.mocked(setSource).mockReturnValueOnce(first.promise)
+    const d = await openDialog()
+    await d.type('孫燕姿')
+    await d.pick('anime-hot')
+    expect(d.checkedSource()).toBe('anime-hot')
+    expect(d.maybeInput()).toBeNull()
+    expect(d.maybeCheckbox()).toBeNull()
+    expect(textOf(d.form)).toContain('從 Apple Music 的動漫歌曲裡隨機抽 5 首（熱門前 60）')
+    expect(textOf(d.form)).toContain('00:52')
+    expect(d.active).toBe(d.radio('anime-hot'))
+    expect(textOf(d.primary())).toBe('分享')
+    expect(d.primary().attrs['aria-label']).toBe('分享：抽歌並開始')
+    d.primary().focus()
+    await d.submit()
+    // 欄位裡留著的歌手名不送
+    expect(setSource).toHaveBeenLastCalledWith({ source: 'anime-hot' })
+    expect(textOf(d.primary())).toBe('搜尋中…')
+    expect(d.primary().attrs).toMatchObject({ 'aria-disabled': 'true', 'aria-busy': 'true' })
+    expect(d.group().attrs['aria-disabled']).toBe('true')
+    await d.pick('tw-hot')
+    expect(d.checkedSource()).toBe('anime-hot')
+    await d.submit()
+    expect(setSource).toHaveBeenCalledTimes(1)
+    await first.settle(CHART_FAILED)
+    expect(textOf(d.one((n) => n.attrs.role === 'alert'))).toBe('取得題庫失敗，請再試一次')
+    expect(textOf(d.primary())).toBe('分享')
+    expect(d.active).toBe(d.primary())
+    expect(d.checkedSource()).toBe('anime-hot')
+    expect(d.dialog()).not.toBeNull()
+  })
+
+  it('動漫熱門送出成功：舞台「動漫熱門 · 第 1 / 5 首」＋本首歌手（不加「（熱門）」）', async () => {
+    const pending = deferred()
+    vi.mocked(setSource).mockReturnValue(pending.promise)
+    const d = await openDialog()
+    await d.pick('anime-hot')
+    await d.submit()
+    await pending.settle({ ok: true }, () =>
+      useGameStore.getState().setRound(chartRound('anime-hot', '動漫熱門', { serverNow: Date.now() }, { index: 1, startedAt: Date.now() + 1500, artist: 'LiSA' }), Date.now()),
+    )
+    expect(d.dialog()).toBeNull()
+    expect(d.stage()).toBe('動漫熱門 · 第 1 / 5 首歌手：LiSA')
   })
 
   it('榜單模式不做歌手名預檢（欄位是空的也直接送）', async () => {

@@ -1,26 +1,27 @@
 // 回合狀態列各階段的文字（features/round/roundDisplay；spec/song-guess/design.md §2「字幕列」欄逐列）、
 // 歌名字數提示、「出題」顯示條件、報讀文字、出題對話框的文字。
 import { describe, expect, it } from 'vitest'
-import { CHART_SIZE, MIN_PLAYERS, REVEAL_SECONDS, SONGS_PER_GAME, SOURCE_TITLE } from '@fishing-work/shared/song-guess'
+import { ANIME_HOT_POOL, CHART_SIZE, MIN_PLAYERS, REVEAL_SECONDS, SONGS_PER_GAME, SOURCE_TITLE } from '@fishing-work/shared/song-guess'
 import {
   ARTIST_CANCEL_LABEL,
   ARTIST_FIELD_LABEL,
   ARTIST_PLACEHOLDER,
-  ARTIST_SEARCHING_LABEL,
   ARTIST_SUBMIT_LABEL,
   CHART_LOADING_LABEL,
-  CHART_NOTES,
-  CHART_SUBMIT_LABEL,
   DEFAULT_SOURCE,
   NOBODY_SCORED_TEXT,
   HOT_SUFFIX,
   HOT_TOGGLE_LABEL,
+  PRESET_NOTES,
+  PRESET_SUBMIT_LABEL,
+  SEARCHING_LABEL,
   SOURCE_GROUP_LABEL,
   SOURCE_OPTIONS,
   canVolunteer,
   captionText,
   countConnected,
   isChartSource,
+  isPresetSource,
   playingStageLines,
   rankingTopicOf,
   roundAnnouncement,
@@ -240,6 +241,15 @@ describe('播放中舞台的兩行字（design §1「播放中的試聽」；pla
     expect(topicLabel({ source: 'tw-hot', topic: '台灣熱門', artist: null, artistHot: true })).toBe('台灣熱門')
   })
 
+  it('動漫熱門（Epic 19 決策 5）：與榜單同一條路——第一行「動漫熱門 · 第 n / 5 首」不加熱門字樣、第二行一律顯示該首歌手', () => {
+    const anime = chartRound('anime-hot', SOURCE_TITLE['anime-hot'], {}, { index: 3, artist: 'LiSA' })
+    expect(playingStageLines(anime)).toEqual({ heading: '動漫熱門 · 第 3 / 5 首', artistLine: '歌手：LiSA' })
+    expect(playingStageLines(chartRound('anime-hot', '動漫熱門', {}, { artist: '動漫熱門' })).artistLine).toBe('歌手：動漫熱門')
+    expect(topicLabel({ source: 'anime-hot', topic: '動漫熱門', artist: null, artistHot: true })).toBe('動漫熱門')
+    // 排名表標題：lastTopic
+    expect(rankingTopicOf({ lastTopic: '動漫熱門', topic: null, artist: null })).toBe('動漫熱門')
+  })
+
   it('沒有題庫標題時第一行只有第幾首；本首沒有歌手名時沒有第二行', () => {
     const r = playingRound({ source: 'artist', artist: null, topic: null }, { index: 4, artist: '' })
     expect(playingStageLines(r)).toEqual({ heading: '第 4 / 5 首', artistLine: null })
@@ -253,39 +263,54 @@ describe('播放中舞台的兩行字（design §1「播放中的試聽」；pla
 })
 
 describe('出題對話框的來源與 payload（design §1「出題（選題庫）」；architecture §4 SongSourcePayload）', () => {
-  it('三選一：歌手／台灣熱門／西洋熱門（榜單文字用 SOURCE_TITLE），預設歌手', () => {
+  it('四選一：歌手／台灣熱門／西洋熱門／動漫熱門（非歌手來源文字用 SOURCE_TITLE），預設歌手', () => {
     expect(SOURCE_OPTIONS.map((o) => [o.id, o.label])).toEqual([
       ['artist', '歌手'],
       ['tw-hot', '台灣熱門'],
       ['western-hot', '西洋熱門'],
+      ['anime-hot', '動漫熱門'],
     ])
     expect(SOURCE_OPTIONS[1]?.label).toBe(SOURCE_TITLE['tw-hot'])
+    expect(SOURCE_OPTIONS[3]?.label).toBe(SOURCE_TITLE['anime-hot'])
     expect(DEFAULT_SOURCE).toBe('artist')
     expect(SOURCE_GROUP_LABEL).toBe('題庫來源')
+    // 現成題庫（沒有欄位）：兩個榜單與動漫熱門
+    expect(isPresetSource('artist')).toBe(false)
+    expect(isPresetSource('tw-hot')).toBe(true)
+    expect(isPresetSource('western-hot')).toBe(true)
+    expect(isPresetSource('anime-hot')).toBe(true)
+    // 排行榜（送出中「取得排行榜…」）：只有兩個榜單；動漫熱門是搜尋
     expect(isChartSource('artist')).toBe(false)
     expect(isChartSource('tw-hot')).toBe(true)
     expect(isChartSource('western-hot')).toBe(true)
+    expect(isChartSource('anime-hot')).toBe(false)
   })
 
-  it('榜單模式的說明（數字由 CHART_SIZE、SONGS_PER_GAME 推導）', () => {
-    expect(CHART_NOTES['tw-hot']).toBe('從今天的 Apple Music 台灣熱門 100 首隨機抽 5 首')
-    expect(CHART_NOTES['western-hot']).toBe('從今天的 Apple Music 美國熱門 100 首隨機抽 5 首')
-    expect(CHART_NOTES['tw-hot']).toContain(`${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`)
+  it('現成題庫的說明（數字由 CHART_SIZE、ANIME_HOT_POOL、SONGS_PER_GAME 推導）', () => {
+    expect(PRESET_NOTES['tw-hot']).toBe('從今天的 Apple Music 台灣熱門 100 首隨機抽 5 首')
+    expect(PRESET_NOTES['western-hot']).toBe('從今天的 Apple Music 美國熱門 100 首隨機抽 5 首')
+    expect(PRESET_NOTES['tw-hot']).toContain(`${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`)
+    expect(PRESET_NOTES['anime-hot']).toBe('從 Apple Music 的動漫歌曲裡隨機抽 5 首（熱門前 60）')
+    expect(PRESET_NOTES['anime-hot']).toBe(`從 Apple Music 的動漫歌曲裡隨機抽 ${SONGS_PER_GAME} 首（熱門前 ${ANIME_HOT_POOL}）`)
   })
 
-  it('送出的 payload 三種：歌手帶 artist 與 hot、榜單只有 source', () => {
+  it('送出的 payload 四種：歌手帶 artist 與 hot、其餘只有 source', () => {
     expect(sourcePayload('artist', '孫燕姿', true)).toEqual({ source: 'artist', artist: '孫燕姿', hot: true })
     expect(sourcePayload('artist', ' Jay Chou ', false)).toEqual({ source: 'artist', artist: ' Jay Chou ', hot: false })
     // 榜單模式即使欄位裡還留著字，也不送 artist／hot
     expect(sourcePayload('tw-hot', '孫燕姿', true)).toEqual({ source: 'tw-hot' })
     expect(sourcePayload('western-hot', '', false)).toEqual({ source: 'western-hot' })
+    expect(sourcePayload('anime-hot', '孫燕姿', true)).toEqual({ source: 'anime-hot' })
   })
 
-  it('送出選項的文字：歌手「搜尋並開始」→ 送出中「搜尋中…」；榜單「抽歌並開始」→ 送出中「取得排行榜…」', () => {
+  it('送出選項的文字：歌手「搜尋並開始」→ 送出中「搜尋中…」；榜單「抽歌並開始」→ 送出中「取得排行榜…」；動漫熱門「抽歌並開始」→ 送出中「搜尋中…」', () => {
     expect(submitLabel('artist', false)).toBe(ARTIST_SUBMIT_LABEL)
     expect(submitLabel('artist', true)).toBe('搜尋中…')
-    expect(submitLabel('tw-hot', false)).toBe(CHART_SUBMIT_LABEL)
+    expect(submitLabel('tw-hot', false)).toBe(PRESET_SUBMIT_LABEL)
     expect(submitLabel('western-hot', true)).toBe('取得排行榜…')
+    expect(submitLabel('anime-hot', false)).toBe(PRESET_SUBMIT_LABEL)
+    expect(submitLabel('anime-hot', true)).toBe('搜尋中…')
+    expect(PRESET_SUBMIT_LABEL).toBe('抽歌並開始')
     expect(CHART_LOADING_LABEL).toBe('取得排行榜…')
     expect(HOT_TOGGLE_LABEL).toBe('只抽熱門歌')
   })
@@ -295,7 +320,7 @@ describe('出題對話框的文字（design §1「出題」）', () => {
   it('欄位「歌手」、placeholder「輸入歌手名稱（例如：孫燕姿）」、搜尋中「搜尋中…」', () => {
     expect(ARTIST_FIELD_LABEL).toBe('歌手')
     expect(ARTIST_PLACEHOLDER).toBe('輸入歌手名稱（例如：孫燕姿）')
-    expect(ARTIST_SEARCHING_LABEL).toBe('搜尋中…')
+    expect(SEARCHING_LABEL).toBe('搜尋中…')
     expect(ARTIST_SUBMIT_LABEL).not.toBe('')
     expect(ARTIST_CANCEL_LABEL).not.toBe('')
   })

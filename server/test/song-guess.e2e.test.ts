@@ -2,6 +2,7 @@
 // 題庫連 user/mock/itunes.mjs（真的走 itunes.ts 的 fetch、解析、快取與 picker）；計時以 AppOptions.songDurations 與假 iTunes 的短 trackTimeMillis 縮短。
 // 不打真 iTunes（§6）。排行榜（Epic 18）也連假 iTunes 的 RSS 與 lookup。
 // 2026-10-16 Epic 18：round:setArtist → round:setSource（歌手模式 { source: 'artist', artist, hot }），artistDisplay → topic、lastArtist → lastTopic。
+// 2026-10-20 Epic 19：動漫熱門（假 iTunes 的 anime／アニメ／動漫 三份清單）；CHART_FAILED 文案改通用「取得題庫失敗，請再試一次」。
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { io, type Socket } from 'socket.io-client';
 import {
@@ -70,6 +71,7 @@ async function start(options: AppOptions = {}, mockOptions: Record<string, unkno
     host: '127.0.0.1',
     songSearch: client.search,
     songChart: client.chart,
+    songAnime: client.animePool,
     songDurations: { startDelayMs: START_DELAY, revealMs: REVEAL_MS, previewCapMs: 30_000 },
     ...options,
   });
@@ -395,7 +397,10 @@ describe('e2e /song-guess', () => {
     expect(await request(A, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: false, error: 'SEARCH_FAILED', message: '搜尋失敗，請再試一次' });
     // Epic 18：ITUNES_RSS_URL 同樣指到連不上的位址 → CHART_FAILED
     expect(process.env.ITUNES_RSS_URL).toBe('http://127.0.0.1:1');
-    expect(await request(A, 'round:setSource', { source: 'tw-hot' })).toEqual({ ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' });
+    // 2026-10-20 Epic 19：文案改通用
+    expect(await request(A, 'round:setSource', { source: 'tw-hot' })).toEqual({ ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' });
+    // Epic 19：動漫熱門走 ITUNES_URL 的三次搜尋 → 同樣連不上 → CHART_FAILED
+    expect(await request(A, 'round:setSource', { source: 'anime-hot' })).toEqual({ ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' });
     expect(app.songGuessRoom.currentRound().phase).toBe('choosing');
   });
 
@@ -526,7 +531,8 @@ describe('e2e /song-guess：題庫來源（Epic 18）', () => {
       const roundsB = collect<RoundPublic>(B, 'round:update');
       await request(A, 'round:volunteer');
       await waitFor(() => roundsB.at(-1)?.phase === 'choosing');
-      const failed = { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' };
+      // 2026-10-20 Epic 19：文案改通用
+      const failed = { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' };
       expect(await request(A, 'round:setSource', { source: 'tw-hot' })).toEqual(failed);
       expect(await request(A, 'round:setSource', { source: 'western-hot' })).toEqual(failed);
       expect(app?.songGuessRoom.currentRound()).toMatchObject({ phase: 'choosing', source: null });
@@ -554,5 +560,93 @@ describe('e2e /song-guess：題庫來源（Epic 18）', () => {
     expect(roundsB.at(-1)).toMatchObject({ artistHot: true, topic: '熱門歌手' });
     // 亂數恆接近 1：每次都抽候選最後面那首 → 第 1 首是第 30 名（hot）
     expect(rank(roundsB.at(-1))).toBe(30);
+  });
+});
+
+// ─── Epic 19：動漫熱門 ─────────────────────────────────────────────
+
+/** 假 iTunes 動漫熱門可抽的 trackId（user/mock/itunes.mjs 檔頭：2301～2314；2315～2318 為原聲帶、翻唱、重複） */
+const ANIME_PICKABLE = new Set(Array.from({ length: 14 }, (_, i) => String(2301 + i)));
+
+/** 向假 iTunes 查三個關鍵字，記下 trackId → 歌名（測試當裁判用） */
+async function learnAnime(): Promise<void> {
+  if (mock === null) throw new Error('假 iTunes 尚未啟動');
+  for (const term of ['anime', 'アニメ', '動漫']) {
+    const body = (await (await fetch(`${mock.url}/search?term=${encodeURIComponent(term)}&entity=song&country=TW&media=music&limit=200`)).json()) as {
+      results: { trackId: number; trackName: string }[];
+    };
+    for (const t of body.results) titleById.set(String(t.trackId), t.trackName);
+  }
+}
+
+describe('e2e /song-guess：動漫熱門（Epic 19）', () => {
+  it('一局走完：三次搜尋不帶 attribute、topic 動漫熱門、5 首都可抽（無原聲帶／翻唱）、song.artist 逐首、lastTopic／lastSource；下一局快取命中', async () => {
+    await start();
+    await learnAnime();
+    const A = await connect();
+    const B = await connect();
+    await joinOk(A, 'Alice');
+    const b = await joinOk(B, 'Bob');
+    const roundsB = collect<RoundPublic>(B, 'round:update');
+    const chatB = collect<ChatMessage>(B, 'chat:message');
+    const last = () => roundsB.at(-1);
+    await request(A, 'round:volunteer');
+    await waitFor(() => last()?.phase === 'choosing');
+
+    const before = mock?.requests.length ?? 0;
+    expect(await request(A, 'round:setSource', { source: 'anime-hot', artist: '忽略', hot: true })).toEqual({ ok: true, data: { topic: '動漫熱門' } });
+    const searches = (mock?.requests.slice(before) ?? []).filter((r) => r.path === '/search');
+    expect(searches.map((r) => r.term).sort()).toEqual(['anime', 'アニメ', '動漫'].sort());
+    for (const r of searches) {
+      expect(r.query?.attribute).toBeUndefined();
+      expect(r.query).toMatchObject({ entity: 'song', country: 'TW', media: 'music', limit: '200' });
+    }
+    await waitFor(() => last()?.phase === 'playing');
+    expect(last()).toMatchObject({ source: 'anime-hot', artist: null, artistHot: false, topic: '動漫熱門', lastTopic: null, lastSource: null });
+    await waitFor(() => chatB.some((m) => m.text === 'Alice 出題「動漫熱門」，共 5 首'), 4000, '出題訊息');
+
+    const ids = new Set<string>();
+    for (let i = 1; i <= SONGS_PER_GAME; i++) {
+      await waitFor(() => last()?.phase === 'playing' && last()?.song?.index === i, 4000, `playing ${i}`);
+      const song = last()?.song;
+      const id = /\/preview\/(\d+)\.m4a$/.exec(song?.previewUrl ?? '')?.[1] ?? '';
+      expect(ANIME_PICKABLE.has(id)).toBe(true);
+      ids.add(id);
+      expect(await request(B, 'chat:send', { text: stripSubtitle(answerOf(last())) })).toEqual({ ok: true, data: undefined });
+      await waitFor(() => last()?.phase === 'reveal' && last()?.reveal?.index === i, 4000, `reveal ${i}`);
+      expect(last()?.reveal?.artist).toBe(song?.artist);
+      expect(last()?.reveal?.scores.map((x) => x.playerId)).toEqual([b.snapshot.you]);
+      await sleep(310);
+    }
+    expect(ids.size).toBe(SONGS_PER_GAME);
+    await waitFor(() => last()?.phase === 'ended', 4000, 'ended');
+    expect(last()).toMatchObject({ phase: 'ended', topic: '動漫熱門', lastTopic: '動漫熱門', lastSource: 'anime-hot' });
+
+    // 下一局：快取命中，不再打三次搜尋
+    const searchCount = mock?.requests.filter((r) => r.path === '/search').length;
+    await request(B, 'round:volunteer');
+    await waitFor(() => last()?.phase === 'choosing');
+    expect(last()).toMatchObject({ lastTopic: '動漫熱門', lastSource: 'anime-hot', source: null, topic: null });
+    expect(await request(B, 'round:setSource', { source: 'anime-hot' })).toEqual({ ok: true, data: { topic: '動漫熱門' } });
+    expect(mock?.requests.filter((r) => r.path === '/search').length).toBe(searchCount);
+  }, 30_000);
+
+  it('任一關鍵字回 500（failTerm）→ CHART_FAILED 通用文案、仍在 choosing；失敗不快取；可改用歌手模式', async () => {
+    await start({}, { failTerm: 'アニメ' });
+    const A = await connect();
+    const B = await connect();
+    await joinOk(A, 'Alice');
+    await joinOk(B, 'Bob');
+    const roundsB = collect<RoundPublic>(B, 'round:update');
+    await request(A, 'round:volunteer');
+    await waitFor(() => roundsB.at(-1)?.phase === 'choosing');
+    const endsAt = roundsB.at(-1)?.endsAt;
+    const failed = { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' };
+    expect(await request(A, 'round:setSource', { source: 'anime-hot' })).toEqual(failed);
+    expect(await request(A, 'round:setSource', { source: 'anime-hot' })).toEqual(failed);
+    // 失敗不快取：兩次各打三個關鍵字（並行；其餘兩個可能比失敗的回應晚到假 iTunes，所以用等的）
+    await waitFor(() => mock?.requests.filter((r) => r.path === '/search').length === 6, 2000, '六次搜尋');
+    expect(app?.songGuessRoom.currentRound()).toMatchObject({ phase: 'choosing', source: null, topic: null, endsAt });
+    expect(await request(A, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: true, data: { topic: '孫燕姿' } });
   });
 });

@@ -86,6 +86,13 @@ describe('HelpDialog：清單 → 內文 → 返回 → 清單 → 關閉', () =
     for (const t of HELP_TOPICS) expect(detail(t.id), t.id).not.toMatch(/[{}]/)
   })
 
+  it('「出題」「怎麼玩」的內文各有一段講動漫熱門（Epic 19）：渲染成一般段落', () => {
+    const detail = (id: HelpTopicId) => bodyText(capture().render(<HelpDialogView topicId={id} onNavigate={() => {}} onClose={() => {}} />))
+    expect(detail('be-setter')).toMatch(/<p>動漫熱門：不用輸入，系統用 anime、アニメ、動漫 三個關鍵字搜尋 Apple Music 的動漫歌曲，排除原聲帶、純音樂與翻唱，依熱門度取前 60 首再隨機抽 5 首；[^<]*<\/p>/)
+    expect(detail('be-setter')).toContain('歌手、台灣熱門、西洋熱門或動漫熱門')
+    expect(detail('how-to-play')).toContain('或「動漫熱門」（以 anime、アニメ、動漫 三個關鍵字搜到的動漫歌曲，不含原聲帶與翻唱，熱門前 60 首）')
+  })
+
   it('未知的主題 id 視為清單', () => {
     const p = capture().render(<HelpDialogView topicId={'nope' as HelpTopicId} onNavigate={() => {}} onClose={() => {}} />)
     expect(p?.body).toBeUndefined()

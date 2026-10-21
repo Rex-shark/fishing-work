@@ -1,7 +1,7 @@
 // 出題對話框「送出中」（DialogProps.busy；spec/song-guess/design.md §1「出題（選題庫）」；plan/notes.md 2026-10-12 的作法）：
 //   輸入框在 busy 時是 readOnly＋aria-busy、不是原生 disabled（被停用的元素會失去焦點，Esc／Enter 掛在對話框上就收不到）；
-//   三選一與「只抽熱門歌」在送出中只設 aria-disabled（Epic 18）；
-//   主要按鈕文字改「搜尋中…」（榜單「取得排行榜…」）；找不到歌手或搜尋失敗後焦點留在輸入框，可以直接改字再送；
+//   四選一與「只抽熱門歌」在送出中只設 aria-disabled（Epic 18；Epic 19 加「動漫熱門」，窄時換兩列）；
+//   主要按鈕文字改「搜尋中…」（榜單「取得排行榜…」、動漫熱門「搜尋中…」）；找不到歌手或搜尋失敗後焦點留在輸入框，可以直接改字再送；
 //   busy 結束時若焦點已不在對話框內，放回輸入框（shells/dialogFocus 的純邏輯）。
 // 沒有 DOM 環境：以靜態渲染的屬性與原始碼掃描驗證（瀏覽器只會讓 disabled 的元素失焦，readOnly 不會）。
 import { describe, expect, it, vi } from 'vitest'
@@ -12,18 +12,18 @@ import {
   ARTIST_CANCEL_LABEL,
   ARTIST_FIELD_LABEL,
   ARTIST_PLACEHOLDER,
-  ARTIST_SEARCHING_LABEL,
   ARTIST_SUBMIT_LABEL,
-  CHART_LOADING_LABEL,
-  CHART_NOTES,
-  CHART_SUBMIT_LABEL,
   HOT_TOGGLE_LABEL,
+  PRESET_NOTES,
+  SEARCHING_LABEL,
   SOURCE_GROUP_LABEL,
   SOURCE_OPTIONS,
+  submitLabel,
+  type PresetSource,
 } from '../src/features/round/roundDisplay'
 import { DIALOG_OPTION_ATTR, DIALOG_REFOCUS_SELECTORS, busyEnded, restoreDialogFocus, type DialogFocusRoot } from '../src/shells/dialogFocus'
 import { MeetDialog } from '../src/shells/meet/MeetDialog'
-import { MEET_DIALOG_REFOCUS_SELECTORS } from '../src/shells/meet/meetLayout'
+import { MEET_DIALOG_REFOCUS_SELECTORS, SEGMENTED_SINGLE_ROW_MAX, segmentedGroupClass } from '../src/shells/meet/meetLayout'
 import { MEET_VIEWS } from '../src/shells/meet/meetViews'
 import { ShellViewsContext, type DialogField, type DialogProps } from '../src/shells/views'
 import { initialGameState, useGameStore } from '../src/store/game'
@@ -54,7 +54,7 @@ function artistProps(searching: boolean, error: string | null = null, hot = true
     input: { ...field, invalid: error !== null },
     toggle: { label: HOT_TOGGLE_LABEL, checked: hot, onChange: noop, locked: searching },
     items: [
-      { id: 'submit', label: searching ? ARTIST_SEARCHING_LABEL : ARTIST_SUBMIT_LABEL, detail: '3/30 · 00:52', onSelect: noop, disabled: searching, pending: searching },
+      { id: 'submit', label: searching ? SEARCHING_LABEL : ARTIST_SUBMIT_LABEL, detail: '3/30 · 00:52', onSelect: noop, disabled: searching, pending: searching },
       { id: 'cancel', label: ARTIST_CANCEL_LABEL, detail: 'Esc', onSelect: noop },
     ],
     onEscape: noop,
@@ -62,16 +62,16 @@ function artistProps(searching: boolean, error: string | null = null, hot = true
   }
 }
 
-/** 榜單模式：沒有欄位與勾選，一行說明；倒數擺在說明右側 */
-function chartProps(source: 'tw-hot' | 'western-hot', loading: boolean, error: string | null = null): DialogProps {
+/** 現成題庫（榜單、動漫熱門）：沒有欄位與勾選，一行說明；倒數擺在說明右側 */
+function chartProps(source: PresetSource, loading: boolean, error: string | null = null): DialogProps {
   return {
     purpose: 'source',
     label: '出題',
     busy: loading,
     choices: { label: SOURCE_GROUP_LABEL, options: SOURCE_OPTIONS, value: source, onChange: noop, locked: loading },
-    description: CHART_NOTES[source],
+    description: PRESET_NOTES[source],
     items: [
-      { id: 'submit', label: loading ? CHART_LOADING_LABEL : CHART_SUBMIT_LABEL, detail: '00:52', onSelect: noop, disabled: loading, pending: loading },
+      { id: 'submit', label: submitLabel(source, loading), detail: '00:52', onSelect: noop, disabled: loading, pending: loading },
       { id: 'cancel', label: ARTIST_CANCEL_LABEL, detail: 'Esc', onSelect: noop },
     ],
     onEscape: noop,
@@ -107,15 +107,15 @@ describe('「分享音訊」對話框（design §1：欄位「歌手」、placeh
     expect(html).toContain('3/30 · 00:52')
   })
 
-  it('頂部三選一（role="radiogroup"「題庫來源」）：歌手／台灣熱門／西洋熱門，預設選中歌手；只有選中的在 Tab 順序裡', () => {
+  it('頂部四選一（role="radiogroup"「題庫來源」）：歌手／台灣熱門／西洋熱門／動漫熱門，預設選中歌手；只有選中的在 Tab 順序裡', () => {
     expect(html).toMatch(/<div role="radiogroup" aria-label="題庫來源"/)
     const r = radios(html)
-    expect(r.map((x) => x.text)).toEqual(['歌手', '台灣熱門', '西洋熱門'])
-    expect(r.map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([true, false, false])
-    expect(r.map((x) => /tabindex="(-?\d)"/i.exec(x.attrs)?.[1])).toEqual(['0', '-1', '-1'])
+    expect(r.map((x) => x.text)).toEqual(['歌手', '台灣熱門', '西洋熱門', '動漫熱門'])
+    expect(r.map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([true, false, false, false])
+    expect(r.map((x) => /tabindex="(-?\d)"/i.exec(x.attrs)?.[1])).toEqual(['0', '-1', '-1', '-1'])
     // 選中者：--accent-panel 字＋ --bg-panel-hover 底（白卡片只用面板 token）
     expect(r[0]?.attrs).toMatch(/bg-panel-hover font-medium text-accent-panel/)
-    // 三選一在欄位之前
+    // 四選一在欄位之前
     expect(html.indexOf('role="radiogroup"')).toBeLessThan(html.indexOf('<input'))
   })
 
@@ -141,14 +141,14 @@ describe('榜單模式（台灣熱門／西洋熱門）：沒有欄位，一行�
     expect(us).toContain('>從今天的 Apple Music 美國熱門 100 首隨機抽 5 首</p>')
   })
 
-  it('三選一選中的是榜單那一個；按鈕仍是「取消」「分享」（無障礙名稱帶「抽歌並開始」）', () => {
-    expect(radios(tw).map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([false, true, false])
-    expect(radios(us).map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([false, false, true])
+  it('四選一選中的是榜單那一個；按鈕仍是「取消」「分享」（無障礙名稱帶「抽歌並開始」）', () => {
+    expect(radios(tw).map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([false, true, false, false])
+    expect(radios(us).map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([false, false, true, false])
     expect(tw).toMatch(/<button type="submit"[^>]*aria-label="分享：抽歌並開始"[^>]*>分享<\/button>/)
     expect(tw).toMatch(/<button type="button"[^>]*aria-label="取消：取消出題"[^>]*>取消<\/button>/)
   })
 
-  it('送出中：主要按鈕「取得排行榜…」（aria-busy、aria-disabled），三選一 aria-disabled；沒有原生 disabled；取消仍可按', () => {
+  it('送出中：主要按鈕「取得排行榜…」（aria-busy、aria-disabled），四選一 aria-disabled；沒有原生 disabled；取消仍可按', () => {
     const busy = render(chartProps('tw-hot', true))
     expect(busy).toMatch(/<button type="submit"[^>]*aria-label="取得排行榜…"[^>]*aria-disabled="true"[^>]*aria-busy="true"[^>]*>取得排行榜…<\/button>/)
     expect(busy).toMatch(/<div role="radiogroup" aria-label="題庫來源" aria-disabled="true"/)
@@ -158,9 +158,74 @@ describe('榜單模式（台灣熱門／西洋熱門）：沒有欄位，一行�
   })
 
   it('失敗：顯示 server 的訊息（CHART_FAILED）、按鈕回到「分享」', () => {
-    const failed = render(chartProps('western-hot', false, '取得排行榜失敗，請再試一次'))
-    expect(failed).toMatch(/role="alert">取得排行榜失敗，請再試一次<\/p>/)
+    const failed = render(chartProps('western-hot', false, '取得題庫失敗，請再試一次'))
+    expect(failed).toMatch(/role="alert">取得題庫失敗，請再試一次<\/p>/)
     expect(failed).toContain('>分享</button>')
+  })
+})
+
+describe('動漫熱門（Epic 19；design §1）：與榜單同樣沒有欄位，一行說明；送出中是「搜尋中…」', () => {
+  const anime = render(chartProps('anime-hot', false))
+
+  it('沒有輸入框與勾選；說明「從 Apple Music 的動漫歌曲裡隨機抽 5 首（熱門前 60）」（--fg-on-panel-muted）＋右側倒數', () => {
+    expect(anime).not.toMatch(/<input\b/)
+    expect(anime).not.toContain('只抽熱門歌')
+    expect(anime).toMatch(/<p class="[^"]*text-fg-on-panel-muted">從 Apple Music 的動漫歌曲裡隨機抽 5 首（熱門前 60）<\/p><span[^>]*>00:52<\/span>/)
+  })
+
+  it('四選一選中第四個「動漫熱門」；按鈕「取消」「分享」，無障礙名稱「分享：抽歌並開始」', () => {
+    expect(radios(anime).map((x) => /aria-checked="true"/.test(x.attrs))).toEqual([false, false, false, true])
+    expect(radios(anime).map((x) => /tabindex="(-?\d)"/i.exec(x.attrs)?.[1])).toEqual(['-1', '-1', '-1', '0'])
+    expect(anime).toMatch(/<button type="submit"[^>]*aria-label="分享：抽歌並開始"[^>]*>分享<\/button>/)
+    expect(anime).toMatch(/<button type="button"[^>]*aria-label="取消：取消出題"[^>]*>取消<\/button>/)
+  })
+
+  it('送出中：主要按鈕「搜尋中…」（不是「取得排行榜…」），aria-busy、aria-disabled；四選一鎖住；沒有原生 disabled', () => {
+    const busy = render(chartProps('anime-hot', true))
+    expect(busy).toMatch(/<button type="submit"[^>]*aria-label="搜尋中…"[^>]*aria-disabled="true"[^>]*aria-busy="true"[^>]*>搜尋中…<\/button>/)
+    expect(busy).not.toContain('取得排行榜')
+    expect(busy).toMatch(/<div role="radiogroup" aria-label="題庫來源" aria-disabled="true"/)
+    expect(radios(busy).every((x) => /aria-disabled="true"/.test(x.attrs))).toBe(true)
+    expect(busy).not.toMatch(NATIVE_DISABLED)
+  })
+
+  it('失敗：顯示 server 的訊息（CHART_FAILED「取得題庫失敗，請再試一次」）、按鈕回到「分享」', () => {
+    const failed = render(chartProps('anime-hot', false, '取得題庫失敗，請再試一次'))
+    expect(failed).toMatch(/role="alert">取得題庫失敗，請再試一次<\/p>/)
+    expect(failed).toContain('>分享</button>')
+  })
+})
+
+describe('四選一的換列（375px 不溢出、不水平捲動；design §1「375px 放不下時換兩列」）', () => {
+  /** radiogroup 與外層容器的 class */
+  const groupClass = (html: string) => /<div role="radiogroup"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? ''
+  const html = render(chartProps('anime-hot', false))
+
+  it('外層是 @container（量對話框內文寬，不看視窗寬）；radiogroup 預設兩欄 grid（2×2），容器 ≥ 340px 才一列膠囊', () => {
+    expect(html).toMatch(/<div class="@container mb-\[16px\]"><div role="radiogroup"/)
+    const cls = groupClass(html).split(' ')
+    expect(cls).toEqual(expect.arrayContaining(['grid', 'grid-cols-2', '@min-[340px]:flex', '@min-[340px]:rounded-full']))
+    // 沒有會造成水平捲動的設定（固定寬、不換行、overflow-x）
+    expect(groupClass(html)).not.toMatch(/\bw-\[|nowrap|overflow-x/)
+    // 選項可縮（min-w-0＋truncate），不會撐開容器
+    for (const r of radios(html)) expect(r.attrs).toMatch(/min-w-0 flex-1 truncate/)
+  })
+
+  it('換列只靠 CSS：DOM 順序（＝方向鍵順序）仍是 歌手→台灣熱門→西洋熱門→動漫熱門', () => {
+    expect(radios(html).map((x) => x.text)).toEqual(['歌手', '台灣熱門', '西洋熱門', '動漫熱門'])
+  })
+
+  it('segmentedGroupClass：選項 ≤ 3 一律一列膠囊（不換列），4 個起才有 2×2', () => {
+    expect(SEGMENTED_SINGLE_ROW_MAX).toBe(3)
+    for (const n of [1, 2, 3]) {
+      expect(segmentedGroupClass(n)).toMatch(/^flex rounded-full /)
+      expect(segmentedGroupClass(n)).not.toContain('grid')
+    }
+    expect(segmentedGroupClass(4)).toMatch(/^grid grid-cols-2 /)
+    expect(segmentedGroupClass(4)).toBe(groupClass(html))
+    // 兩種都只用面板 token 的框線
+    expect(segmentedGroupClass(3)).toContain('border-border-panel')
+    expect(segmentedGroupClass(4)).toContain('border-border-panel')
   })
 })
 
@@ -179,12 +244,12 @@ describe('搜尋中（busy）：readOnly＋aria-busy，不是原生 disabled', (
     expect(busy).toMatch(/<button type="submit"[^>]*aria-label="搜尋中…"[^>]*aria-disabled="true"[^>]*aria-busy="true"[^>]*>搜尋中…<\/button>/)
     expect(busy).not.toContain('>分享</button>')
     expect(busy).toMatch(/<button type="button"[^>]*aria-label="取消：取消出題"[^>]*>取消<\/button>/)
-    // aria-disabled 只在：三選一（群組＋三顆）、勾選、主要按鈕；取消沒有
-    expect(busy.match(/aria-disabled="true"/g)).toHaveLength(6)
+    // aria-disabled 只在：四選一（群組＋四顆）、勾選、主要按鈕；取消沒有
+    expect(busy.match(/aria-disabled="true"/g)).toHaveLength(7)
     expect(idle).not.toContain('aria-disabled')
   })
 
-  it('三選一與勾選：送出中只設 aria-disabled（不可切換），不是原生 disabled', () => {
+  it('四選一與勾選：送出中只設 aria-disabled（不可切換），不是原生 disabled', () => {
     expect(checkboxTag(busy)).toContain('aria-disabled="true"')
     expect(checkboxTag(busy)).not.toMatch(NATIVE_DISABLED)
     expect(radios(busy).every((x) => /aria-disabled="true"/.test(x.attrs) && !NATIVE_DISABLED.test(x.attrs))).toBe(true)
@@ -254,7 +319,7 @@ describe('SourceDialog（功能元件）：交給殼層的 props', () => {
     expect(capture(<SourceDialog />)).toBeNull()
   })
 
-  it('choosing 且自己是出題者：purpose source、三選一預設「歌手」、欄位、勾選預設勾（沒有 localStorage 時）', async () => {
+  it('choosing 且自己是出題者：purpose source、四選一預設「歌手」、欄位、勾選預設勾（沒有 localStorage 時）', async () => {
     // 靜態渲染讀的是 store 的初始狀態（server snapshot），這裡掛到假 DOM 上才讀得到設定的狀態
     useGameStore.setState({ me: 'p1', round: round({ phase: 'choosing', setterId: 'p1', endsAt: null }) })
     try {
@@ -286,7 +351,7 @@ describe('SourceDialog（功能元件）：交給殼層的 props', () => {
     expect(src).toContain('ariaLabel: ARTIST_FIELD_LABEL')
     expect(src).toContain('label: submitLabel(source, submitting)')
     expect(src).toContain('pending: submitting')
-    // 送出中三選一與勾選鎖住
+    // 送出中四選一與勾選鎖住
     expect(src).toContain('locked: submitting')
     // 失敗才解除送出中並顯示 server 的訊息；成功時維持送出中直到 round:update 把對話框關掉
     expect(src).toMatch(/if \(r\.ok\) return\s+setSubmitting\(false\)\s+setError\(r\.message\)/)
@@ -366,9 +431,10 @@ describe('busy 結束後的焦點還原（shells/dialogFocus）', () => {
     ])
   })
 
-  it('出題對話框的節點（文件順序）：三選一、輸入框、勾選、取消、分享（主要在最後）；三選一不是對話框選項（不當還原落點）', () => {
+  it('出題對話框的節點（文件順序）：四選一、輸入框、勾選、取消、分享（主要在最後）；四選一不是對話框選項（不當還原落點）', () => {
     const nodes = parseNodes(render(artistProps(false)))
     expect(nodes.map((n) => [n.tag, n.attrs.type, n.attrs.role])).toEqual([
+      ['button', 'button', 'radio'],
       ['button', 'button', 'radio'],
       ['button', 'button', 'radio'],
       ['button', 'button', 'radio'],
@@ -380,8 +446,14 @@ describe('busy 結束後的焦點還原（shells/dialogFocus）', () => {
     for (const n of nodes.filter((x) => x.tag === 'button')) expect(DIALOG_OPTION_ATTR in n.attrs).toBe(n.attrs.role !== 'radio')
   })
 
-  it('榜單模式失敗、焦點掉到 body：放回主要按鈕「分享」（沒有輸入框；不落在三選一）', () => {
-    const nodes = parseNodes(render(chartProps('tw-hot', false, '取得排行榜失敗，請再試一次')))
+  it('榜單模式失敗、焦點掉到 body：放回主要按鈕「分享」（沒有輸入框；不落在四選一）', () => {
+    const nodes = parseNodes(render(chartProps('tw-hot', false, '取得題庫失敗，請再試一次')))
+    expect(restoreDialogFocus(fakeRoot(nodes), BODY, MEET_DIALOG_REFOCUS_SELECTORS)).toBe(true)
+    expect(focused(nodes).map((n) => n.attrs['aria-label'])).toEqual(['分享：抽歌並開始'])
+  })
+
+  it('動漫熱門失敗、焦點掉到 body：同樣放回「分享」', () => {
+    const nodes = parseNodes(render(chartProps('anime-hot', false, '取得題庫失敗，請再試一次')))
     expect(restoreDialogFocus(fakeRoot(nodes), BODY, MEET_DIALOG_REFOCUS_SELECTORS)).toBe(true)
     expect(focused(nodes).map((n) => n.attrs['aria-label'])).toEqual(['分享：抽歌並開始'])
   })

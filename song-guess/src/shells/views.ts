@@ -8,8 +8,8 @@ import type { ChatKind, PlayerPublic } from '@fishing-work/shared/song-guess'
 
 /**
  * 對話框用途：殼層依用途決定位置、標題與外觀（meet：白卡片）。
- * 'source'＝出題（features/round/SourceDialog）：choices＝題庫來源三選一；歌手模式有 input（歌手名）與 toggle（只抽熱門歌），
- *   榜單模式沒有 input、改以 description 一行說明；items 第一個＝送出、第二個＝取消出題；
+ * 'source'＝出題（features/round/SourceDialog）：choices＝題庫來源四選一（Epic 19 起；選項多時殼層自行處理換列）；歌手模式有 input（歌手名）與 toggle（只抽熱門歌），
+ *   現成題庫（榜單、動漫熱門）沒有 input、改以 description 一行說明；items 第一個＝送出、第二個＝取消出題；
  *   標題與按鈕文字由殼層決定（偽裝字樣只在殼層；spec/song-guess/design.md §1）。
  * 'help'（features/help/HelpDialog）：title 為對話框標題（「說明」或主題名稱）；沒有 body 時 items 為主題清單，
  *   有 body 時 items 為「返回」「關閉」，按鈕顯示選項原文（DESIGN §16）
@@ -40,7 +40,7 @@ export interface DialogField {
   invalid?: boolean
   enterKeyHint?: 'go' | 'send' | 'done' | 'search'
   /**
-   * 掛上時取得焦點（預設 true）。呼叫端在使用者切換來源後給 false：從榜單切回歌手時焦點留在三選一上，
+   * 掛上時取得焦點（預設 true）。呼叫端在使用者切換來源後給 false：從其他來源切回歌手時焦點留在四選一上，
    * 方向鍵才能繼續切換（不被新掛上的欄位搶走）
    */
   autoFocus?: boolean

@@ -2,6 +2,7 @@
 // 文字逐列依 spec/song-guess/design.md §2「各階段對照」；規則依 overview.md 與 architecture §5。
 // 出題按鈕的叫法屬於偽裝（由殼層給，ShellViews.volunteer.label），這裡以參數 shareLabel 組句，不寫死。
 import {
+  ANIME_HOT_POOL,
   CHART_SIZE,
   MIN_PLAYERS,
   SONGS_PER_GAME,
@@ -42,7 +43,7 @@ export function setterNameOf(round: Pick<RoundPublic, 'setterId'>, players: read
   return players.find((p) => p.id === round.setterId)?.nickname ?? null
 }
 
-/** 題庫標題（第 1 首開始才有）：歌手模式＝iTunes 的歌手正式名、榜單＝「台灣熱門」／「西洋熱門」；沒有時退回出題者輸入的歌手名 */
+/** 題庫標題（第 1 首開始才有）：歌手模式＝iTunes 的歌手正式名、現成題庫＝「台灣熱門」／「西洋熱門」／「動漫熱門」；沒有時退回出題者輸入的歌手名 */
 export function topicOf(round: Pick<RoundPublic, 'topic' | 'artist'>): string | null {
   return round.topic ?? round.artist
 }
@@ -73,7 +74,7 @@ export interface PlayingStageLines {
 /**
  * 播放中舞台的文字（design §1「播放中的試聽」；plan/song-guess-sources.md 決策 10）：
  *   第一行 {topic}{歌手模式且熱門時「（熱門）」} · 第 n / 5 首；
- *   第二行 歌手：{song.artist}——榜單模式一律顯示（每首歌手不同）；歌手模式與 topic 相同則省略（合唱、別名時才會不同）
+ *   第二行 歌手：{song.artist}——非歌手來源（榜單、動漫熱門）一律顯示（每首歌手不同）；歌手模式與 topic 相同則省略（合唱、別名時才會不同）
  */
 export function playingStageLines(round: Pick<RoundPublic, 'source' | 'topic' | 'artist' | 'artistHot' | 'song' | 'songCount'>): PlayingStageLines {
   const progress = songProgressText(round.song?.index ?? 1, round.songCount)
@@ -91,26 +92,36 @@ export function rankingTopicOf(round: Pick<RoundPublic, 'lastTopic' | 'topic' | 
 
 // ─── 出題對話框的文字（features/round/SourceDialog；design §1「出題（選題庫）」） ───────────────
 
-/** 題庫來源的選項（順序即畫面順序；榜單的文字用 shared 的 SOURCE_TITLE，與 topic 一致） */
+/** 題庫來源的選項（順序即畫面順序；非歌手來源的文字用 shared 的 SOURCE_TITLE，與 topic 一致） */
 export const SOURCE_OPTIONS: readonly { id: SongSource; label: string }[] = [
   { id: 'artist', label: '歌手' },
   { id: 'tw-hot', label: SOURCE_TITLE['tw-hot'] },
   { id: 'western-hot', label: SOURCE_TITLE['western-hot'] },
+  { id: 'anime-hot', label: SOURCE_TITLE['anime-hot'] },
 ]
 /** 每次開對話框的預設來源（不記住上次） */
 export const DEFAULT_SOURCE: SongSource = 'artist'
-/** 來源三選一（radiogroup）的無障礙名稱 */
+/** 來源四選一（radiogroup）的無障礙名稱 */
 export const SOURCE_GROUP_LABEL = '題庫來源'
 
-/** 是不是榜單來源（沒有欄位，直接抽） */
-export function isChartSource(source: SongSource): source is Exclude<SongSource, 'artist'> {
+/** 現成題庫（非歌手來源：台灣熱門、西洋熱門、動漫熱門）：沒有欄位，直接抽 */
+export type PresetSource = Exclude<SongSource, 'artist'>
+
+/** 是不是現成題庫（沒有欄位，直接抽；Epic 19 起含動漫熱門） */
+export function isPresetSource(source: SongSource): source is PresetSource {
   return source !== 'artist'
 }
 
-/** 榜單模式的一行說明（design §1；數字由 shared 常數推導） */
-export const CHART_NOTES: Record<Exclude<SongSource, 'artist'>, string> = {
+/** 是不是排行榜（台灣熱門、西洋熱門；送出中顯示「取得排行榜…」）；動漫熱門是搜尋，不算 */
+export function isChartSource(source: SongSource): source is 'tw-hot' | 'western-hot' {
+  return source === 'tw-hot' || source === 'western-hot'
+}
+
+/** 現成題庫的一行說明（design §1；數字由 shared 常數推導） */
+export const PRESET_NOTES: Record<PresetSource, string> = {
   'tw-hot': `從今天的 Apple Music 台灣熱門 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`,
   'western-hot': `從今天的 Apple Music 美國熱門 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首`,
+  'anime-hot': `從 Apple Music 的動漫歌曲裡隨機抽 ${SONGS_PER_GAME} 首（熱門前 ${ANIME_HOT_POOL}）`,
 }
 
 /** 歌手欄位的名稱與提示 */
@@ -118,18 +129,18 @@ export const ARTIST_FIELD_LABEL = '歌手'
 export const ARTIST_PLACEHOLDER = '輸入歌手名稱（例如：孫燕姿）'
 /** 歌手模式的勾選（預設勾；features/round/hotPreference 記住上次） */
 export const HOT_TOGGLE_LABEL = '只抽熱門歌'
-/** 選項文字（殼層可改用自己的按鈕文字；無障礙名稱會帶上這些動作說明） */
+/** 選項文字（殼層可改用自己的按鈕文字；無障礙名稱會帶上這些動作說明）：歌手「搜尋並開始」、現成題庫「抽歌並開始」 */
 export const ARTIST_SUBMIT_LABEL = '搜尋並開始'
-export const CHART_SUBMIT_LABEL = '抽歌並開始'
-/** 送出中（等 server 取歌）：送出選項的文字；殼層須照樣顯示（DialogItem.pending） */
-export const ARTIST_SEARCHING_LABEL = '搜尋中…'
+export const PRESET_SUBMIT_LABEL = '抽歌並開始'
+/** 送出中（等 server 取歌）：送出選項的文字；殼層須照樣顯示（DialogItem.pending）。歌手與動漫熱門是搜尋 →「搜尋中…」，排行榜 →「取得排行榜…」 */
+export const SEARCHING_LABEL = '搜尋中…'
 export const CHART_LOADING_LABEL = '取得排行榜…'
 export const ARTIST_CANCEL_LABEL = '取消出題'
 
 /** 送出選項的文字：依來源與是否送出中 */
 export function submitLabel(source: SongSource, pending: boolean): string {
-  if (isChartSource(source)) return pending ? CHART_LOADING_LABEL : CHART_SUBMIT_LABEL
-  return pending ? ARTIST_SEARCHING_LABEL : ARTIST_SUBMIT_LABEL
+  if (pending) return isChartSource(source) ? CHART_LOADING_LABEL : SEARCHING_LABEL
+  return isPresetSource(source) ? PRESET_SUBMIT_LABEL : ARTIST_SUBMIT_LABEL
 }
 
 /** round:setSource 的 payload（architecture §4 SongSourcePayload）；歌手名原樣送出（去頭尾空白與驗證以 server 為準，客戶端只預檢） */
@@ -141,6 +152,8 @@ export function sourcePayload(source: SongSource, artist: string, hot: boolean):
       return { source: 'tw-hot' }
     case 'western-hot':
       return { source: 'western-hot' }
+    case 'anime-hot':
+      return { source: 'anime-hot' }
   }
 }
 

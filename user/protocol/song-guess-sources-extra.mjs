@@ -41,7 +41,7 @@ const ARTIST_MAX = 30;
 // ── ack.message 文案：§5.3（其餘同繪圖比賽 §5.4）──
 const MSG = {
   SOURCE_INVALID: '題庫來源不正確，請重新選擇',
-  CHART_FAILED: '取得排行榜失敗，請再試一次',
+  CHART_FAILED: '取得題庫失敗，請再試一次', // 2026-10-20 Epic 19：由「取得排行榜失敗」改通用文案（§5.3）
   SEARCH_BUSY: '搜尋中，請稍候',
   ARTIST_INVALID: '歌手名稱需為 1～30 個字，不可含控制字元，也不能只有空白',
   NOT_SETTER: '只有本回合的出題者可以這麼做',
@@ -195,6 +195,8 @@ try {
   const g2 = await playGame(B, songMs, null);
   check('西洋熱門：逐首 song.artist ＝ lookup 的 artistName、5 首歌手各不同', g2.songs.every(({ playing }) => playing.song.artist === usArtists.get(idOf(playing))) && new Set(g2.songs.map(({ playing }) => playing.song.artist)).size === 5, j(g2.songs.map(({ playing }) => playing.song.artist)));
   check('西洋熱門 ended（沒有人猜）：results 全 0 分、lastTopic 西洋熱門、lastSource western-hot', g2.ended.results?.length === 2 && g2.ended.results.every((r) => r.gameScore === 0 && r.correctCount === 0) && g2.ended.lastTopic === '西洋熱門' && g2.ended.lastSource === 'western-hot', j(g2.ended.results));
+  // B 看到 ended 時，同一次轉移的系統訊息可能還沒送到 A → 先等（水手長 2026-10-20：並行時偶發的時序競態，非產品問題）
+  await until(() => sysTexts(A, sysBefore2).includes('本局結束：沒有人猜對'), 3000);
   const sys2 = sysTexts(A, sysBefore2);
   check('西洋熱門 ended（沒有人猜）：系統訊息恰為「本局結束：沒有人猜對」、沒有「本局第一名」字樣', sys2.includes('本局結束：沒有人猜對') && !sys2.some((t) => t.startsWith('本局第一名')), j(sys2.slice(-3)));
 
@@ -219,7 +221,8 @@ try {
     const f2 = await call(X.s, 'round:setSource', { source: 'western-hot' });
     check(`(b) ${label}：換西洋熱門 → 仍 CHART_FAILED（失敗不快取、旗標已釋放）`, isErr(f2, 'CHART_FAILED'), j(f2));
     const ok = await call(X.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: false });
-    check(`${label}：換歌手模式 → 開局成功、topic 孫燕姿、artistHot false、song.artist 孫燕姿`, ok?.ok === true && ok.data?.topic === '孫燕姿' && (await until(() => lastRound(Y)?.phase === 'playing')) && lastRound(Y).artistHot === false && lastRound(Y).source === 'artist' && lastRound(Y).song?.artist === '孫燕姿', j([ok, lastRound(Y)]));
+    check(`${label}：換歌手模式 → 開局成功、topic 孫燕姿、artistHot false、song.artist 孫燕姿`, ok?.ok === true && ok.data?.topic === '孫燕姿' && (await until(() => lastRound(Y)?.phase === 'playing')) && lastRound(Y).artistHot === false && lastRound(Y).source === 'artist' && lastRound(Y).song?.artist.includes('孫燕姿'), j([ok, lastRound(Y)]));
+    // ↑ song.artist 是本首 artistName：假資料的合唱曲「原點」為「孫燕姿 & 蔡健雅」，約 1/9 機率第 1 首就是它 → 只驗含「孫燕姿」（水手長 2026-10-20）
   }
 } catch (err) {
   check('測試流程未預期中斷', false, String(err?.stack ?? err).slice(0, 600));

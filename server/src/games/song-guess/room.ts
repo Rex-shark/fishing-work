@@ -3,12 +3,12 @@
 // 猜歌 Room 狀態機（純邏輯，不依賴 socket.io）：spec/song-guess/architecture.md §5
 // 每個方法回傳「要送出的效果」（Effect[]），由 register.ts 負責實際 emit / 斷線。
 // 計時器觸發的轉移（寬限期到期、出題期限、試聽播完、揭曉停留）沒有呼叫端可回傳，改走建構子注入的 onAsyncEffects。
-// 唯一的非同步動作是 setSource（Epic 18 前叫 setArtist；歌手模式向 iTunes 搜尋、榜單模式取排行榜）：回傳 Promise，
-// 取歌回來才決定 ack 與效果；搜尋器與排行榜取得器由建構子注入。
+// 唯一的非同步動作是 setSource（Epic 18 前叫 setArtist；歌手模式向 iTunes 搜尋、榜單模式取排行榜、動漫熱門（Epic 19）
+// 取三關鍵字聯集）：回傳 Promise，取歌回來才決定 ack 與效果；搜尋器、排行榜取得器與動漫熱門題庫取得器由建構子注入。
 //
 // 一局：idle → choosing → (playing → reveal) × SONGS_PER_GAME → ended（ended 視同 idle，可再 volunteer）。
 // - choosing：出題期限計時（含取歌時間）；逾時／cancel／出題者離開 → idle（results、lastTopic、lastSource 保留）。
-//   取歌進行中再送 → SEARCH_BUSY（兩種來源共用同一個旗標）；取歌回來時已不是同一次 choosing → 結果丟棄、ack NOT_SETTER。
+//   取歌進行中再送 → SEARCH_BUSY（四種來源共用同一個旗標）；取歌回來時已不是同一次 choosing → 結果丟棄、ack NOT_SETTER。
 // - 取歌成功：gameNo++、參賽者＝此刻在線者、全員 gameScore 歸零、results／lastTopic／lastSource 清空、進入第 1 首。
 // - playing：startedAt＝進入的 now + START_DELAY_MS（客戶端先下載試聽再同時起播），endsAt＝startedAt + durationMs；
 //   計時器到 → reveal。**不因全員猜對或人數不足提早結束**（每首播到底）。
@@ -49,8 +49,8 @@ import {
   type SongSourcePayload,
 } from '@fishing-work/shared/song-guess';
 import { CHAT_ERROR_MESSAGES, guessScore, isRateLimited, judgeMessage, validateChatText } from './chat';
-import type { ChartCountry, ChartFetcher, ItunesTrack, SongSearcher } from './itunes';
-import { pick, pickChart, type PickedSong } from './picker';
+import type { AnimePoolFetcher, ChartCountry, ChartFetcher, ItunesTrack, SongSearcher } from './itunes';
+import { pick, pickAnime, pickChart, type PickedSong } from './picker';
 import { rankGame, type GameStat } from './ranking';
 
 // ─── 時鐘與計時器抽象（測試注入假時鐘） ─────────────────────────────
@@ -135,6 +135,8 @@ export interface RoomOptions {
   search?: SongSearcher;
   /** 排行榜取得器（Epic 18；預設：一律失敗 → CHART_FAILED）；正式環境由 register 依環境變數建立（itunes.ts） */
   chart?: ChartFetcher;
+  /** 動漫熱門題庫取得器（Epic 19；預設：一律失敗 → CHART_FAILED）；正式環境由 register 依環境變數建立（itunes.ts） */
+  animePool?: AnimePoolFetcher;
   /** 抽歌用的亂數，回 [0, 1)（預設 Math.random；測試注入） */
   random?: () => number;
 }
@@ -154,20 +156,23 @@ export interface SetSourceOutcome {
   effects: Effect[];
 }
 
+/** 榜單來源（Epic 18；動漫熱門不是榜單，Epic 19 另走 animePool） */
+type ChartSource = 'tw-hot' | 'western-hot';
+
 /** 榜單來源對應的國家（Epic 18 決策 4：西洋熱門＝美國榜） */
-export const CHART_COUNTRY = { 'tw-hot': 'tw', 'western-hot': 'us' } as const satisfies Record<Exclude<SongSource, 'artist'>, ChartCountry>;
+export const CHART_COUNTRY = { 'tw-hot': 'tw', 'western-hot': 'us' } as const satisfies Record<ChartSource, ChartCountry>;
 
 /**
  * 解析 round:setSource 的 payload（不信任客戶端；§5 choosing）：
- * 不是物件、source 不是三值之一、歌手模式 hot 不是 boolean（含缺漏）→ SOURCE_INVALID；
- * 歌手模式 artist 不是字串 → ARTIST_INVALID（歌手名的內容由 Room 以 validateArtist 驗）；榜單模式多帶的欄位忽略。
+ * 不是物件、source 不是四值之一（Epic 19 加 'anime-hot'）、歌手模式 hot 不是 boolean（含缺漏）→ SOURCE_INVALID；
+ * 歌手模式 artist 不是字串 → ARTIST_INVALID（歌手名的內容由 Room 以 validateArtist 驗）；榜單與動漫熱門多帶的欄位忽略。
  */
 export function parseSourcePayload(
   payload: unknown,
 ): { ok: true; payload: SongSourcePayload } | { ok: false; error: 'SOURCE_INVALID' | 'ARTIST_INVALID' } {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return { ok: false, error: 'SOURCE_INVALID' };
   const p = payload as Record<string, unknown>;
-  if (p.source === 'tw-hot' || p.source === 'western-hot') return { ok: true, payload: { source: p.source } };
+  if (p.source === 'tw-hot' || p.source === 'western-hot' || p.source === 'anime-hot') return { ok: true, payload: { source: p.source } };
   if (p.source !== 'artist' || typeof p.hot !== 'boolean') return { ok: false, error: 'SOURCE_INVALID' };
   if (typeof p.artist !== 'string') return { ok: false, error: 'ARTIST_INVALID' };
   return { ok: true, payload: { source: 'artist', artist: p.artist, hot: p.hot } };
@@ -185,7 +190,8 @@ export const ROUND_ERROR_MESSAGES = {
   SEARCH_FAILED: '搜尋失敗，請再試一次',
   SEARCH_BUSY: '搜尋中，請稍候',
   SOURCE_INVALID: '題庫來源不正確，請重新選擇',
-  CHART_FAILED: '取得排行榜失敗，請再試一次',
+  // 2026-10-20 Epic 19：由「取得排行榜失敗」改通用文案（榜單與動漫熱門共用；§5.3）
+  CHART_FAILED: '取得題庫失敗，請再試一次',
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
 type RoundErrorCode = keyof typeof ROUND_ERROR_MESSAGES;
@@ -293,6 +299,8 @@ const OK: Ack = { ok: true, data: undefined };
 const NO_SEARCH: SongSearcher = () => Promise.reject(new Error('未設定歌手搜尋器'));
 /** Room 未注入排行榜取得器時的預設：一律失敗（→ CHART_FAILED） */
 const NO_CHART: ChartFetcher = () => Promise.reject(new Error('未設定排行榜取得器'));
+/** Room 未注入動漫熱門題庫取得器時的預設：一律失敗（→ CHART_FAILED；Epic 19） */
+const NO_ANIME: AnimePoolFetcher = () => Promise.reject(new Error('未設定動漫熱門題庫取得器'));
 
 // ─── Room ─────────────────────────────────────────────────────────
 
@@ -303,6 +311,7 @@ export class Room {
   private readonly durations: RoomDurations;
   private readonly search: SongSearcher;
   private readonly chart: ChartFetcher;
+  private readonly animePool: AnimePoolFetcher;
   private readonly random: () => number;
 
   /** 依加入順序插入；playerList() 另依 joinedAt 排序 */
@@ -317,7 +326,7 @@ export class Room {
 
   /** 每次進入或離開 choosing 就 +1：搜尋回來時與出發時不同 → 已不是同一次 choosing，結果丟棄 */
   private choosingSeq = 0;
-  /** 本次 choosing 有取歌進行中（SEARCH_BUSY 用；歌手搜尋與排行榜共用）；離開 choosing 時清掉 */
+  /** 本次 choosing 有取歌進行中（SEARCH_BUSY 用；四種來源共用）；離開 choosing 時清掉 */
   private searching = false;
 
   /** 環狀緩衝：最多 CHAT_HISTORY 則 */
@@ -337,6 +346,7 @@ export class Room {
     this.durations = durations;
     this.search = options.search ?? NO_SEARCH;
     this.chart = options.chart ?? NO_CHART;
+    this.animePool = options.animePool ?? NO_ANIME;
     this.random = options.random ?? Math.random;
   }
 
@@ -460,11 +470,12 @@ export class Room {
    * 檢查順序（§5 choosing；SOURCE_INVALID → ARTIST_INVALID → SEARCH_BUSY，與 Epic 16 相同：先驗輸入再看忙碌）：
    * payload 形狀（parseSourcePayload：SOURCE_INVALID，歌手模式 artist 不是字串 → ARTIST_INVALID；比照 Epic 16 在
    * register 先驗形狀，所以早於身分檢查）→ 未加入 NOT_IN_ROOM → 階段與身分（setterGate）→ 歌手模式歌手名內容不合法
-   * ARTIST_INVALID → 本次 choosing 取歌進行中（兩種來源共用）SEARCH_BUSY。
+   * ARTIST_INVALID → 本次 choosing 取歌進行中（四種來源共用）SEARCH_BUSY。
    * 取歌回來：
    * - 已不是同一次 choosing（逾時、取消、出題者離開，或之後又開了新的 choosing）→ 結果丟棄、ack NOT_SETTER。
    * - 歌手：搜尋失敗 → SEARCH_FAILED；可抽的歌不足 → ARTIST_NOT_FOUND。
    * - 榜單：RSS／lookup 失敗或可抽的歌不足 → CHART_FAILED。
+   * - 動漫熱門（Epic 19）：任一關鍵字搜尋失敗或可抽的歌不足 → CHART_FAILED。
    * - 失敗都仍在 choosing、期限不變，出題者可重試或換來源；成功 → 開始新的一局、進入第 1 首 playing，ack { topic }。
    * 效果在 ack 之後才送（register 先回 ack 再 emit）。
    */
@@ -489,7 +500,9 @@ export class Room {
     this.searching = true;
     let request: Promise<ItunesTrack[]>;
     try {
-      request = artist !== null ? this.search(artist) : this.chart(CHART_COUNTRY[payload.source as Exclude<SongSource, 'artist'>]);
+      if (artist !== null) request = this.search(artist);
+      else if (payload.source === 'anime-hot') request = this.animePool();
+      else request = this.chart(CHART_COUNTRY[payload.source as ChartSource]);
     } catch (err) {
       request = Promise.reject(err);
     }
@@ -502,7 +515,7 @@ export class Room {
           if (picked === null) return sourceFail('ARTIST_NOT_FOUND');
           return this.startGame(player, { source: 'artist', artist, artistHot: payload.hot, topic: picked.topic }, picked.songs);
         }
-        const songs = pickChart(tracks, SONGS_PER_GAME, this.random);
+        const songs = payload.source === 'anime-hot' ? pickAnime(tracks, SONGS_PER_GAME, this.random) : pickChart(tracks, SONGS_PER_GAME, this.random);
         if (songs === null) return sourceFail('CHART_FAILED');
         const source = payload.source as Exclude<SongSource, 'artist'>;
         return this.startGame(player, { source, artist: null, artistHot: false, topic: SOURCE_TITLE[source] }, songs);

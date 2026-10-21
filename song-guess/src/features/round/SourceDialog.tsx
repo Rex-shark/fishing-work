@@ -1,12 +1,12 @@
 // 出題（spec/song-guess/overview.md 規則 3、design.md §1「出題（選題庫）」；plan/song-guess-sources.md 決策 9）：
-//   出題者先選題庫來源（歌手／台灣熱門／西洋熱門，每次開都從「歌手」開始、不記住），server 取歌後開始第 1 首。
-//   歌手：欄位＋「只抽熱門歌」（預設勾；features/round/hotPreference 記住上次）；榜單：沒有欄位，一行說明。
+//   出題者先選題庫來源（歌手／台灣熱門／西洋熱門／動漫熱門（Epic 19），每次開都從「歌手」開始、不記住），server 取歌後開始第 1 首。
+//   歌手：欄位＋「只抽熱門歌」（預設勾；features/round/hotPreference 記住上次）；現成題庫（兩個榜單與動漫熱門）：沒有欄位，一行說明。
 // 對話框外觀、標題與按鈕文字由殼層提供（ShellViews.Dialog，purpose 'source'）。Enter 送出、Esc＝取消出題。
 // 只在 phase = choosing 且自己是出題者時渲染；取歌結果以 server 為準（ack.message 直接顯示，含 CHART_FAILED、SOURCE_INVALID）；
 //   歌手名的格式以 shared 的 validateArtist 預檢（與 server 相同），不合法時不送出、直接顯示同一句訊息。
-// 送出中（busy）交給殼層的 Dialog 呈現：輸入框不可編輯（readOnly＋aria-busy，不是原生 disabled）、三選一與勾選不可切換（aria-disabled），
-//   焦點留在原處——失敗後歌手模式可以直接改字再按 Enter，榜單模式焦點留在送出按鈕（plan/notes.md 2026-10-12）；原本的內容都保留。
-// 取歌要等 iTunes（歌手最久約 8 秒；榜單兩段各 8 秒）：送出中仍可取消（server 會丟棄結果，architecture §5 choosing）。
+// 送出中（busy）交給殼層的 Dialog 呈現：輸入框不可編輯（readOnly＋aria-busy，不是原生 disabled）、四選一與勾選不可切換（aria-disabled），
+//   焦點留在原處——失敗後歌手模式可以直接改字再按 Enter，現成題庫焦點留在送出按鈕（plan/notes.md 2026-10-12）；原本的內容都保留。
+// 取歌要等 iTunes（歌手最久約 8 秒；榜單兩段各 8 秒；動漫熱門三次搜尋並行、各 8 秒）：送出中仍可取消（server 會丟棄結果，architecture §5 choosing）。
 import { useState } from 'react'
 import { ARTIST_INVALID_MESSAGE, ARTIST_MAX, countChars, validateArtist, type SongSource } from '@fishing-work/shared/song-guess'
 import { useShellViews } from '../../shells/views'
@@ -18,12 +18,12 @@ import {
   ARTIST_CANCEL_LABEL,
   ARTIST_FIELD_LABEL,
   ARTIST_PLACEHOLDER,
-  CHART_NOTES,
   DEFAULT_SOURCE,
   HOT_TOGGLE_LABEL,
+  PRESET_NOTES,
   SOURCE_GROUP_LABEL,
   SOURCE_OPTIONS,
-  isChartSource,
+  isPresetSource,
   sourcePayload,
   submitLabel,
 } from './roundDisplay'
@@ -39,7 +39,7 @@ function SourceForm() {
   const round = useGameStore((s) => s.round)
   const remaining = useRoundRemainingSeconds(round)
   const [source, setSourceChoice] = useState<SongSource>(DEFAULT_SOURCE)
-  // 使用者切換過來源：之後切回「歌手」時欄位不搶焦點（焦點留在三選一，方向鍵才能繼續切）
+  // 使用者切換過來源：之後切回「歌手」時欄位不搶焦點（焦點留在四選一，方向鍵才能繼續切）
   const [switched, setSwitched] = useState(false)
   const [artist, setArtistText] = useState('')
   const [hot, setHot] = useState(() => loadHot())
@@ -47,7 +47,7 @@ function SourceForm() {
   const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const length = countChars(artist.trim())
-  const chart = isChartSource(source)
+  const preset = isPresetSource(source)
   const clock = remaining !== null ? formatClock(remaining) : null
 
   async function handleSubmit() {
@@ -96,7 +96,7 @@ function SourceForm() {
       busy={submitting || cancelling}
       choices={{ label: SOURCE_GROUP_LABEL, options: SOURCE_OPTIONS, value: source, onChange: handleSourceChange, locked: submitting }}
       input={
-        chart
+        preset
           ? undefined
           : {
               value: artist,
@@ -113,13 +113,13 @@ function SourceForm() {
               autoFocus: !switched,
             }
       }
-      toggle={chart ? undefined : { label: HOT_TOGGLE_LABEL, checked: hot, onChange: handleHotChange, locked: submitting }}
-      description={chart ? CHART_NOTES[source] : undefined}
+      toggle={preset ? undefined : { label: HOT_TOGGLE_LABEL, checked: hot, onChange: handleHotChange, locked: submitting }}
+      description={preset ? PRESET_NOTES[source] : undefined}
       items={[
         {
           id: 'submit',
           label: submitLabel(source, submitting),
-          detail: chart ? (
+          detail: preset ? (
             (clock ?? undefined)
           ) : (
             <span className={length > ARTIST_MAX ? 'text-sem-error' : undefined}>

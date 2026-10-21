@@ -37,5 +37,9 @@ export const SCORE_MIN = 50;
 export const HOT_POOL = 30;
 /** 排行榜抓幾首（RSS 路徑中的數字；Epic 18） */
 export const CHART_SIZE = 100;
-/** 榜單來源的題庫標題（RoundPublic.topic；對話框選項文字也用它；Epic 18） */
-export const SOURCE_TITLE = { 'tw-hot': '台灣熱門', 'western-hot': '西洋熱門' } as const;
+/** 非歌手來源的題庫標題（RoundPublic.topic；對話框選項文字也用它；Epic 18／19） */
+export const SOURCE_TITLE = { 'tw-hot': '台灣熱門', 'western-hot': '西洋熱門', 'anime-hot': '動漫熱門' } as const;
+/** 動漫熱門的搜尋關鍵字（Epic 19） */
+export const ANIME_TERMS = ['anime', 'アニメ', '動漫'] as const;
+/** 動漫熱門候選數：三關鍵字聯集依合併排名取前 60 首再抽（Epic 19） */
+export const ANIME_HOT_POOL = 60;

@@ -1,18 +1,21 @@
 // 猜歌抽歌：spec/song-guess/architecture.md §4「答案判定」歌名去重、§5 choosing、§6 picker
-// fixture 為真 iTunes 回應裁出的樣本（server/test/fixtures/song-guess.itunes.json；排行榜 song-guess.chart.json，Epic 18）。
+// fixture 為真 iTunes 回應裁出的樣本（server/test/fixtures/song-guess.itunes.json；排行榜 song-guess.chart.json，Epic 18；
+// 動漫熱門 song-guess.anime.json，Epic 19）。
 import { describe, expect, it } from 'vitest';
-import { HOT_POOL, SONGS_PER_GAME, normalizeTitle } from '@fishing-work/shared/song-guess';
+import { ANIME_HOT_POOL, HOT_POOL, SONGS_PER_GAME, normalizeTitle } from '@fishing-work/shared/song-guess';
 import {
   isLiveVersion,
+  isSoundtrackOrCover,
   majorityArtist,
   mostFrequentArtist,
   pick,
+  pickAnime,
   pickChart,
   topArtist,
   type PickedSong,
 } from '../src/games/song-guess/picker';
 import type { ItunesTrack } from '../src/games/song-guess/itunes';
-import { chartFixtureTracks, fixtureTracks, seededRandom, track, type FixtureTerm } from './helpers/songGuess';
+import { animeFixtureMerged, chartFixtureTracks, fixtureTracks, seededRandom, track, type FixtureTerm } from './helpers/songGuess';
 
 const N = SONGS_PER_GAME;
 
@@ -571,5 +574,169 @@ describe('pickChart（Epic 18：台灣熱門／西洋熱門）', () => {
     expect(first).toMatchObject({ trackId: 6820428730, title: 'NEON', artist: 'A2O & A2O LITE', album: 'NEON - Single' });
     expect(first?.artworkUrl).toMatch(/100x100bb\.jpg$/);
     expect(first?.trackTimeMillis).toBe(208000);
+  });
+});
+
+// ─── Epic 19：動漫熱門 ─────────────────────────────────────────────
+
+/** 只看歌名與專輯的判定（其餘欄位不影響） */
+const sc = (trackName: string, collectionName: string | null = 'Single') => isSoundtrackOrCover({ trackName, collectionName });
+
+describe('isSoundtrackOrCover（Epic 19 決策 3）', () => {
+  it('命中：拉丁字母關鍵字不分大小寫、整字比對（歌名或專輯任一含即算）', () => {
+    expect(sc('Departure!', 'HUNTER×HUNTER Original Soundtrack')).toBe(true);
+    expect(sc('紅蓮華 (Cover)')).toBe(true);
+    expect(sc('紅蓮華', 'Anime Song COVER Collection')).toBe(true);
+    expect(sc('Unravel (Piano Ver.)')).toBe(true);
+    expect(sc('Theme', '進撃の巨人 OST')).toBe(true);
+    expect(sc('Theme', 'Movie OST2')).toBe(false); // OST 緊接數字不是整字（記錄邊界行為）
+    expect(sc('Theme (OST Ver.)')).toBe(true);
+    expect(sc('紅蓮華 (off vocal)')).toBe(true);
+    expect(sc('紅蓮華 (Off Vocal Ver.)')).toBe(true);
+    expect(sc('BGM 01')).toBe(true);
+    expect(sc('Opening (Instrumental)')).toBe(true);
+    expect(sc('紅蓮華 (Remix)')).toBe(true);
+    expect(sc('紅蓮華', '8-bit Anime Hits')).toBe(true);
+    expect(sc('紅蓮華', 'Music Box Collection')).toBe(true);
+    expect(sc('Anime Hits', 'Anime Piano Covers')).toBe(true); // 複數也算（含 cover／piano）
+    expect(sc('Remixes')).toBe(true);
+    expect(sc('Theme', 'Soundtracks')).toBe(true);
+    // 全形英數經 NFKC 後同半形
+    expect(sc('Ｔｈｅｍｅ', 'ＯＳＴ')).toBe(true);
+  });
+
+  it('命中：acoustic／orchestral／karaoke（Epic 19 Phase 2.5 決策 10，2026-10-20）同樣整字、不分大小寫、允許複數', () => {
+    expect(sc('螺旋 - RASEN - Acoustic Ver. -')).toBe(true);
+    expect(sc('生命的記憶 (Orchestral version)')).toBe(true);
+    expect(sc('紅蓮華 (Karaoke Version)')).toBe(true);
+    expect(sc('Theme', 'Anime Acoustics')).toBe(true);
+    expect(sc('Theme', 'ACOUSTIC COVERS')).toBe(true);
+    // 邊界只允許 e?s：Acoustically、Orchestrally 是別的字
+    expect(sc('Acoustically')).toBe(false);
+    expect(sc('Orchestrally Yours')).toBe(false);
+    expect(sc('Karaokeish')).toBe(false);
+  });
+
+  it('命中：日文／中文關鍵字以子字串比對', () => {
+    expect(sc('Call of Silence', 'TVアニメ「進撃の巨人」Season 2 オリジナルサウンドトラック')).toBe(true);
+    expect(sc('隔壁的龍貓', '龍貓 動畫電影原聲帶')).toBe(true);
+    expect(sc('主題曲', '你的名字 电影原声带')).toBe(true);
+    expect(sc('紅蓮華 (オリジナル・カラオケ)')).toBe(true);
+    expect(sc('紅蓮華 (伴奏版)')).toBe(true);
+    expect(sc('紅蓮華 鋼琴版')).toBe(true);
+    expect(sc('Butter-Fly', '熱烈!アニソン魂 THE BEST カバー楽曲集')).toBe(true);
+    expect(sc('紅蓮華 (音樂盒版)')).toBe(true);
+    expect(sc('紅蓮華', 'ジブリ オルゴール')).toBe(true);
+  });
+
+  it('不誤殺：關鍵字是別的英文字的一部分', () => {
+    expect(sc('LOST IN PARADISE (feat. AKLO)', 'LOST IN PARADISE - EP')).toBe(false);
+    expect(sc('Ghost')).toBe(false);
+    expect(sc('Lost')).toBe(false);
+    expect(sc('Most of All')).toBe(false);
+    expect(sc('Discover')).toBe(false);
+    expect(sc('Recovery')).toBe(false);
+    expect(sc('Pianoman')).toBe(false);
+    expect(sc('Hostage')).toBe(false);
+    expect(sc('Bgmania')).toBe(false);
+    expect(sc('Remixology')).toBe(false);
+    expect(sc('18-bits')).toBe(false); // 8-bit 前面緊接數字
+    expect(sc('紅蓮華', null)).toBe(false);
+    expect(sc('残響散歌', '残響散歌 / 朝が来る - EP')).toBe(false);
+  });
+
+  it('真 Apple 樣本：排除 14 首（動畫電影原聲帶、オリジナルサウンドトラック、カバー楽曲集）；LOST IN PARADISE 不被排除', () => {
+    const merged = animeFixtureMerged();
+    const excluded = merged.filter((t) => isSoundtrackOrCover(t));
+    expect(excluded).toHaveLength(14);
+    for (const t of excluded) expect(`${t.collectionName ?? ''}`).toMatch(/原聲帶|サウンドトラック|カバー/);
+    const lost = merged.find((t) => t.trackName.startsWith('LOST IN PARADISE'));
+    expect(lost).toBeDefined();
+    expect(isSoundtrackOrCover(lost!)).toBe(false);
+  });
+});
+
+describe('pickAnime（Epic 19 決策 2、3）', () => {
+  const anime = (id: number, trackName: string, overrides: Partial<ItunesTrack> = {}) => track(id, trackName, { artistName: `歌手${id}`, ...overrides });
+
+  it('抽 n 首：都在候選裡、不重複；亂數可注入（同 seed 同結果）', () => {
+    const tracks = Array.from({ length: 20 }, (_, i) => anime(i + 1, `歌${i + 1}`));
+    const a = pickAnime(tracks, N, seededRandom(7));
+    const b = pickAnime(tracks, N, seededRandom(7));
+    expect(a).toHaveLength(N);
+    expect(a).toEqual(b);
+    expect(new Set(a!.map((s) => s.trackId)).size).toBe(N);
+    expect(a![0]).toMatchObject({ artist: expect.stringMatching(/^歌手\d+$/), previewUrl: expect.stringMatching(/^https:\/\//) });
+  });
+
+  it('只從合併排名前 ANIME_HOT_POOL（60）首抽：輸入 100 首，多組亂數都抽不到第 61 首之後', () => {
+    const tracks = Array.from({ length: 100 }, (_, i) => anime(i + 1, `歌${i + 1}`));
+    const seen = new Set<number>();
+    for (let seed = 1; seed <= 300; seed++) for (const s of pickAnime(tracks, N, seededRandom(seed))!) seen.add(s.trackId);
+    expect(ANIME_HOT_POOL).toBe(60);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(60);
+    expect(seen.has(60)).toBe(true);
+    expect(seen.has(1)).toBe(true);
+  });
+
+  it('前 60 是「排除與去重之後」的前 60：前面被排除或重複的不佔名額', () => {
+    const tracks: ItunesTrack[] = [];
+    for (let i = 1; i <= 10; i++) tracks.push(anime(i, `原聲${i}`, { collectionName: 'Original Soundtrack' }));
+    for (let i = 11; i <= 20; i++) tracks.push(anime(i, '同一首', { artistName: '同一位' }));
+    for (let i = 21; i <= 90; i++) tracks.push(anime(i, `歌${i}`));
+    const seen = new Set<number>();
+    for (let seed = 1; seed <= 400; seed++) for (const s of pickAnime(tracks, N, seededRandom(seed))!) seen.add(s.trackId);
+    // 候選：11（同一首的第一筆）＋ 21～79（59 首）＝ 60 首
+    for (const id of seen) expect(id === 11 || (id >= 21 && id <= 79)).toBe(true);
+    expect(seen.has(79)).toBe(true);
+    expect(seen.has(11)).toBe(true);
+  });
+
+  it('去重：artistName ＋ normalizeTitle 相同只留**較前者**（不比 Live、長度）；不同歌手同歌名是不同的歌', () => {
+    const tracks = [
+      anime(1, '紅蓮華 (Live)', { artistName: 'LiSA', trackTimeMillis: 100_000 }),
+      anime(2, '紅蓮華', { artistName: 'LiSA', trackTimeMillis: 300_000 }),
+      anime(3, '紅蓮華', { artistName: '別人' }),
+      anime(4, 'A'),
+      anime(5, 'B'),
+      anime(6, 'C'),
+    ];
+    const ids = new Set<number>();
+    for (let seed = 1; seed <= 100; seed++) for (const s of pickAnime(tracks, N, seededRandom(seed))!) ids.add(s.trackId);
+    expect([...ids].sort((x, y) => x - y)).toEqual([1, 3, 4, 5, 6]);
+  });
+
+  it('排除：沒試聽、原聲帶／翻唱、歌名猜不到（normalizeTitle 或 mainTitle 為空）', () => {
+    const good = [anime(1, 'A'), anime(2, 'B'), anime(3, 'C'), anime(4, 'D')];
+    const bad = [
+      anime(10, 'E', { previewUrl: null }),
+      anime(11, 'F (Cover)'),
+      anime(12, 'G', { collectionName: '動畫電影原聲帶' }),
+      anime(13, '(......醉鬼阿Q) [feat. 孫燕姿]'),
+      anime(14, '!!!'),
+    ];
+    expect(pickAnime([...good, ...bad], N, seededRandom(1))).toBeNull();
+    const ok = pickAnime([...good, ...bad, anime(5, 'H')], N, seededRandom(1));
+    expect(ok!.map((s) => s.trackId).sort((x, y) => x - y)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('不足 n 首 → null（CHART_FAILED）；剛好 n 首 → 全抽', () => {
+    expect(pickAnime([], N, seededRandom(1))).toBeNull();
+    const four = Array.from({ length: N - 1 }, (_, i) => anime(i + 1, `歌${i + 1}`));
+    expect(pickAnime(four, N, seededRandom(1))).toBeNull();
+    const five = [...four, anime(N, `歌${N}`)];
+    expect(pickAnime(five, N, seededRandom(1))!.map((s) => s.trackId).sort((x, y) => x - y)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('真 Apple 樣本：合併 49 首 → 可抽 35 首（排除 14）；多組亂數抽到的歌都不是原聲帶／翻唱、有試聽', () => {
+    const merged = animeFixtureMerged();
+    const seen = new Map<number, PickedSong>();
+    for (let seed = 1; seed <= 300; seed++) for (const s of pickAnime(merged, N, seededRandom(seed))!) seen.set(s.trackId, s);
+    expect(seen.size).toBe(35);
+    for (const s of seen.values()) {
+      expect(isSoundtrackOrCover({ trackName: s.title, collectionName: s.album })).toBe(false);
+      expect(s.previewUrl).toMatch(/^https:\/\/audio-ssl\.itunes\.apple\.com\//);
+    }
+    expect([...seen.values()].some((s) => s.title.startsWith('LOST IN PARADISE'))).toBe(true);
   });
 });

@@ -32,7 +32,7 @@ services:
       ITUNES_COUNTRY: ${ITUNES_COUNTRY:-TW}
       # 排行榜 RSS 根網址（Epic 18：台灣熱門＝tw 榜、西洋熱門＝us 榜）；容器也要能連到 rss.marketingtools.apple.com（https）
       ITUNES_RSS_URL: ${ITUNES_RSS_URL:-https://rss.marketingtools.apple.com}
-      # 搜尋與排行榜 lookup 的逾時（毫秒）；逾時回「搜尋失敗」或「取得排行榜失敗」，出題者可重試
+      # 搜尋（含動漫熱門的三次搜尋）與排行榜 lookup 的逾時（毫秒）；逾時回「搜尋失敗」或「取得題庫失敗」，出題者可重試
       ITUNES_TIMEOUT_MS: ${ITUNES_TIMEOUT_MS:-8000}
       # 排行榜 RSS 那一段的逾時（毫秒；Apple RSS 偶發 8～15 秒才回；lookup 仍用 ITUNES_TIMEOUT_MS；Epic 18）
       ITUNES_RSS_TIMEOUT_MS: ${ITUNES_RSS_TIMEOUT_MS:-12000}

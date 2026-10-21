@@ -2,6 +2,7 @@
 // 假時鐘＋注入的搜尋器與亂數，決定性地跑；搜尋結果經 promise 回報，所以 setSource 一律 await。
 // 2026-10-16 Epic 18：round:setArtist → round:setSource；既有案例以 setArtist()（歌手模式、hot 預設 true）呼叫，
 // 欄位 artistDisplay → topic、lastArtist → lastTopic；新來源（台灣熱門／西洋熱門）與 SOURCE_INVALID 等見檔尾。
+// 2026-10-20 Epic 19：動漫熱門（'anime-hot'）見檔尾；CHART_FAILED 文案由「取得排行榜失敗」改通用「取得題庫失敗」。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ARTIST_INVALID_MESSAGE,
@@ -33,7 +34,7 @@ import {
   type RoomOptions,
 } from '../src/games/song-guess/room';
 import { FakeClock } from './helpers/fakeClock';
-import { ManualChart, ManualSearch, chartFixtureTracks, flush, track } from './helpers/songGuess';
+import { ManualAnime, ManualChart, ManualSearch, animeFixtureMerged, chartFixtureTracks, flush, track } from './helpers/songGuess';
 
 const GRACE_MS = RECONNECT_GRACE_SECONDS * 1000;
 const CHOOSING_MS = CHOOSING_SECONDS * 1000;
@@ -1495,7 +1496,7 @@ describe('計時長度與定格', () => {
 // ─── Epic 18：題庫來源（round:setSource） ───────────────────────────
 
 describe('parseSourcePayload（§5 choosing：payload 形狀）', () => {
-  it('不是物件、source 不是三值、歌手模式 hot 不是 boolean（含缺漏）→ SOURCE_INVALID', () => {
+  it('不是物件、source 不是四值、歌手模式 hot 不是 boolean（含缺漏）→ SOURCE_INVALID', () => {
     const bad: unknown[] = [
       undefined,
       null,
@@ -1506,6 +1507,8 @@ describe('parseSourcePayload（§5 choosing：payload 形狀）', () => {
       { artist: '孫燕姿' },
       { source: 'uk-hot' },
       { source: 'ARTIST', artist: '孫燕姿', hot: true },
+      { source: 'Anime-Hot' },
+      { source: 'anime' },
       { source: 'artist', artist: '孫燕姿' },
       { source: 'artist', artist: '孫燕姿', hot: 'true' },
       { source: 'artist', artist: '孫燕姿', hot: 1 },
@@ -1527,6 +1530,8 @@ describe('parseSourcePayload（§5 choosing：payload 形狀）', () => {
     });
     expect(parseSourcePayload({ source: 'tw-hot', artist: '周杰倫', hot: 'x' })).toEqual({ ok: true, payload: { source: 'tw-hot' } });
     expect(parseSourcePayload({ source: 'western-hot' })).toEqual({ ok: true, payload: { source: 'western-hot' } });
+    // Epic 19：動漫熱門沒有選項，多帶的欄位忽略
+    expect(parseSourcePayload({ source: 'anime-hot', artist: '周杰倫', hot: true })).toEqual({ ok: true, payload: { source: 'anime-hot' } });
   });
 
   it('榜單來源對應國家：台灣熱門 tw、西洋熱門 us', () => {
@@ -1545,7 +1550,8 @@ describe('round:setSource：錯誤碼與檢查順序（SOURCE_INVALID → ARTIST
       effects: [],
     });
     expect(ROUND_ERROR_MESSAGES.SOURCE_INVALID).toBe('題庫來源不正確，請重新選擇');
-    expect(ROUND_ERROR_MESSAGES.CHART_FAILED).toBe('取得排行榜失敗，請再試一次');
+    // 2026-10-20 Epic 19：文案改通用（§5.3；榜單與動漫熱門共用）
+    expect(ROUND_ERROR_MESSAGES.CHART_FAILED).toBe('取得題庫失敗，請再試一次');
     expect(searched).toEqual([]);
     expect(charted).toEqual([]);
     expect(room.currentRound()).toMatchObject({ phase: 'choosing', endsAt });
@@ -1678,7 +1684,8 @@ describe('round:setSource：台灣熱門／西洋熱門', () => {
     toChoosing(2);
     const endsAt = room.currentRound().endsAt;
     expect(await room.setSource('s1', { source: 'tw-hot' })).toEqual({
-      ack: { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' },
+      // 2026-10-20 Epic 19：文案改通用
+      ack: { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' },
       effects: [],
     });
     expect(room.currentRound()).toMatchObject({ phase: 'choosing', endsAt, setterId: A, source: null });
@@ -1787,6 +1794,204 @@ describe('round:setSource：歌手模式的 hot 與 song.artist', () => {
     toChoosing(2);
     const out = await setArtist('s1', '孫燕姿', true);
     expect(chats(out.effects)[0]?.text).toBe('Alice 出題「孫燕姿」，共 5 首');
+  });
+});
+
+describe('round:setSource：動漫熱門（Epic 19）', () => {
+  /** 真 Apple 樣本合併結果；亂數恆為 0 時依序抽排除後的前 5 首 */
+  const MERGED = animeFixtureMerged();
+  const FIRST_FIVE: [string, string][] = [
+    ['残響散歌', 'Aimer'],
+    ['紅蓮華', 'LiSA'],
+    ['One Last Kiss', 'Hikaru Utada'],
+    ['祝福', 'YOASOBI'],
+    ['世界が終るまでは… [WANDS 第5期 ver.]', 'WANDS'],
+  ];
+
+  function animeRoom(tracks: ItunesTrack[] = MERGED, extra: Partial<RoomOptions> = {}): { calls: number } {
+    const counter = { calls: 0 };
+    room = makeRoom({
+      animePool: () => {
+        counter.calls++;
+        return Promise.resolve(tracks);
+      },
+      ...extra,
+    });
+    return counter;
+  }
+
+  it('成功：animePool()、ack { topic: 動漫熱門 }、round 欄位、系統訊息「X 出題「動漫熱門」，共 5 首」；不打搜尋器與榜單', async () => {
+    const charted: ChartCountry[] = [];
+    const counter = animeRoom(MERGED, { chart: (c) => (charted.push(c), Promise.resolve([])) });
+    toChoosing(2);
+    const out = await room.setSource('s1', { source: 'anime-hot' });
+    expect(counter.calls).toBe(1);
+    expect(searched).toEqual([]);
+    expect(charted).toEqual([]);
+    expect(out.ack).toEqual({ ok: true, data: { topic: '動漫熱門' } });
+    expect(eventsOf(out.effects)).toEqual(['round:update', 'players:update', 'chat:message']);
+    expect(rounds(out.effects)[0]).toMatchObject({
+      gameNo: 1,
+      phase: 'playing',
+      setterId: A,
+      source: 'anime-hot',
+      artist: null,
+      artistHot: false,
+      topic: '動漫熱門',
+      results: null,
+      lastTopic: null,
+      lastSource: null,
+      participantIds: [A, B],
+      song: { index: 1, artist: 'Aimer' },
+    });
+    expect(chats(out.effects)[0]?.text).toBe('Alice 出題「動漫熱門」，共 5 首');
+    // 答案在 reveal 前不外洩
+    expect(JSON.stringify([out, room.currentRound()])).not.toContain('残響散歌');
+  });
+
+  it('逐首 song.artist ＝本首 artistName、揭曉一致；抽到的都不是原聲帶／翻唱（樣本裡排名 2、5 的原聲帶被跳過）', async () => {
+    animeRoom();
+    toChoosing(2);
+    await room.setSource('s1', { source: 'anime-hot' });
+    const seen: [string | undefined, string | undefined, string | undefined][] = [];
+    for (let i = 0; i < SONGS_PER_GAME; i++) {
+      const song = room.currentRound().song;
+      finishSong();
+      const reveal = room.currentRound().reveal;
+      seen.push([reveal?.title, song?.artist, reveal?.artist]);
+      clock.advance(REVEAL_MS);
+    }
+    expect(seen).toEqual(FIRST_FIVE.map(([title, artist]) => [title, artist, artist]));
+    expect(MERGED[1]?.trackName).toBe('隔壁的龍貓');
+    expect(MERGED[4]?.trackName).toBe('Call of Silence');
+  });
+
+  it('ended：lastTopic 動漫熱門、lastSource anime-hot；下一局 choosing 保留、換來源開局才清', async () => {
+    animeRoom(MERGED, { chart: () => Promise.resolve(chartFixtureTracks('tw')) });
+    toChoosing(2);
+    await room.setSource('s1', { source: 'anime-hot' });
+    for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
+    expect(room.currentRound()).toMatchObject({ phase: 'ended', source: 'anime-hot', topic: '動漫熱門', lastTopic: '動漫熱門', lastSource: 'anime-hot' });
+    ok(room.volunteer('s2'));
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', source: null, topic: null, artist: null, lastTopic: '動漫熱門', lastSource: 'anime-hot' });
+    const out = await room.setSource('s2', { source: 'tw-hot' });
+    expect(rounds(out.effects)[0]).toMatchObject({ gameNo: 2, source: 'tw-hot', topic: '台灣熱門', lastTopic: null, lastSource: null });
+  });
+
+  it('歌手模式之後出動漫熱門：artist 清成 null、artistHot false', async () => {
+    animeRoom();
+    await toPlaying(2);
+    expect(room.currentRound()).toMatchObject({ source: 'artist', artist: '孫燕姿', artistHot: true });
+    for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
+    ok(room.volunteer('s1'));
+    await room.setSource('s1', { source: 'anime-hot' });
+    expect(room.currentRound()).toMatchObject({ gameNo: 2, source: 'anime-hot', artist: null, artistHot: false, topic: '動漫熱門' });
+  });
+
+  it('CHART_FAILED（通用文案）：取得器失敗 → 仍在 choosing、期限不變；可重試、可換來源', async () => {
+    let fail = true;
+    room = makeRoom({ animePool: () => (fail ? Promise.reject(new ItunesChartError('search アニメ HTTP 500')) : Promise.resolve(MERGED)) });
+    toChoosing(2);
+    const endsAt = room.currentRound().endsAt;
+    expect(await room.setSource('s1', { source: 'anime-hot' })).toEqual({
+      ack: { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' },
+      effects: [],
+    });
+    expect(room.currentRound()).toMatchObject({ phase: 'choosing', endsAt, setterId: A, source: null, topic: null });
+    // 換歌手模式也行（失敗不留忙碌旗標）
+    expect((await setArtist('s1', '孫燕姿')).ack).toEqual({ ok: true, data: { topic: '孫燕姿' } });
+    for (let i = 0; i < SONGS_PER_GAME; i++) nextSong();
+    ok(room.volunteer('s1'));
+    fail = false;
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toEqual({ ok: true, data: { topic: '動漫熱門' } });
+  });
+
+  it('取得器同步丟例外、未注入取得器（預設）→ CHART_FAILED', async () => {
+    room = makeRoom({
+      animePool: () => {
+        throw new Error('boom');
+      },
+    });
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toMatchObject({ error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' });
+    room.dispose();
+    room = makeRoom();
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toMatchObject({ error: 'CHART_FAILED' });
+  });
+
+  it('可抽不足 5 首（排除原聲帶／翻唱、去重後）→ CHART_FAILED，仍在 choosing', async () => {
+    const tracks = [
+      track(1, '歌1', { artistName: 'X' }),
+      track(2, '歌2', { artistName: 'X' }),
+      track(3, '歌3', { artistName: 'X' }),
+      track(4, '歌4', { artistName: 'X' }),
+      track(5, '歌4', { artistName: 'X', collectionName: '另一張' }),
+      track(6, '歌5 (Cover)', { artistName: 'X' }),
+      track(7, '歌6', { artistName: 'X', collectionName: 'Original Soundtrack' }),
+    ];
+    animeRoom(tracks);
+    toChoosing(2);
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toMatchObject({ error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' });
+    expect(room.currentRound().phase).toBe('choosing');
+  });
+
+  it('SEARCH_BUSY 四種來源共用旗標：動漫熱門取歌中再送任何來源 → SEARCH_BUSY；反之亦然', async () => {
+    const anime = new ManualAnime();
+    const chart = new ManualChart();
+    const search = new ManualSearch();
+    room = makeRoom({ animePool: anime.animePool, chart: chart.chart, search: search.search });
+    toChoosing(2);
+    const first = room.setSource('s1', { source: 'anime-hot' });
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toEqual({ ok: false, error: 'SEARCH_BUSY', message: '搜尋中，請稍候' });
+    expect((await room.setSource('s1', { source: 'tw-hot' })).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    expect((await room.setSource('s1', { source: 'western-hot' })).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    expect((await setArtist('s1', '孫燕姿')).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    // 檢查順序：壞 payload 仍先回 SOURCE_INVALID、壞歌手名 ARTIST_INVALID
+    expect((await room.setSource('s1', { source: 'anime-hot ' })).ack).toMatchObject({ error: 'SOURCE_INVALID' });
+    expect((await setArtist('s1', ' ')).ack).toMatchObject({ error: 'ARTIST_INVALID' });
+    expect(anime.calls).toHaveLength(1);
+    expect(chart.calls).toHaveLength(0);
+    expect(search.calls).toHaveLength(0);
+    anime.calls[0]?.reject(new ItunesChartError('search 動漫 逾時（8000 ms）'));
+    expect((await first).ack).toMatchObject({ error: 'CHART_FAILED' });
+
+    // 反向：榜單取歌中再送動漫熱門 → SEARCH_BUSY
+    const second = room.setSource('s1', { source: 'tw-hot' });
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toMatchObject({ error: 'SEARCH_BUSY' });
+    expect(anime.calls).toHaveLength(1);
+    chart.calls[0]?.resolve(chartFixtureTracks('tw'));
+    expect((await second).ack).toEqual({ ok: true, data: { topic: '台灣熱門' } });
+  });
+
+  it('取歌回來已不是同一次 choosing（取消、逾時）→ 成功與失敗都 ack NOT_SETTER、結果丟棄', async () => {
+    const anime = new ManualAnime();
+    room = makeRoom({ animePool: anime.animePool });
+    toChoosing(2);
+    const cancelled = room.setSource('s1', { source: 'anime-hot' });
+    ok(room.cancel('s1'));
+    anime.calls[0]?.resolve(MERGED);
+    expect((await cancelled).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect(room.currentRound()).toMatchObject({ phase: 'idle', source: null, topic: null });
+
+    ok(room.volunteer('s1'));
+    const timedOut = room.setSource('s1', { source: 'anime-hot' });
+    clock.advance(CHOOSING_MS);
+    anime.calls[1]?.reject(new ItunesChartError('search anime 逾時（8000 ms）'));
+    expect((await timedOut).ack).toMatchObject({ ok: false, error: 'NOT_SETTER' });
+    expect(room.currentRound().phase).toBe('idle');
+  });
+
+  it('階段不符：idle → NOT_SETTER；非出題者 → NOT_SETTER；playing → ROUND_BUSY；壞 payload 先於身分檢查', async () => {
+    animeRoom();
+    joinPlayers(2);
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toMatchObject({ error: 'NOT_SETTER' });
+    expect((await room.setSource('nobody', { source: 'anime-hot' })).ack).toMatchObject({ error: 'NOT_IN_ROOM' });
+    ok(room.volunteer('s1'));
+    expect((await room.setSource('s2', { source: 'anime-hot' })).ack).toMatchObject({ error: 'NOT_SETTER' });
+    expect((await room.setSource('s2', { source: 'anime' })).ack).toMatchObject({ error: 'SOURCE_INVALID' });
+    await room.setSource('s1', { source: 'anime-hot' });
+    expect((await room.setSource('s1', { source: 'anime-hot' })).ack).toMatchObject({ error: 'ROUND_BUSY' });
   });
 });
 

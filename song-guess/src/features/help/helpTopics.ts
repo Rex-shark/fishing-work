@@ -4,6 +4,8 @@
 // 本檔不得寫死任何殼層的名稱或路徑（shellBoundary 把關）。首數、秒數、人數、字數、分數一律由 shared 常數推導（改常數不必改說明）。
 // 六個主題（design §1）：怎麼玩、出題、猜歌、計分、聲音與耳機、切換偽裝。
 import {
+  ANIME_HOT_POOL,
+  ANIME_TERMS,
   ARTIST_MAX,
   CHART_SIZE,
   CHAT_MAX,
@@ -41,13 +43,18 @@ export const HELP_CLOSE_LABEL = '關閉'
 /** 單首試聽最長秒數（PREVIEW_CAP_MS 為唯一來源） */
 const PREVIEW_SECONDS = Math.round(PREVIEW_CAP_MS / 1000)
 
+/** 動漫熱門的搜尋關鍵字，說明裡的寫法：「anime、アニメ、動漫 三個關鍵字」（ANIME_TERMS 為唯一來源；海圖 2026-10-20 定案用「、」串接） */
+const ZH_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'] as const
+const ANIME_TERMS_COUNT = ZH_DIGITS[ANIME_TERMS.length] ?? `${ANIME_TERMS.length} `
+const ANIME_TERMS_TEXT = `${ANIME_TERMS.join('、')} ${ANIME_TERMS_COUNT}個關鍵字`
+
 /** 主題清單（順序即清單順序） */
 export const HELP_TOPICS: readonly HelpTopic[] = [
   {
     id: 'how-to-play',
     title: '怎麼玩',
     paragraphs: [
-      `一個人出題、選一個題庫：指定一位歌手，或用今天的「${SOURCE_TITLE['tw-hot']}」「${SOURCE_TITLE['western-hot']}」排行榜，系統從裡面隨機抽 ${SONGS_PER_GAME} 首；大家同時聽每首約 ${PREVIEW_SECONDS} 秒的試聽，在聊天室打字猜歌名，越快猜對分數越高。`,
+      `一個人出題、選一個題庫：指定一位歌手，或用今天的「${SOURCE_TITLE['tw-hot']}」「${SOURCE_TITLE['western-hot']}」排行榜，或「${SOURCE_TITLE['anime-hot']}」（以 ${ANIME_TERMS_TEXT}搜到的動漫歌曲，不含原聲帶與翻唱，熱門前 ${ANIME_HOT_POOL} 首），系統從裡面隨機抽 ${SONGS_PER_GAME} 首；大家同時聽每首約 ${PREVIEW_SECONDS} 秒的試聽，在聊天室打字猜歌名，越快猜對分數越高。`,
       `每首試聽播完就揭曉歌名、歌手、專輯封面與猜對的人，停 ${REVEAL_SECONDS} 秒自動播下一首；${SONGS_PER_GAME} 首都結束後顯示本局排名，一直停到有人再出題。`,
       `局進行中才加入的人會從目前進度接著聽，也可以猜、可以得分。斷線 ${RECONNECT_GRACE_SECONDS} 秒內回來（含重新整理）會自動接回原本的暱稱與分數，並從正確的位置接著播；同一個暱稱在別的分頁加入會接管，原分頁回到首頁。`,
     ],
@@ -57,11 +64,12 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     title: '出題',
     paragraphs: [
       `房間至少 ${MIN_PLAYERS} 人在線、沒有進行中的局時，按「{volunteer}」，你就是這一局的出題者。`,
-      `先在上方選題庫來源：歌手、${SOURCE_TITLE['tw-hot']}或${SOURCE_TITLE['western-hot']}（每次出題都從「歌手」開始），在 ${CHOOSING_SECONDS} 秒內送出；系統取到歌就立刻開始第 1 首。按 Esc 取消出題，逾時沒送出也會取消。`,
+      `先在上方選題庫來源：歌手、${SOURCE_TITLE['tw-hot']}、${SOURCE_TITLE['western-hot']}或${SOURCE_TITLE['anime-hot']}（每次出題都從「歌手」開始），在 ${CHOOSING_SECONDS} 秒內送出；系統取到歌就立刻開始第 1 首。按 Esc 取消出題，逾時沒送出也會取消。`,
       `歌手：輸入歌手名稱（1–${ARTIST_MAX} 字）並按 Enter，系統會去搜尋這位歌手。「只抽熱門歌」預設勾選：搜尋結果本來就依 Apple 的熱門度排序，勾了只從最前面的 ${HOT_POOL} 首裡抽；取消勾選就從搜得到的全部歌裡抽，比較冷門的歌也會出現。勾不勾會記在你的瀏覽器，下次沿用。`,
       `這位歌手至少要有 ${SONGS_PER_GAME} 首有試聽的歌；找不到或搜尋失敗時會顯示原因，可以換一位或再試一次。`,
       `${SOURCE_TITLE['tw-hot']}、${SOURCE_TITLE['western-hot']}：不用輸入，直接從今天的 Apple Music 熱門排行榜（${SOURCE_TITLE['tw-hot']}是台灣榜、${SOURCE_TITLE['western-hot']}是美國榜）前 ${CHART_SIZE} 首隨機抽 ${SONGS_PER_GAME} 首，不分語言，台灣榜也會有韓文、英文歌；排行榜每天更新。取不到排行榜時會顯示原因，可以再試一次或換一個來源。`,
-      '出題者只決定題庫，不知道會抽到哪幾首，所以也和大家一起猜。題庫名稱、第幾首與這首歌的歌手會全程顯示給所有人；用排行榜時每首的歌手可能不同，是猜歌的提示。',
+      `${SOURCE_TITLE['anime-hot']}：不用輸入，系統用 ${ANIME_TERMS_TEXT}搜尋 Apple Music 的動漫歌曲，排除原聲帶、純音樂與翻唱，依熱門度取前 ${ANIME_HOT_POOL} 首再隨機抽 ${SONGS_PER_GAME} 首；取不到時會顯示原因，可以再試一次或換一個來源。`,
+      `出題者只決定題庫，不知道會抽到哪幾首，所以也和大家一起猜。題庫名稱、第幾首與這首歌的歌手會全程顯示給所有人；用排行榜或${SOURCE_TITLE['anime-hot']}時每首的歌手可能不同，是猜歌的提示。`,
     ],
   },
   {

@@ -217,27 +217,31 @@ describe('出題動作的請求（round:volunteer／round:setSource／round:canc
     return { client, useGameStore, calls }
   }
 
-  it('送題庫來源：事件 round:setSource、payload 三種照契約原樣送出；逾時放寬到 25 秒（榜單 RSS 最久 12 秒 ＋ lookup 8 秒）', async () => {
+  it('送題庫來源：事件 round:setSource、payload 四種照契約原樣送出；逾時放寬到 25 秒（榜單 RSS 最久 12 秒 ＋ lookup 8 秒；動漫熱門三次搜尋並行各 8 秒）', async () => {
     const { client, calls } = await loadConnected([null, { ok: true, data: { topic: '孫燕姿' } }])
     expect(client.SET_SOURCE_ACK_TIMEOUT_MS).toBe(25_000)
     expect(await client.setSource({ source: 'artist', artist: '孫燕姿', hot: true })).toEqual({ ok: true })
     expect(await client.setSource({ source: 'tw-hot' })).toEqual({ ok: true })
     expect(await client.setSource({ source: 'western-hot' })).toEqual({ ok: true })
+    expect(await client.setSource({ source: 'anime-hot' })).toEqual({ ok: true })
     expect(calls).toEqual([
       { timeout: 25_000, event: 'round:setSource', payload: { source: 'artist', artist: '孫燕姿', hot: true } },
       { timeout: 25_000, event: 'round:setSource', payload: { source: 'tw-hot' } },
       { timeout: 25_000, event: 'round:setSource', payload: { source: 'western-hot' } },
+      { timeout: 25_000, event: 'round:setSource', payload: { source: 'anime-hot' } },
     ])
   })
 
   it('送題庫來源失敗：錯誤碼與 server 的繁中訊息原樣帶回（含新碼 CHART_FAILED、SOURCE_INVALID）', async () => {
     for (const [error, message] of [
       ['ARTIST_NOT_FOUND', '找不到這位歌手的歌（至少要 5 首有試聽的歌），換一位試試'],
-      ['CHART_FAILED', '取得排行榜失敗，請再試一次'],
+      ['CHART_FAILED', '取得題庫失敗，請再試一次'],
       ['SOURCE_INVALID', '題庫來源不正確，請重新選擇'],
     ] as const) {
       const { client } = await loadConnected([null, { ok: false, error, message }])
       expect(await client.setSource({ source: 'tw-hot' })).toEqual({ ok: false, error, message })
+      const again = await loadConnected([null, { ok: false, error, message }])
+      expect(await again.client.setSource({ source: 'anime-hot' })).toEqual({ ok: false, error, message })
     }
   })
 

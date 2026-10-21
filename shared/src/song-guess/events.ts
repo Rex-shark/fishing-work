@@ -5,14 +5,15 @@ export const SONG_GUESS_NAMESPACE = '/song-guess';
 /** idle：沒有局；choosing：出題者選題庫（含 server 取歌中）；playing：某一首播放中；reveal：該首揭曉（REVEAL_SECONDS）；ended：第 5 首揭曉後的本局排名 */
 export type SongPhase = 'idle' | 'choosing' | 'playing' | 'reveal' | 'ended';
 
-/** 題庫來源（Epic 18）：artist＝出題者填歌手；tw-hot＝Apple Music 台灣熱門榜（當日前 100）；western-hot＝西洋熱門（美國榜當日前 100） */
-export type SongSource = 'artist' | 'tw-hot' | 'western-hot';
+/** 題庫來源（Epic 18／19）：artist＝出題者填歌手；tw-hot＝Apple Music 台灣熱門榜（當日前 100）；western-hot＝西洋熱門（美國榜當日前 100）；anime-hot＝動漫熱門（anime／アニメ／動漫 三關鍵字搜尋聯集前 ANIME_HOT_POOL 首） */
+export type SongSource = 'artist' | 'tw-hot' | 'western-hot' | 'anime-hot';
 
 /** round:setSource 的 payload；artist 模式的 hot＝只從搜尋結果前 HOT_POOL 首抽（對話框預設勾） */
 export type SongSourcePayload =
   | { source: 'artist'; artist: string; hot: boolean }
   | { source: 'tw-hot' }
-  | { source: 'western-hot' };
+  | { source: 'western-hot' }
+  | { source: 'anime-hot' };
 
 export interface PlayerPublic {
   id: string;            // server 產生的穩定 id（重連接管後不變）
@@ -64,7 +65,7 @@ export interface RoundPublic {
   source: SongSource | null;     // 題庫來源（第一首開始起；idle 為 null）
   artist: string | null;         // source = 'artist' 時出題者輸入的歌手名（第一首開始起所有人看得到）；其餘 null
   artistHot: boolean;            // source = 'artist' 時是否只抽熱門歌（HOT_POOL）；其餘 false
-  topic: string | null;          // 題庫標題（顯示用；第一首開始起）：'artist' ＝ iTunes 回傳的歌手正式名；'tw-hot'／'western-hot' ＝ SOURCE_TITLE（「台灣熱門」／「西洋熱門」）
+  topic: string | null;          // 題庫標題（顯示用；第一首開始起）：'artist' ＝ iTunes 回傳的歌手正式名；'tw-hot'／'western-hot'／'anime-hot' ＝ SOURCE_TITLE（「台灣熱門」／「西洋熱門」／「動漫熱門」）
   songCount: number;             // = SONGS_PER_GAME
   endsAt: number | null;         // choosing：出題期限；playing：= song.endsAt；reveal：下一首開始時間；其餘 null
   song: SongPublic | null;       // playing／reveal 時有值

@@ -51,9 +51,9 @@ song-guess/
 - `src/features/round/countdown.ts`：倒數＝`round.endsAt` −「校正後的現在」，clamp 到該階段長度（起播緩衝期間停在整首長度）。
 - `src/features/player/clock.ts`：**時鐘偏移**。每次 `round:update`／快照都帶 `round.serverNow`，以 `serverNow − Date.now()` 估偏移（存在 store 的 `clockOffset`）；倒數與播放定位一律用 `Date.now() + clockOffset`，本機時鐘差幾秒不影響。
 - `src/features/players/scoreDelta.ts`：server 不單獨告訴本人這首得幾分；播放中的「+N」＝本局得分（`gameScore`）減掉這首開始時的值，揭曉時改讀 `reveal.scores`。中途接管時若已經猜對，基準不明，只顯示「你猜對了」。
-- `src/features/round/roundDisplay.ts` 另有播放中舞台的兩行字 `playingStageLines`（Epic 18）：第一行「{topic}{歌手模式且只抽熱門時「（熱門）」} · 第 n / 5 首」、第二行「歌手：{song.artist}」（歌手模式且與 topic 相同時省略；榜單模式一律顯示，每首歌手不同）；殼層只負責排版。
-- `src/features/reveal/revealView.ts`：舞台此刻顯示什麼（`stageMode`）、封面的 300px 版網址、猜對者列、排名列與標題（「本局結果 · {lastTopic}」：歌手正式名、「台灣熱門」或「西洋熱門」）。
-- `src/features/round/SourceDialog.tsx`：出題對話框（Epic 18）。頂部三選一「歌手／台灣熱門／西洋熱門」（`role="radiogroup"`，每次開都回到「歌手」）；歌手模式有欄位與「只抽熱門歌」勾選（預設勾，`hotPreference.ts` 記住上次），榜單模式只有一行說明。送出 `round:setSource`（payload 由 `roundDisplay.sourcePayload` 組），ack 逾時放寬到 25 秒（榜單要打 RSS（12 秒）＋ lookup（8 秒）兩段）。歌手名以 shared 的 `validateArtist` 預檢；送出中按鈕改「搜尋中…」／「取得排行榜…」，輸入框是 `readOnly`＋`aria-busy`、三選一與勾選只設 `aria-disabled`，**不用原生 `disabled`**（焦點不會掉：歌手模式失敗後可直接改字再按 Enter，榜單模式焦點留在「分享」）；送出中仍可取消。切換來源後欄位不搶焦點（`DialogField.autoFocus`），方向鍵可連續切換。
+- `src/features/round/roundDisplay.ts` 另有播放中舞台的兩行字 `playingStageLines`（Epic 18）：第一行「{topic}{歌手模式且只抽熱門時「（熱門）」} · 第 n / 5 首」、第二行「歌手：{song.artist}」（歌手模式且與 topic 相同時省略；榜單與動漫熱門一律顯示，每首歌手不同）；殼層只負責排版。
+- `src/features/reveal/revealView.ts`：舞台此刻顯示什麼（`stageMode`）、封面的 300px 版網址、猜對者列、排名列與標題（「本局結果 · {lastTopic}」：歌手正式名、「台灣熱門」「西洋熱門」或「動漫熱門」）。
+- `src/features/round/SourceDialog.tsx`：出題對話框（Epic 18；Epic 19 加「動漫熱門」）。頂部四選一「歌手／台灣熱門／西洋熱門／動漫熱門」（`role="radiogroup"`，每次開都回到「歌手」；375px 等窄畫面以 CSS 換成兩列 2×2，DOM 與方向鍵順序不變，`meetLayout.segmentedGroupClass`）；歌手模式有欄位與「只抽熱門歌」勾選（預設勾，`hotPreference.ts` 記住上次），現成題庫（兩個榜單與動漫熱門，`roundDisplay.isPresetSource`）只有一行說明。送出 `round:setSource`（payload 由 `roundDisplay.sourcePayload` 組），ack 逾時放寬到 25 秒（榜單要打 RSS（12 秒）＋ lookup（8 秒）兩段；動漫熱門三次搜尋並行、各 8 秒）。歌手名以 shared 的 `validateArtist` 預檢；送出中按鈕改「搜尋中…」（歌手、動漫熱門）／「取得排行榜…」（榜單），輸入框是 `readOnly`＋`aria-busy`、四選一與勾選只設 `aria-disabled`，**不用原生 `disabled`**（焦點不會掉：歌手模式失敗後可直接改字再按 Enter，現成題庫焦點留在「分享」）；送出中仍可取消。切換來源後欄位不搶焦點（`DialogField.autoFocus`），方向鍵可連續切換。
 
 ## 音訊播放
 
@@ -91,11 +91,11 @@ song-guess/
 |------|------|
 | `src/shells/index.ts`／`catalog.ts` | 主題註冊表 `SHELLS`（目前只有 `meet`）與首頁卡片／「切換偽裝…」共用的清單；日後加主題在這裡多加一筆 |
 | `src/shells/types.ts` | `ShellProps`：插槽 `players`、`stage`、`chat`、`roundStatus`、`volunteer`、`volume`、`connection`、`dialogs` ＋ `round`（phase、isSetter、setterName、songIndex、songCount、showLastResults）＋ `counts`、`themes`、`help` |
-| `src/shells/views.ts` | `ShellViews`（全部必填）：`Dialog`（用途 `source`／`help`；`busy` 與選項的 `pending`；出題用的 `choices`（三選一）、`toggle`（勾選）、`description`（榜單說明））、`PlayerList`、`Stage`（空畫面／準備中／播放視覺）、`Volume`、`chat`、`status`、`volunteer`、`help` |
+| `src/shells/views.ts` | `ShellViews`（全部必填）：`Dialog`（用途 `source`／`help`；`busy` 與選項的 `pending`；出題用的 `choices`（四選一）、`toggle`（勾選）、`description`（榜單與動漫熱門的說明））、`PlayerList`、`Stage`（空畫面／準備中／播放視覺）、`Volume`、`chat`、`status`、`volunteer`、`help` |
 | `src/shells/meet/MeetShell.tsx` | 版面：主畫面 tile（舞台＋左上標籤＋字幕列＋對話框）｜參加者影片條｜「通話中的訊息」面板｜控制列（音量、分享音訊、更多、資訊…）；響應式斷點同 DESIGN §15.3，沒有工具列收合斷點 |
 | `src/shells/meet/MeetStage.tsx` | 舞台的非結果畫面：「尚無人分享音訊」、「<出題者> 正在準備分享音訊…」、音訊波形（7 根直條，純 CSS、不讀真實音訊，`prefers-reduced-motion` 時不動）＋功能元件給的兩行字（「孫燕姿（熱門） · 第 n / 5 首」／「歌手：…」）；播放中不顯示歌名與封面 |
 | `src/shells/meet/MeetVolume.tsx` | 控制列的喇叭圖示；滑鼠移上去或鍵盤聚焦時滑桿浮在圖示上方（不推擠控制列），點圖示可釘住，Esc 收起 |
-| `src/shells/meet/MeetDialog.tsx`／`ParticipantTiles.tsx`／`MeetChat.tsx`／`MeetMoreMenu.tsx` | 白卡片對話框（出題「分享音訊」：segmented 三選一、勾選、榜單說明；說明）、參加者 tile（出題者喇叭圖示＋外框、本首已猜對舉手圖示、總分膠囊）、聊天 renderer、「更多 ⋮」選單與切換偽裝 |
+| `src/shells/meet/MeetDialog.tsx`／`ParticipantTiles.tsx`／`MeetChat.tsx`／`MeetMoreMenu.tsx` | 白卡片對話框（出題「分享音訊」：segmented 四選一（窄時 2×2）、勾選、現成題庫說明；說明）、參加者 tile（出題者喇叭圖示＋外框、本首已猜對舉手圖示、總分膠囊）、聊天 renderer、「更多 ⋮」選單與切換偽裝 |
 | `src/shells/meet/meetLayout.ts` | 純函式與文字：舞台標籤、舞台文字、「分享音訊」按鈕的四種樣子、對話框標題與按鈕文字、響應式斷點 |
 
 ## 測試
@@ -103,7 +103,7 @@ song-guess/
 專案的 Vitest 沒有 DOM 環境（沒有 jsdom）。除了純函式與 `renderToStaticMarkup` 的靜態渲染，`test/fakeDom.tsx` 提供一個只有 React 掛元件會用到的假 DOM，讓元件真的掛載、狀態真的更新、effect 真的執行：
 
 - `test/audioPlayer.test.tsx`：`<audio>` 以假節點代替（記錄 `src`、`currentTime`、`play`／`pause`／`load`），配合假時鐘驗起播緩衝、中途定位、時鐘偏移、被擋與重試、停播、換首。
-- `test/phases.test.tsx`：store 設成各階段，比對舞台與回合狀態列實際出現的字；出題對話框的三選一、榜單模式、送出中／失敗／取消流程與焦點、「只抽熱門歌」的 localStorage 讀寫。
+- `test/phases.test.tsx`：store 設成各階段，比對舞台與回合狀態列實際出現的字；出題對話框的四選一、榜單模式、動漫熱門、送出中／失敗／取消流程與焦點、「只抽熱門歌」的 localStorage 讀寫。
 - `test/busyFocus.test.tsx`、`test/dialogBusy.test.tsx`：送出中不用原生 `disabled`、失敗後焦點的位置。
 
 真正的音訊解碼、緩衝、瀏覽器的自動播放政策與版面，仍以瀏覽器實測為準（驗收方式見 architecture §8）。

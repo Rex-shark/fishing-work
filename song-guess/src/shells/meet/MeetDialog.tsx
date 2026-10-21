@@ -1,8 +1,9 @@
 // meet 主題的對話框（ShellViews.Dialog；DESIGN.md §15.2「對話框」、§15.3；spec/song-guess/design.md §1「出題（選題庫）」）。
 //   白卡片（--bg-panel、圓角 8px、--quickinput-shadow；--bg-quickinput 在 meet 是工具提示用的深灰）、標題 20px（出題＝「分享音訊」）、內文 14px、
-//   右下藍字文字按鈕（--accent-panel；出題「取消／分享」，送出中主要按鈕改顯示「搜尋中…」／「取得排行榜…」）。寬 420px，置中於殼層提供的定位容器（主畫面 tile）。
-//   出題（Epic 18）：標題下方 segmented 三選一（choices，role="radiogroup"：選中者 --accent-panel 字＋ --bg-panel-hover 底）；
-//   歌手模式＝欄位＋下方勾選（toggle，原生 checkbox、accent-color --accent-panel）；榜單模式＝一行說明（description，--fg-on-panel-muted）＋右側倒數。
+//   右下藍字文字按鈕（--accent-panel；出題「取消／分享」，送出中主要按鈕改顯示「搜尋中…」（歌手、動漫熱門）／「取得排行榜…」（榜單））。寬 420px，置中於殼層提供的定位容器（主畫面 tile）。
+//   出題（Epic 18）：標題下方 segmented 四選一（choices，role="radiogroup"：選中者 --accent-panel 字＋ --bg-panel-hover 底；Epic 19 加「動漫熱門」，
+//   對話框內文窄於 340px（375px 手機）時以 CSS 換成兩列 2×2，meetLayout.segmentedGroupClass）；
+//   歌手模式＝欄位＋下方勾選（toggle，原生 checkbox、accent-color --accent-panel）；現成題庫（榜單、動漫熱門）＝一行說明（description，--fg-on-panel-muted）＋右側倒數。
 //   design §1 寫說明用 --fg-muted，但白卡片上只用面板 token（下一行），對應的是 --fg-on-panel-muted。
 //   自動重連畫面只放一行提示（MeetResumeCard）。
 // 白底只用面板 token（--fg-on-panel／--fg-on-panel-muted／--border-panel／--accent-panel）與 --bg-input、--sem-error，不用深色區的 --fg。
@@ -26,6 +27,7 @@ import {
   meetDialogButtonLabel,
   meetDialogButtonText,
   meetDialogHeading,
+  segmentedGroupClass,
 } from './meetLayout'
 
 export function MeetDialog({ purpose, label, choices, input, toggle, description, title, body, items, onEscape, busy = false, note, error }: DialogProps) {
@@ -140,7 +142,8 @@ export function MeetDialog({ purpose, label, choices, input, toggle, description
 }
 
 /**
- * 出題的題庫來源（segmented 三選一）：role="radiogroup"，一個選項一顆 role="radio" 的按鈕；
+ * 出題的題庫來源（segmented 四選一）：role="radiogroup"，一個選項一顆 role="radio" 的按鈕；
+ * 外層 @container 量對話框內文寬，選項多且放不下時換成兩列（segmentedGroupClass；DOM 與方向鍵順序不變）；
  * 只有選中的那顆在 Tab 順序裡（roving tabindex），←→↑↓／Home／End 切換並選取（meetLayout.choiceKeyTarget）；Enter＝送出（同主要按鈕）。
  * locked（送出中）：aria-disabled、點了或按方向鍵都不切換，焦點留在原處（不用原生 disabled）
  */
@@ -171,36 +174,38 @@ function Segmented({ choices, onEnter }: { choices: DialogChoices; onEnter: () =
   }
 
   return (
-    <div
-      role="radiogroup"
-      aria-label={choices.label}
-      aria-disabled={locked || undefined}
-      onKeyDown={handleKeyDown}
-      className="mb-[16px] flex rounded-full border border-border-panel p-[2px]"
-    >
-      {options.map((option, i) => {
-        const checked = option.id === value
-        return (
-          <button
-            key={option.id}
-            ref={(el) => {
-              refs.current[i] = el
-            }}
-            type="button"
-            role="radio"
-            aria-checked={checked}
-            aria-disabled={locked || undefined}
-            tabIndex={checked || (current < 0 && i === 0) ? 0 : -1}
-            data-source-option={option.id}
-            onClick={() => select(i)}
-            className={`h-[32px] min-w-0 flex-1 truncate rounded-full px-[8px] text-[14px] transition-colors duration-100 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-panel ${
-              checked ? 'bg-panel-hover font-medium text-accent-panel' : 'text-fg-on-panel'
-            } ${locked ? 'cursor-default' : checked ? 'cursor-pointer' : 'cursor-pointer hover:bg-panel-hover'}`}
-          >
-            {option.label}
-          </button>
-        )
-      })}
+    <div className="@container mb-[16px]">
+      <div
+        role="radiogroup"
+        aria-label={choices.label}
+        aria-disabled={locked || undefined}
+        onKeyDown={handleKeyDown}
+        className={segmentedGroupClass(options.length)}
+      >
+        {options.map((option, i) => {
+          const checked = option.id === value
+          return (
+            <button
+              key={option.id}
+              ref={(el) => {
+                refs.current[i] = el
+              }}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              aria-disabled={locked || undefined}
+              tabIndex={checked || (current < 0 && i === 0) ? 0 : -1}
+              data-source-option={option.id}
+              onClick={() => select(i)}
+              className={`h-[32px] min-w-0 flex-1 truncate rounded-full px-[8px] text-[14px] transition-colors duration-100 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-panel ${
+                checked ? 'bg-panel-hover font-medium text-accent-panel' : 'text-fg-on-panel'
+              } ${locked ? 'cursor-default' : checked ? 'cursor-pointer' : 'cursor-pointer hover:bg-panel-hover'}`}
+            >
+              {option.label}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

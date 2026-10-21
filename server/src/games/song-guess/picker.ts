@@ -10,7 +10,9 @@
 // 5. topic＝過濾後（去重前）出現最多次的 artistName（合唱曲的「A & B」不影響）；熱門時只計前 HOT_POOL 首的候選。
 // 6. 隨機抽 n 首（random 可注入，測試才有確定的結果）。
 // pickChart（Epic 18，台灣熱門／西洋熱門）：有試聽、歌名猜得到、以「artistName ＋ normalizeTitle」去重，隨機抽 n 首；不套 HOT_POOL。
-import { HOT_POOL, mainTitle, normalizeTitle } from '@fishing-work/shared/song-guess';
+// pickAnime（Epic 19，動漫熱門）：有試聽 → 排除原聲帶／翻唱（isSoundtrackOrCover）→ 歌名猜得到 → 依輸入順序（＝合併排名）
+//   以「artistName ＋ normalizeTitle」去重（保留較前者）→ 取前 ANIME_HOT_POOL 首 → 隨機抽 n 首。
+import { ANIME_HOT_POOL, HOT_POOL, mainTitle, normalizeTitle } from '@fishing-work/shared/song-guess';
 import { artistKey, type ItunesTrack } from './itunes';
 
 /** 抽中的一首歌（room 內部保存；答案欄位到揭曉才對外） */
@@ -204,4 +206,56 @@ export function pickChart(tracks: readonly ItunesTrack[], n: number, random: () 
   const unique = dedupe(tracks.filter(playable), chartKey);
   if (unique.length < n) return null;
   return sample(unique, n, random).map(toPicked);
+}
+
+// ─── 動漫熱門（Epic 19） ───────────────────────────────────────────
+
+/**
+ * 原聲帶／翻唱的拉丁字母關鍵字（spec §6）：以**單字邊界**、不分大小寫比對整個片語——
+ * 前後不可緊鄰英文字母或數字（`OST` 不命中 Ghost／Lost／Most／LOST IN PARADISE，`cover` 不命中 Discover，
+ * `piano` 不命中 Pianoman）；含空白或連字號的片語（off vocal、music box、8-bit）也是整段比對。
+ */
+// acoustic、orchestral、karaoke：Epic 19 Phase 2.5（決策 10）補——不插電版與管弦樂改編也是改編版，不是原唱
+const SOUNDTRACK_LATIN = ['soundtrack', 'OST', 'BGM', 'instrumental', 'off vocal', 'piano', 'cover', 'remix', '8-bit', 'music box', 'acoustic', 'orchestral', 'karaoke'] as const;
+/** 原聲帶／翻唱的日文／中文關鍵字（spec §6）：子字串比對（這些語言沒有單字邊界） */
+const SOUNDTRACK_CJK = ['サウンドトラック', '原聲', '原声', 'カラオケ', '伴奏', '鋼琴', 'カバー', '音樂盒', 'オルゴール'] as const;
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 允許英文複數尾巴（Covers、Remixes、Soundtracks）——這是「含」該字，不是別的字 */
+const SOUNDTRACK_LATIN_RE = new RegExp(`(?<![A-Za-z0-9])(?:${SOUNDTRACK_LATIN.map(escapeRegExp).join('|')})(?:e?s)?(?![A-Za-z0-9])`, 'i');
+
+function hasSoundtrackWord(text: string | null): boolean {
+  if (text === null || text === '') return false;
+  // NFKC：全形英數（ＯＳＴ）與半形一視同仁
+  const t = text.normalize('NFKC');
+  return SOUNDTRACK_LATIN_RE.test(t) || SOUNDTRACK_CJK.some((kw) => t.includes(kw));
+}
+
+/** 是否為原聲帶或翻唱（spec §6）：collectionName 或 trackName 含任一關鍵字 */
+export function isSoundtrackOrCover(track: Pick<ItunesTrack, 'collectionName' | 'trackName'>): boolean {
+  return hasSoundtrackWord(track.collectionName) || hasSoundtrackWord(track.trackName);
+}
+
+/**
+ * 動漫熱門抽歌（Epic 19；spec §5 第四分支、§6）。
+ * @param tracks itunes.animePool() 的結果（三關鍵字合併、依合併排名；尚未排除）
+ * @param n 要抽幾首（SONGS_PER_GAME）
+ * @param random 回 [0, 1) 的亂數（預設 Math.random）
+ * @returns 抽到的歌；可抽的歌不足 n 首回 null（CHART_FAILED）
+ */
+export function pickAnime(tracks: readonly ItunesTrack[], n: number, random: () => number = Math.random): PickedSong[] | null {
+  const kept = new Map<string, Playable>();
+  for (const t of tracks) {
+    // playable：有試聽、normalizeTitle 與 mainTitle 皆非空
+    if (!playable(t) || isSoundtrackOrCover(t)) continue;
+    const key = chartKey(t);
+    // 依輸入順序：同鍵保留較前者（排名較高）
+    if (!kept.has(key)) kept.set(key, t);
+  }
+  const pool = [...kept.values()].slice(0, ANIME_HOT_POOL);
+  if (pool.length < n) return null;
+  return sample(pool, n, random).map(toPicked);
 }

@@ -13,7 +13,7 @@ import {
 import { log } from '../../lib/log';
 import { clientAddress } from '../../lib/network';
 import { CHAT_ERROR_MESSAGES } from './chat';
-import { songGuessSetupFromEnv, type ChartFetcher, type SongSearcher } from './itunes';
+import { songGuessSetupFromEnv, type AnimePoolFetcher, type ChartFetcher, type SongSearcher } from './itunes';
 import { Room, type ActionOutcome, type Clock, type Effect, type RoomDurations } from './room';
 
 export type SongGuessNamespace = Namespace<ClientToServerEvents, ServerToClientEvents>;
@@ -29,6 +29,8 @@ export interface RegisterOptions {
   search?: SongSearcher;
   /** 排行榜取得器（測試注入；Epic 18）；預設依環境變數 ITUNES_RSS_URL、ITUNES_URL 等建立（與搜尋器共用同一個 iTunes 客戶端） */
   chart?: ChartFetcher;
+  /** 動漫熱門題庫取得器（測試注入；Epic 19）；預設依環境變數 ITUNES_URL 等建立（與搜尋器共用同一個 iTunes 客戶端） */
+  animePool?: AnimePoolFetcher;
   /** 抽歌用的亂數（測試注入；預設 Math.random） */
   random?: () => number;
 }
@@ -105,14 +107,16 @@ function logRoundEffects(effects: Effect[]): void {
 
 /** /song-guess namespace 事件接線（薄）：驗證 payload 形狀 → 呼叫 Room → ack 與執行效果 */
 export function registerSongGuess(nsp: SongGuessNamespace, options: RegisterOptions = {}): Room {
-  // 搜尋器、排行榜取得器與播放上限：三者都有注入時不讀環境變數（測試不需要 iTunes 客戶端）
-  const needEnv = options.search === undefined || options.chart === undefined || options.durations?.previewCapMs === undefined;
+  // 搜尋器、排行榜取得器、動漫熱門題庫取得器與播放上限：四者都有注入時不讀環境變數（測試不需要 iTunes 客戶端）
+  const needEnv =
+    options.search === undefined || options.chart === undefined || options.animePool === undefined || options.durations?.previewCapMs === undefined;
   const fromEnv = needEnv ? songGuessSetupFromEnv() : null;
   const room: Room = new Room({
     clock: options.clock,
     durations: { ...(fromEnv ? { previewCapMs: fromEnv.previewCapMs } : {}), ...options.durations },
     search: options.search ?? fromEnv?.search,
     chart: options.chart ?? fromEnv?.chart,
+    animePool: options.animePool ?? fromEnv?.animePool,
     random: options.random,
     onAsyncEffects: (effects) => {
       try {

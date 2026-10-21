@@ -1,5 +1,5 @@
 // 本局排名表（spec/song-guess/design.md §1「本局排名」）：名次、暱稱、本局得分、猜對首數；前三名 --accent；
-// 標題「本局結果 · {lastTopic}」（歌手正式名、「台灣熱門」或「西洋熱門」）。ended 顯示本局；idle 有上一局結果時同樣顯示（results／lastTopic 保留到下一局第 1 首開始）。
+// 標題「本局結果 · {lastTopic}」（歌手正式名、「台灣熱門」「西洋熱門」或「動漫熱門」）。ended 顯示本局；idle 有上一局結果時同樣顯示（results／lastTopic 保留到下一局第 1 首開始）。
 // 停到有人出題為止，沒有計時。色彩一律用 token class；不含任何偽裝字樣。
 import { useGameStore } from '../../store/game'
 import { rankingTopicOf } from '../round/roundDisplay'

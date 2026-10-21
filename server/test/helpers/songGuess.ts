@@ -1,9 +1,11 @@
 // 猜歌測試用：真 iTunes 回應裁出的 fixture（搜尋、排行榜）、合成歌單、手動搜尋器與手動排行榜取得器
 import { readFileSync } from 'node:fs';
 import {
+  mergeAnimeResults,
   parseChartIds,
   parseLookupBody,
   parseSearchBody,
+  type AnimePoolFetcher,
   type ChartCountry,
   type ChartFetcher,
   type ItunesTrack,
@@ -12,6 +14,7 @@ import {
 
 const FIXTURE = new URL('../fixtures/song-guess.itunes.json', import.meta.url);
 const CHART_FIXTURE = new URL('../fixtures/song-guess.chart.json', import.meta.url);
+const ANIME_FIXTURE = new URL('../fixtures/song-guess.anime.json', import.meta.url);
 
 /** fixture 裡有的搜尋詞（2026-10-12 台灣區 artistTerm 搜尋的真回應，各裁到二、三十首，只留用到的欄位） */
 export type FixtureTerm = '孫燕姿' | 'Jay Chou' | '周杰倫' | '告五人' | 'Taylor Swift' | 'YOASOBI' | '五月天';
@@ -46,6 +49,32 @@ export function chartFixtureBodies(country: ChartCountry): { rss: string; lookup
 export function chartFixtureTracks(country: ChartCountry): ItunesTrack[] {
   const { rss, lookup } = chartFixtureBodies(country);
   return parseLookupBody(lookup, parseChartIds(rss));
+}
+
+/** 動漫熱門樣本的關鍵字（Epic 19；＝ANIME_TERMS） */
+export type AnimeFixtureTerm = 'anime' | 'アニメ' | '動漫';
+
+let animeCache: Record<string, unknown> | null = null;
+
+/**
+ * 動漫熱門樣本（Epic 19；2026-10-20 真 Apple 回應：search?term=<kw>&entity=song&country=TW&media=music&limit=200，
+ * 各裁到前 40 名；anime 另附原第 92 首「LOST IN PARADISE」）。回傳該關鍵字的原始本文。
+ */
+export function animeFixtureBody(term: AnimeFixtureTerm): string {
+  animeCache ??= JSON.parse(readFileSync(ANIME_FIXTURE, 'utf8')) as Record<string, unknown>;
+  const entry = animeCache[term];
+  if (entry === undefined) throw new Error(`動漫熱門樣本沒有 ${term}`);
+  return JSON.stringify(entry);
+}
+
+/** 某個關鍵字的動漫熱門樣本（經 itunes.ts 解析，依 Apple 回傳順序） */
+export function animeFixtureTracks(term: AnimeFixtureTerm): ItunesTrack[] {
+  return parseSearchBody(animeFixtureBody(term));
+}
+
+/** 三個關鍵字的樣本合併後的結果（＝animePool 成功時的回傳） */
+export function animeFixtureMerged(): ItunesTrack[] {
+  return mergeAnimeResults((['anime', 'アニメ', '動漫'] as const).map(animeFixtureTracks));
 }
 
 /** 合成一首歌（room 測試用；欄位形狀同 itunes.ts 解析後的結果） */
@@ -107,5 +136,19 @@ export class ManualSearch {
   readonly search: SongSearcher = (artist) =>
     new Promise<ItunesTrack[]>((resolve, reject) => {
       this.calls.push({ artist, resolve, reject });
+    });
+}
+
+export interface ManualAnimeCall {
+  resolve(tracks: ItunesTrack[]): void;
+  reject(err: unknown): void;
+}
+
+/** 手動動漫熱門題庫取得器（Epic 19）：每次呼叫記一筆，由測試決定何時以什麼結果 resolve／reject */
+export class ManualAnime {
+  readonly calls: ManualAnimeCall[] = [];
+  readonly animePool: AnimePoolFetcher = () =>
+    new Promise<ItunesTrack[]>((resolve, reject) => {
+      this.calls.push({ resolve, reject });
     });
 }

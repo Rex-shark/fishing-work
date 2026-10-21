@@ -1,6 +1,8 @@
 // 遊戲說明的內容（features/help/helpTopics；spec/song-guess/design.md §1「說明」）：六個主題、佔位符、數字由 shared 常數推導
 import { describe, expect, it } from 'vitest'
 import {
+  ANIME_HOT_POOL,
+  ANIME_TERMS,
   ARTIST_MAX,
   CHART_SIZE,
   CHAT_MAX,
@@ -13,6 +15,7 @@ import {
   SCORE_MAX,
   SCORE_MIN,
   SONGS_PER_GAME,
+  SOURCE_TITLE,
 } from '@fishing-work/shared/song-guess'
 import { HELP_BACK_LABEL, HELP_CLOSE_LABEL, HELP_LIST_TITLE, HELP_TOPICS, findHelpTopic, renderTopic } from '../src/features/help/helpTopics'
 import { START_PLAYBACK_LABEL } from '../src/features/player/playback'
@@ -106,15 +109,18 @@ describe('數字一律由 shared 常數推導', () => {
 })
 
 describe('題庫來源（Epic 18；overview 規則 3、design §1「出題（選題庫）」）', () => {
-  it('怎麼玩：三種題庫（歌手、台灣熱門、西洋熱門）', () => {
+  it('怎麼玩：四種題庫（歌手、台灣熱門、西洋熱門、動漫熱門）', () => {
     const t = text('how-to-play')
     expect(t).toContain('指定一位歌手')
     expect(t).toContain('「台灣熱門」「西洋熱門」排行榜')
+    // Epic 19：動漫熱門一句（三關鍵字、排除原聲帶與翻唱、熱門前 60）
+    expect(t).toContain('或「動漫熱門」（以 anime、アニメ、動漫 三個關鍵字搜到的動漫歌曲，不含原聲帶與翻唱，熱門前 60 首）')
+    expect(t).toContain(`熱門前 ${ANIME_HOT_POOL} 首`)
   })
 
   it('出題：三種來源、每次從「歌手」開始；熱門＝Apple 依熱門度排序的搜尋結果前段、預設勾、記在瀏覽器；取消勾選從全部抽', () => {
     const t = text('be-setter')
-    expect(t).toContain('歌手、台灣熱門或西洋熱門')
+    expect(t).toContain('歌手、台灣熱門、西洋熱門或動漫熱門')
     expect(t).toContain('每次出題都從「歌手」開始')
     expect(t).toContain('「只抽熱門歌」預設勾選')
     expect(t).toContain('依 Apple 的熱門度排序')
@@ -128,10 +134,23 @@ describe('題庫來源（Epic 18；overview 規則 3、design §1「出題（選
     expect(t).toContain('台灣熱門是台灣榜、西洋熱門是美國榜')
     expect(t).toContain('不分語言')
     expect(t).toContain('再試一次或換一個來源')
-    expect(t).toContain('用排行榜時每首的歌手可能不同')
+    expect(t).toContain('用排行榜或動漫熱門時每首的歌手可能不同')
     // 舊的說法（歌手名全程顯示、只決定歌手）不再出現
     expect(t).not.toContain('歌手名稱會全程顯示')
     expect(t).not.toContain('只決定歌手')
+  })
+
+  it('出題：動漫熱門（Epic 19）＝三個關鍵字搜尋、排除原聲帶與翻唱、熱門前 60 首隨機抽 5；數字與關鍵字由 shared 常數推導', () => {
+    const t = text('be-setter')
+    expect(t).toContain(
+      '動漫熱門：不用輸入，系統用 anime、アニメ、動漫 三個關鍵字搜尋 Apple Music 的動漫歌曲，排除原聲帶、純音樂與翻唱，依熱門度取前 60 首再隨機抽 5 首；取不到時會顯示原因，可以再試一次或換一個來源。',
+    )
+    expect(t).toContain(`${ANIME_TERMS.join('、')} 三個關鍵字`)
+    expect(t).toContain(`${SOURCE_TITLE['anime-hot']}：不用輸入`)
+    expect(t).toContain(`前 ${ANIME_HOT_POOL} 首再隨機抽 ${SONGS_PER_GAME} 首`)
+    // 內文不寫死關鍵字（ANIME_TERMS 為唯一來源）
+    const body = source.slice(source.indexOf('export const HELP_TOPICS'), source.indexOf('/** 佔位符的代入值'))
+    expect(body.replace(/\$\{[^}]+\}/g, '')).not.toContain(ANIME_TERMS.join('、'))
   })
 })
 

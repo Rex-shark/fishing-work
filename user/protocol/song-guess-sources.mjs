@@ -46,7 +46,7 @@ const HOT_ARTIST = '熱門歌手';
 // ── ack.message 文案：§5.3 ──
 const MSG = {
   SOURCE_INVALID: '題庫來源不正確，請重新選擇',
-  CHART_FAILED: '取得排行榜失敗，請再試一次',
+  CHART_FAILED: '取得題庫失敗，請再試一次', // 2026-10-20 Epic 19：由「取得排行榜失敗」改通用文案（§5.3）
   SEARCH_BUSY: '搜尋中，請稍候',
   NOT_SETTER: '只有本回合的出題者可以這麼做', // spec/draw-contest/architecture.md §5.4（§5.3「其餘同繪圖比賽」）
 };

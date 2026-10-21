@@ -1,28 +1,33 @@
-// 猜歌 iTunes 客戶端：spec/song-guess/architecture.md §3（端點、排行榜、環境變數）、§6（search、chart、快取）
+// 猜歌 iTunes 客戶端：spec/song-guess/architecture.md §3（端點、排行榜、動漫熱門、環境變數）、§6（search、chart、animePool、快取）
 // 全部以注入的 fetch、user/mock/itunes.mjs 或連不上的位址測，不打真 iTunes。
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CHART_SIZE, PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
+import { ANIME_TERMS, CHART_SIZE, PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
 import {
+  ANIME_CACHE_KEY,
   DEFAULT_ITUNES_CONFIG,
   ItunesChartError,
   ItunesSearchError,
   SEARCH_LIMIT,
+  animePool,
   artistKey,
+  buildAnimeSearchUrl,
   buildChartUrl,
   buildLookupUrl,
   buildSearchUrl,
   chart,
   createItunesClient,
+  mergeAnimeResults,
   parseChartIds,
   parseLookupBody,
   parseSearchBody,
   readSongGuessConfig,
   search,
+  type AnimeLogInfo,
   type ChartLogInfo,
   type FetchLike,
   type SearchLogInfo,
 } from '../src/games/song-guess/itunes';
-import { chartFixtureBodies, fixtureBody } from './helpers/songGuess';
+import { animeFixtureBody, animeFixtureMerged, animeFixtureTracks, chartFixtureBodies, fixtureBody, track, type AnimeFixtureTerm } from './helpers/songGuess';
 
 const mockPath = new URL('../../user/mock/itunes.mjs', import.meta.url).href;
 interface MockItunes {
@@ -691,5 +696,282 @@ describe('createItunesClient.chart：快取（鍵＝國家）', () => {
     await client.chart('tw');
     await client.chart('tw');
     expect(urls).toHaveLength(4);
+  });
+});
+
+// ─── Epic 19：動漫熱門（animePool） ─────────────────────────────────
+
+/** 從動漫熱門搜尋網址取出 term（URLSearchParams 解碼） */
+function termOf(url: string): string {
+  return new URL(url).searchParams.get('term') ?? '';
+}
+
+/**
+ * 依 term 路由的假 fetch：每個關鍵字回指定的狀態與本文（預設回真 Apple 樣本），或交給函式（逾時、卡住）；
+ * 記錄每次呼叫的網址與「發出時已發出、尚未回應」的請求數（驗並行）。
+ */
+function animeFetch(routes: Partial<Record<AnimeFixtureTerm, { status?: number; body?: string } | FetchLike>> = {}): {
+  fetch: FetchLike;
+  urls: string[];
+} {
+  const urls: string[] = [];
+  return {
+    urls,
+    fetch: (url, init) => {
+      urls.push(url);
+      const term = termOf(url) as AnimeFixtureTerm;
+      const route = routes[term];
+      if (typeof route === 'function') return route(url, init);
+      const status = route?.status ?? 200;
+      const body = route?.body ?? animeFixtureBody(term);
+      return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(body) });
+    },
+  };
+}
+
+describe('animePool：網址（§3 動漫熱門、§6）', () => {
+  it('`${ITUNES_URL}/search?term=<kw>&entity=song&country=…&media=music&limit=200`，**不帶 attribute**、參數順序照 §6', () => {
+    const url = buildAnimeSearchUrl('アニメ', { url: 'https://itunes.example/', country: 'TW' });
+    expect(url).toBe(`https://itunes.example/search?term=${encodeURIComponent('アニメ')}&entity=song&country=TW&media=music&limit=${SEARCH_LIMIT}`);
+    expect(new URL(url).searchParams.has('attribute')).toBe(false);
+  });
+
+  it('ANIME_TERMS 三個關鍵字各打一次（anime、アニメ、動漫），用 ITUNES_COUNTRY', async () => {
+    const { fetch, urls } = animeFetch();
+    await animePool({ ...BASE, country: 'JP', fetch });
+    expect(urls.map(termOf)).toEqual([...ANIME_TERMS]);
+    for (const url of urls) {
+      const q = new URL(url).searchParams;
+      expect(url.startsWith('https://itunes.example/search?')).toBe(true);
+      expect(q.get('country')).toBe('JP');
+      expect(q.get('entity')).toBe('song');
+      expect(q.get('media')).toBe('music');
+      expect(q.get('limit')).toBe('200');
+      expect(q.has('attribute')).toBe(false);
+    }
+  });
+
+  it('三次**並行**：第一個請求還沒回，另兩個就已發出', async () => {
+    const releases: (() => void)[] = [];
+    const fetch: FetchLike = (url) =>
+      new Promise((resolve) => {
+        const body = animeFixtureBody(termOf(url) as AnimeFixtureTerm);
+        releases.push(() => resolve({ ok: true, status: 200, text: () => Promise.resolve(body) }));
+      });
+    const run = animePool({ ...BASE, fetch });
+    await Promise.resolve();
+    expect(releases).toHaveLength(3);
+    for (const release of releases) release();
+    expect(await run).toHaveLength(49);
+  });
+});
+
+describe('animePool：合併排名（真 Apple 樣本，2026-10-20 擷取）', () => {
+  it('三份樣本 41／40／40 筆 → 同一首（trackId）只留一筆，合併後 49 首', async () => {
+    expect(ANIME_TERMS.map((t) => animeFixtureTracks(t).length)).toEqual([41, 40, 40]);
+    const { fetch } = animeFetch();
+    const tracks = await animePool({ ...BASE, fetch });
+    expect(tracks).toHaveLength(49);
+    expect(new Set(tracks.map((t) => t.trackId)).size).toBe(49);
+    expect(tracks).toEqual(animeFixtureMerged());
+  });
+
+  it('排名＝三份中的最小索引，升冪；同排名依關鍵字順序 anime、アニメ、動漫', async () => {
+    const { fetch } = animeFetch();
+    const names = (await animePool({ ...BASE, fetch })).map((t) => t.trackName);
+    // 索引 0：残響散歌（anime）、隔壁的龍貓（アニメ）、紅蓮華（動漫）；索引 1：One Last Kiss、Call of Silence、祝福
+    expect(names.slice(0, 6)).toEqual(['残響散歌', '隔壁的龍貓', '紅蓮華', 'One Last Kiss', 'Call of Silence', '祝福']);
+    // 紅蓮華：anime 14、アニメ 11、動漫 0 → 排名 0（取最小，不是第一個關鍵字裡的名次）
+    expect(names.indexOf('紅蓮華')).toBe(2);
+  });
+
+  it('合併結果尚未排除原聲帶／翻唱（排除在 picker）', async () => {
+    const { fetch } = animeFetch();
+    const tracks = await animePool({ ...BASE, fetch });
+    expect(tracks.some((t) => t.collectionName?.includes('原聲帶'))).toBe(true);
+    expect(tracks.some((t) => t.collectionName?.includes('カバー'))).toBe(true);
+  });
+
+  it('mergeAnimeResults：合成資料逐項驗排名與 tie-break；trackId 為 0 者以歌手＋歌名＋專輯合併', () => {
+    const a = track(1, 'A');
+    const b = track(2, 'B');
+    const c = track(3, 'C');
+    const d = track(4, 'D');
+    const noIdX = track(0, 'X');
+    const merged = mergeAnimeResults([
+      [b, a, noIdX], // anime：B 0、A 1、X 2
+      [c, d, b], // アニメ：C 0、D 1、B 2
+      [d, { ...noIdX }, a], // 動漫：D 0、X 1、A 2
+    ]);
+    // 排名：B 0（anime）、C 0（アニメ）、D 0（動漫）、A 1（anime）、X 1（動漫）
+    expect(merged.map((t) => t.trackName)).toEqual(['B', 'C', 'D', 'A', 'X']);
+    expect(mergeAnimeResults([[], [], []])).toEqual([]);
+  });
+});
+
+describe('animePool：任一關鍵字失敗即整體失敗 → CHART_FAILED（ItunesChartError）', () => {
+  it.each(ANIME_TERMS)('「%s」回 500 → CHART_FAILED，原因帶關鍵字', async (term) => {
+    const { fetch } = animeFetch({ [term]: { status: 500, body: '' } });
+    const err = await animePool({ ...BASE, fetch }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ItunesChartError);
+    expect(err).toMatchObject({ code: 'CHART_FAILED', reason: `search ${term} HTTP 500` });
+  });
+
+  it('回應不是 JSON、沒有 results 陣列 → CHART_FAILED（不是 SEARCH_FAILED）', async () => {
+    const notJson = animeFetch({ 動漫: { body: 'not json' } });
+    await expect(animePool({ ...BASE, fetch: notJson.fetch })).rejects.toMatchObject({ code: 'CHART_FAILED', reason: 'search 動漫 回應不是 JSON' });
+    const noResults = animeFetch({ anime: { body: '{"resultCount":0}' } });
+    await expect(animePool({ ...BASE, fetch: noResults.fetch })).rejects.toMatchObject({
+      code: 'CHART_FAILED',
+      reason: 'search anime 回應沒有 results 陣列',
+    });
+  });
+
+  it('連不上（fetch reject）→ CHART_FAILED', async () => {
+    const { fetch } = animeFetch({ アニメ: () => Promise.reject(new TypeError('fetch failed')) });
+    await expect(animePool({ ...BASE, fetch })).rejects.toMatchObject({ code: 'CHART_FAILED' });
+  });
+
+  it('各自逾時（timeoutMs）：一個關鍵字卡住 → 該請求被中止、整體 CHART_FAILED', async () => {
+    let aborted = false;
+    const hang: FetchLike = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          aborted = true;
+          reject(init.signal.reason as Error);
+        });
+      });
+    const { fetch } = animeFetch({ アニメ: hang });
+    const startedAt = Date.now();
+    await expect(animePool({ ...BASE, timeoutMs: 40, fetch })).rejects.toMatchObject({ code: 'CHART_FAILED', reason: 'search アニメ 逾時（40 ms）' });
+    expect(aborted).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+  });
+
+  it('每個請求各帶自己的 AbortSignal（並行，不共用一個逾時）', async () => {
+    const signals: AbortSignal[] = [];
+    const { fetch } = animeFetch();
+    await animePool({
+      ...BASE,
+      fetch: (url, init) => {
+        signals.push(init.signal);
+        return fetch(url, init);
+      },
+    });
+    expect(signals).toHaveLength(3);
+    expect(new Set(signals).size).toBe(3);
+  });
+});
+
+describe('animePool × 假 iTunes（user/mock/itunes.mjs）', () => {
+  it('三個關鍵字各回固定資料；合併去重後 ≥ 12 首、含原聲帶與 Cover；previewUrl 指回假 iTunes', async () => {
+    mock = await startMock({ trackMs: 1234 });
+    const tracks = await animePool({ url: mock.url, country: 'TW', timeoutMs: 2000 });
+    const searches = mock.requests.filter((r) => r.path === '/search');
+    expect(searches.map((r) => r.term).sort()).toEqual([...ANIME_TERMS].sort());
+    for (const r of searches) expect(r.query?.attribute).toBeUndefined();
+    expect(tracks.length).toBeGreaterThanOrEqual(12);
+    expect(tracks.some((t) => /soundtrack|原聲|サウンドトラック/i.test(t.collectionName ?? ''))).toBe(true);
+    expect(tracks.some((t) => /cover|カバー/i.test(`${t.trackName} ${t.collectionName ?? ''}`))).toBe(true);
+    for (const t of tracks) {
+      expect(t.previewUrl).toBe(`${mock.url}/preview/${t.trackId}.m4a`);
+      expect(t.trackTimeMillis).toBe(1234);
+    }
+  });
+
+  it.each(ANIME_TERMS)('failTerm「%s」→ 該關鍵字回 500 → CHART_FAILED', async (term) => {
+    mock = await startMock({ failTerm: term });
+    await expect(animePool({ url: mock.url, country: 'TW', timeoutMs: 2000 })).rejects.toMatchObject({
+      code: 'CHART_FAILED',
+      reason: `search ${term} HTTP 500`,
+    });
+  });
+});
+
+describe('createItunesClient.animePool：快取（鍵 anime）', () => {
+  const config = { ...BASE, cacheMs: 600_000 };
+
+  it('時效內只打一次（三次請求）；過期後重打；log 記筆數與是否命中', async () => {
+    const { fetch, urls } = animeFetch();
+    let now = 0;
+    const logs: AnimeLogInfo[] = [];
+    const client = createItunesClient(config, { fetch, now: () => now, onAnime: (i) => logs.push(i) });
+    const first = await client.animePool();
+    now = 599_999;
+    expect(await client.animePool()).toBe(first);
+    expect(urls).toHaveLength(3);
+    expect(client.animeCacheSize()).toBe(1);
+    expect(client.cacheSize()).toBe(0);
+    expect(client.chartCacheSize()).toBe(0);
+    expect(logs.map((l) => l.cached)).toEqual([false, true]);
+    expect(logs[0]).toMatchObject({ count: 49, cached: false });
+    now = 600_000;
+    await client.animePool();
+    expect(urls).toHaveLength(6);
+    expect(ANIME_CACHE_KEY).toBe('anime');
+  });
+
+  it('與歌手搜尋分開快取：歌手「anime」不會命中動漫熱門的快取', async () => {
+    const urls: string[] = [];
+    const fetch: FetchLike = (url, init) => {
+      urls.push(url);
+      return new URL(url).searchParams.has('attribute')
+        ? Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"resultCount":0,"results":[]}') })
+        : animeFetch().fetch(url, init);
+    };
+    const client = createItunesClient(config, { fetch, now: () => 0 });
+    await client.animePool();
+    expect(await client.search('anime')).toEqual([]);
+    expect(urls).toHaveLength(4);
+    expect(client.cacheSize()).toBe(1);
+    expect(client.animeCacheSize()).toBe(1);
+  });
+
+  it('失敗不快取：下一次三個關鍵字全部重打；log 帶原因', async () => {
+    let fail = true;
+    const urls: string[] = [];
+    const ok = animeFetch();
+    const fetch: FetchLike = (url, init) => {
+      urls.push(url);
+      if (fail && termOf(url) === '動漫') return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve('') });
+      return ok.fetch(url, init);
+    };
+    const logs: AnimeLogInfo[] = [];
+    const client = createItunesClient(config, { fetch, now: () => 0, onAnime: (i) => logs.push(i) });
+    await expect(client.animePool()).rejects.toBeInstanceOf(ItunesChartError);
+    expect(client.animeCacheSize()).toBe(0);
+    fail = false;
+    expect(await client.animePool()).toHaveLength(49);
+    expect(urls).toHaveLength(6);
+    expect(logs[0]).toMatchObject({ cached: false, reason: 'search 動漫 HTTP 503' });
+    expect(logs[0]?.count).toBeUndefined();
+  });
+
+  it('進行中又來一次 → 共用同一次請求（不重打三次）', async () => {
+    const releases: (() => void)[] = [];
+    const urls: string[] = [];
+    const fetch: FetchLike = (url) => {
+      urls.push(url);
+      const body = animeFixtureBody(termOf(url) as AnimeFixtureTerm);
+      return new Promise((resolve) => {
+        releases.push(() => resolve({ ok: true, status: 200, text: () => Promise.resolve(body) }));
+      });
+    };
+    const client = createItunesClient(config, { fetch, now: () => 0 });
+    const a = client.animePool();
+    const b = client.animePool();
+    expect(b).toBe(a);
+    expect(urls).toHaveLength(3);
+    for (const release of releases) release();
+    expect(await a).toBe(await b);
+    expect(urls).toHaveLength(3);
+  });
+
+  it('cacheMs 為 0 → 不快取', async () => {
+    const { fetch, urls } = animeFetch();
+    const client = createItunesClient({ ...config, cacheMs: 0 }, { fetch, now: () => 0 });
+    await client.animePool();
+    await client.animePool();
+    expect(urls).toHaveLength(6);
   });
 });

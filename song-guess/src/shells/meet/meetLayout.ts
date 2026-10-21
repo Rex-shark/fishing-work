@@ -191,8 +191,8 @@ export function meetDialogButtonLabel(purpose: DialogPurpose, index: number, lab
 }
 
 /**
- * 題庫來源三選一（segmented）的方向鍵：←↑ 上一個、→↓ 下一個（頭尾循環）、Home／End 第一個／最後一個；其餘鍵回 null。
- * current < 0（沒有選中）時 → 從第一個開始
+ * 題庫來源四選一（segmented）的方向鍵：←↑ 上一個、→↓ 下一個（頭尾循環）、Home／End 第一個／最後一個；其餘鍵回 null。
+ * current < 0（沒有選中）時 → 從第一個開始。換成兩列（segmentedGroupClass）時順序不變：左上→右上→左下→右下，↑↓ 也照這個順序走
  */
 export function choiceKeyTarget(key: string, current: number, count: number): number | null {
   if (count <= 0) return null
@@ -211,6 +211,25 @@ export function choiceKeyTarget(key: string, current: number, count: number): nu
     default:
       return null
   }
+}
+
+/**
+ * segmented 一列最多放幾個選項：超過時（Epic 19 起四選一）窄的對話框會換成兩列（2×2）。
+ * 三個以內的選項文字短（「歌手／台灣熱門／西洋熱門」），375px 寬一列放得下，維持原樣
+ */
+export const SEGMENTED_SINGLE_ROW_MAX = 3
+
+/**
+ * segmented（role="radiogroup"）的 class：以外層容器（@container，對話框內文寬）判斷，不看視窗寬——對話框置中於 tile，tile 比視窗窄。
+ *   選項 ≤ SEGMENTED_SINGLE_ROW_MAX：一列膠囊（rounded-full）。
+ *   選項更多：容器 < 340px（375px 手機的白卡片內文約 295px；四個選項一列至少要約 300px，「台灣熱門」4 字＋左右 8px）→ 兩欄 grid（2×2，圓角 18px）；
+ *     ≥ 340px（桌機 420px 卡片內文 372px）→ 一列膠囊。只用 CSS 換列，DOM 順序（＝方向鍵順序）不變。
+ * Tailwind 掃描原始碼取 class，所以這裡寫完整字串，不拼接數字
+ */
+export function segmentedGroupClass(count: number): string {
+  const base = 'border border-border-panel p-[2px]'
+  if (count <= SEGMENTED_SINGLE_ROW_MAX) return `flex rounded-full ${base}`
+  return `grid grid-cols-2 gap-[2px] rounded-[18px] ${base} @min-[340px]:flex @min-[340px]:gap-0 @min-[340px]:rounded-full`
 }
 
 /**

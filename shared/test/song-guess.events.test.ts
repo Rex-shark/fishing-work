@@ -131,9 +131,13 @@ describe('song-guess 契約（型別層）', () => {
     expect(bad).toBe('TOPIC_INVALID');
   });
 
-  it('SongSource 只有 artist／tw-hot／western-hot；SongSourcePayload 依 source 區分欄位（Epic 18）', () => {
-    const sources: SongSource[] = ['artist', 'tw-hot', 'western-hot'];
-    expect(sources).toHaveLength(3);
+  it('SongSource 只有 artist／tw-hot／western-hot／anime-hot；SongSourcePayload 依 source 區分欄位（Epic 18／19）', () => {
+    // 2026-10-20 Epic 19：加 'anime-hot'（動漫熱門）
+    const sources: SongSource[] = ['artist', 'tw-hot', 'western-hot', 'anime-hot'];
+    expect(sources).toHaveLength(4);
+    // 窮舉檢查：SongSource 多一個或少一個值都會編譯失敗
+    const all: Record<SongSource, true> = { artist: true, 'tw-hot': true, 'western-hot': true, 'anime-hot': true };
+    expect(Object.keys(all).sort()).toEqual([...sources].sort());
     // @ts-expect-error 英國榜不在本 Epic
     const bad: SongSource = 'uk-hot';
     expect(bad).toBe('uk-hot');
@@ -142,6 +146,7 @@ describe('song-guess 契約（型別層）', () => {
       { source: 'artist', artist: '周杰倫', hot: true },
       { source: 'tw-hot' },
       { source: 'western-hot' },
+      { source: 'anime-hot' },
     ];
     expect(payloads.map((p) => p.source)).toEqual(sources);
     // @ts-expect-error 歌手模式的 hot 為必填
@@ -150,6 +155,9 @@ describe('song-guess 契約（型別層）', () => {
     // @ts-expect-error 榜單模式不帶歌手名
     const chartWithArtist: SongSourcePayload = { source: 'tw-hot', artist: '周杰倫' };
     expect(chartWithArtist.source).toBe('tw-hot');
+    // @ts-expect-error 動漫熱門沒有選項（不帶 hot）
+    const animeWithHot: SongSourcePayload = { source: 'anime-hot', hot: true };
+    expect(animeWithHot.source).toBe('anime-hot');
   });
 
   it('PlayerPublic 帶 gameScore、isSetter、hasGuessed（皆必填）', () => {
@@ -239,17 +247,21 @@ describe('song-guess 契約（型別層）', () => {
 
   it("ClientToServerEvents：'round:setSource' 的 ack 帶 topic；事件名共五個（Epic 18 由 setArtist 改名）", () => {
     const acks: Ack<{ topic: string }>[] = [];
+    // 2026-10-20 Epic 19：CHART_FAILED 文案改通用「取得題庫失敗」；加動漫熱門
     const setSource: ClientToServerEvents['round:setSource'] = (payload, ack) => {
-      ack({ ok: true, data: { topic: payload.source === 'artist' ? payload.artist : '台灣熱門' } });
-      ack({ ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' });
+      ack({ ok: true, data: { topic: payload.source === 'artist' ? payload.artist : payload.source === 'anime-hot' ? '動漫熱門' : '台灣熱門' } });
+      ack({ ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' });
     };
     setSource({ source: 'artist', artist: '孫燕姿', hot: true }, (r) => acks.push(r));
     setSource({ source: 'tw-hot' }, (r) => acks.push(r));
+    setSource({ source: 'anime-hot' }, (r) => acks.push(r));
     expect(acks).toEqual([
       { ok: true, data: { topic: '孫燕姿' } },
-      { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' },
+      { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' },
       { ok: true, data: { topic: '台灣熱門' } },
-      { ok: false, error: 'CHART_FAILED', message: '取得排行榜失敗，請再試一次' },
+      { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' },
+      { ok: true, data: { topic: '動漫熱門' } },
+      { ok: false, error: 'CHART_FAILED', message: '取得題庫失敗，請再試一次' },
     ]);
 
     const names: Record<keyof ClientToServerEvents, true> = {
