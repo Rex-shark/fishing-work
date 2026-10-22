@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本檔提供 Claude Code 在此 repo 工作時的核心指引。**主檔保持精簡**，只放本專案特有的資訊；跨專案通用的工作規則（計畫驅動、狀態符號、plan／spec／user 目錄慣例、agent 撰寫原則）定義在全域 skill `project-structure`（`~/.claude/skills/project-structure/SKILL.md`），其鋪設到本專案的版本為 [plan/README.md](plan/README.md)，不在此重複。Git 不自動 commit，由 Rex 自行 commit。
+本檔提供 Claude Code 在此 repo 工作時的核心指引。**主檔保持精簡**，只放本專案特有的資訊；跨專案通用的工作規則（計畫驅動、狀態符號、plan／spec／user 目錄慣例、agent 撰寫原則）定義在本專案 skill `project-structure`（[.claude/skills/project-structure/SKILL.md](.claude/skills/project-structure/SKILL.md)；2026-10-22 由使用者層級搬進專案，隨 repo 版控），其鋪設到本專案的版本為 [plan/README.md](plan/README.md)，不在此重複。Git 不自動 commit，由 Rex 自行 commit。
 
 ## 語言規則
 
@@ -44,6 +44,7 @@ fishing-work/
 │   └── sql/                # 手動 SQL（本專案無資料庫，暫不使用）
 └── .claude/
     ├── launch.json         # 內建瀏覽器預覽設定（draw-guess-built：PORT=3181 跑建置版，驗收用）
+    ├── skills/project-structure/  # Rex 的專案結構與工作流程 skill（plan／spec／user 慣例與範本；2026-10-22 自使用者層級搬入）
     ├── skills/ui-ux-pro-max/  # UI/UX 設計指引資料庫（風格、配色、字型、UX 準則）
     └── team/ROSTER.md      # session 分工名冊（身分由 hook 注入，不寫在本檔）
 ```
@@ -143,6 +144,7 @@ docker compose up -d --build   # Docker 部署（Epic 9，換電腦用）：建�
 
 | 技能 | 功能 | 使用時機 |
 |------|------|----------|
+| `project-structure` | Rex 慣用的專案結構與工作流程：plan／spec／user 目錄、計畫驅動開發、狀態符號、DESIGN.md 規格；含 plan／spec／user 範本（`assets/`）與 design.md 規格說明（`reference/`） | 新專案初始化、套用結構、或查工作流程慣例時；原為使用者層級，2026-10-22 搬進本專案 |
 | `ui-ux-pro-max` | UI/UX 設計指引資料庫：風格、配色、字型配對、UX 準則、圖表類型，依技術棧給優先建議（Python 腳本查詢） | 設計任何畫面、元件、樣式之前；與 `DESIGN.md` 搭配使用 |
 
 ---
