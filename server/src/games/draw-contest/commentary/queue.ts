@@ -18,14 +18,21 @@
 import type { CommentMode } from '@fishing-work/shared/draw-contest';
 import type { Clock, TimerHandle } from '../room';
 
-/** 送給評語器的資料（§6.1、Epic 15 決策 4）：交卷原圖、題目、該張最終分數；不給暱稱與名次 */
+/**
+ * 送給評語器的資料（§6.1、Epic 15 決策 4）：交卷原圖、題目、該張最終分數、參賽者暱稱；不給名次。
+ * 暱稱 2026-10-21 起給（Phase 7 決策 18，Rex：嘗試看看模型會不會利用名稱）。
+ */
 export interface CommentInput {
   png: Buffer;
   topic: string;
+  /** 該玩家建評語輸入當下的暱稱（已過 validateNickname，不另過濾；Phase 7） */
+  nickname: string;
   /** 該張的最終分數 0..SCORE_MAX（Clef 失敗退回 random 時就是 random 的分數） */
   score: number;
   /** true = 第一名稱讚版（§6.1，Phase 4）：user 提示詞改用稱讚版；只有 ended 時的第一名重做會帶，其餘一律不帶 */
   praise?: boolean;
+  /** Epic 20 像不像比賽：本回合參考圖 JPEG；有值時 images 為 [參考圖, 交卷 PNG]、user 文案改 mimic 版（§6.1） */
+  reference?: Buffer;
 }
 
 /** 評語器：回傳後處理過的一句評語；失敗以 reject 表示，回空字串（或非字串）由佇列視為失敗 */

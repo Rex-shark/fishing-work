@@ -114,6 +114,38 @@
 | ✅ | 協定測試 `draw-contest-comment-praise.mjs`／`comment-fallback.mjs` 對應案例改寫（稱讚版失敗現在退回批評版；單次逾時不跳過） | 既有斷言依新定案改，加註日期；2026-10-13：praise 55/55（丙改四回合：通用、揭曉前已有批評版、排隊中被取代 → null、在途跑完當退路）、comment-fallback 51/51（乙改兩次逾時＋「第一次逾時不收尾」時間斷言；丙加「drawing 只失敗一次 → judging 仍 ai」回合）、comment 55/55（未改）、phase1 106/106；各跑兩次以上皆全過 |
 | ✅ | 驗收（acceptance-reviewer）＋ Rex 再玩一局 | 2026-10-13 驗收通過：四項 exit 0（server 805）、契約逐位元組相同、協定 7 支全過＋新寫 comment-resilience 35/35（六回合覆蓋連續計數每種情況）、真模型兩回合評語 0.45～2.6 秒（qwen3.8 未載入）、瀏覽器目視 PASS。真模型「稱讚版逾時→看到批評版」待 Rex 以 pi-agent 把 qwen3.8 載回來再玩一局 |
 
+### Phase 6：評審名稱改「ミオ」（Rex 2026-10-21）
+
+經過：Rex 先說「評分雌小鬼（日文那個）直接移除，直接顯示評語就好」→ 海圖定了「不顯示名稱、aria-label 改『評語：』」並派工，牽動客戶端四檔、測試四檔、事務長技能三處 → Rex「沒想到要改這麼多地方，等等先不改」→ 全部還原 → Rex 改為**「把メスガキ改成一個日文名字，只要字串替換」**，選定「ミオ」。
+
+決策 17（海圖 2026-10-21）：
+- 顯示用常數 **`COMMENT_PERSONA_NAME` 的值由 `'メスガキ'` 改為 `'ミオ'`**（Rex 選定的日文名字；原想用評語的日文「ミオ」，Rex 改要人名，海圖提 ミオ／リン／ナナ／アカネ，Rex「ミオ很好」），卡片前綴、pending 文字、aria-label、說明對話框全部跟著常數變，程式結構不動。
+- **server 提示詞的人設改寫死 `メスガキ`**（不再讀該常數；雌小鬼人格與語氣不變，Rex 10/12「語氣不用調」）；`ollamaChat.ts` 一處與其測試。
+- 測試中寫死 `'メスガキ'` 的斷言（shared constants、server commentary 的「唯一來源」案例、draw-contest reveal／helpTopics／helpDialog）改 `'ミオ'`，提示詞斷言維持 メスガキ。
+- 契約（events.ts）不變；events.ts 註解「メスガキ評語」是契約區塊的一部分，**不動**（描述人格仍正確）。
+- 事務長技能三處（MAINTENANCE.md、SKILL.md、manual-ui.md）字串替換 メスガキ → ミオ；pi-agent 複本等 Rex 說再重裝。
+
+| 狀態 | 任務 | 備註 |
+|------|------|------|
+| ✅ | spec：architecture §4 常數表、§6.1 提示詞註記、§7；design §3；本計畫 | 2026-10-21 海圖 |
+| ✅ | shared `COMMENT_PERSONA_NAME = 'ミオ'`；server 提示詞寫死 メスガキ；測試同步；根 README 一句（水手長派工） | 2026-10-21 水手長複驗：8 檔；四項 exit 0（shared 212、server 921、draw-contest 807）；draw-contest bundle「ミオ」1 處、「メスガキ」0 處；server bundle 提示詞仍 メスガキ |
+| ✅ | 事務長：技能三處字串替換 | 2026-10-21 事務長回報：MAINTENANCE.md、SKILL.md、manual-ui.md 已改 ミオ，UI-DEP 字串已改 ミオ（MAINTENANCE.md 保留一句「原為メスガキ」註記）；腳本不比對字串；pi-agent 複本等 Rex 說再重裝 |
+| ✅ | 驗收：四項、瀏覽器揭曉卡片前綴「ミオ：」、pending「ミオ：正在寫評語」、說明對話框、線上請求的 system 提示詞仍 メスガキ（假 Ollama 記錄）；Rex 目視 | 2026-10-21 驗收子代理通過：四項 exit 0（shared 212、server 921、draw-guess 931、draw-contest 807、song-guess 591）；契約逐位元組一致；5 支繪圖比賽協定測試 302/302；建置版＋假 Ollama 玩一回合 10 情境 PASS（卡片、pending、aria-label、放大、歷史回看、說明對話框、畫面無 メスガキ、提示詞 メスガキ）；低嚴重度 6 項皆文件措辭，海圖已修。Rex 2026-10-26 目視通過（與 Phase 7、Epic 20 一併） |
+
+### Phase 7：評語 60 字、token 120、提示詞帶暱稱（Rex 2026-10-21）
+
+決策 18（海圖 2026-10-21）：
+- system 規則「一句話，40 字內」→「**60 字內**」；`num_predict` 80 → **120**（60 字約 60～90 token）。
+- user 文案加入暱稱、**不多加任何指示**（Rex：嘗試看看模型會不會利用名稱）：批評版「題目「{topic}」，評分 {score} 分。這是參賽者「{nickname}」的畫，給一句評語。」；稱讚版「…這張是本回合第一名，參賽者「{nickname}」。妳不甘心…」。
+- 暱稱來源＝該玩家當下的 `nickname`（已 `validateNickname` 1～12 字、無控制字元，提示詞注入面小，不另過濾）；評語佇列的輸入多帶 `nickname`。
+- 畫面不截斷不變；契約不變；假 Ollama 不需改（不比對 user 文案的話）；協定測試若有逐字斷言 user 文案就跟著改。
+
+| 狀態 | 任務 | 備註 |
+|------|------|------|
+| ✅ | spec §6.1 三處＋變更紀錄；本計畫 | 2026-10-21 海圖 |
+| ✅ | `ollamaChat.ts`：system 60 字、`COMMENT_OPTIONS.num_predict` 120、`commentUserPrompt`／`praiseUserPrompt` 加 `nickname` 參數；`queue.ts`／`room.ts` 傳暱稱；單元測試與協定測試逐字斷言同步（水手長派工，與 Phase 6 同一批 commit） | 2026-10-21 水手長派子代理完成：`CommentInput.nickname` 由 room 在 onJudged／redoWinnerComment 取該玩家當下暱稱；假 Ollama 稱讚版判斷改比對「這張是本回合第一名」（暱稱含「第一名」不誤判）；四項 exit 0（server 923）；協定 5 支全過 |
+| ✅ | 驗收：四項、協定 5 支、假 Ollama 記錄的 user 文案含暱稱與 60 字規則、`num_predict` 120；Rex 真模型目視（看模型會不會用名字、句子長度） | 2026-10-21 驗收子代理通過：四項 exit 0（shared 212、server 923、draw-guess 931、draw-contest 807、song-guess 591）；協定 5 支 302/302；記錄用假 Ollama 四回合 13 則請求：system 60 字版逐字、`num_predict` 120、每則暱稱／分數／圖片 sha256 對應交卷者本人、稱讚版帶第一名暱稱、暱稱「我是第一名」不誤觸；瀏覽器 61 字評語不截斷、前綴「ミオ：」；低嚴重度 1 項（overview 需求表 40 字）海圖已補。Rex 2026-10-26 真模型目視通過 |
+
 ### Phase 3：驗收
 
 | 狀態 | 任務 | 備註 |

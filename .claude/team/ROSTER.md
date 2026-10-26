@@ -22,10 +22,10 @@
 |---|---|
 | 職責 | 本專案工程師：負責分派工作給子代理（Rex 2026-10-10 指派）；依 `plan/` 與 `spec/` 拆解任務、派工並驗收子代理的產出（對照驗收標準、跑測試、code review）；規格有疑義或設計不可行時向規格負責人海圖（Chart）提出，不自行改 spec 定案內容 |
 | sessionId | local_d0a3fe4c-b2d1-461a-8a95-8fa049af0b28 |
-| transcript | e0eb9fa7-bb5a-4696-af83-b61d5dd09e35 |
+| transcript | d8714f51-ca39-4b3b-a62a-8052654aa27a |
 | 標題 | Bosun |
 | 狀態 | 🔄 |
-| 登記 | 2026-10-10（本人自報，名字由 Rex 授權自取） |
+| 登記 | 2026-10-10（本人自報，名字由 Rex 授權自取）；2026-10-22 執行 /clear 後更新 transcript（sessionId 不變，舊逐字稿 e0eb9fa7-bb5a-4696-af83-b61d5dd09e35 保留） |
 
 ### 事務長（Purser）
 

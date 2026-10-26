@@ -27,8 +27,14 @@ describe('常數值與 spec 表一致', () => {
     expect(dc.SCORE_MAX).toBe(100);
   });
 
+  it('參考圖上限（Epic 20）：MAX_REFERENCE_BYTES 2 MiB，且從 draw-contest 入口匯出', () => {
+    expect(dc.MAX_REFERENCE_BYTES).toBe(2_097_152);
+    expect(dc.MAX_REFERENCE_BYTES).toBe(2 * 1024 * 1024);
+    expect(entry.MAX_REFERENCE_BYTES).toBe(dc.MAX_REFERENCE_BYTES);
+  });
+
   it('評審名稱（Epic 15）：COMMENT_PERSONA_NAME 為唯一來源，且從 draw-contest 入口匯出', () => {
-    expect(dc.COMMENT_PERSONA_NAME).toBe('メスガキ');
+    expect(dc.COMMENT_PERSONA_NAME).toBe('ミオ'); // 2026-10-21 由 メスガキ 改（只影響客戶端顯示）
     expect(entry.COMMENT_PERSONA_NAME).toBe(dc.COMMENT_PERSONA_NAME);
   });
 
@@ -45,7 +51,7 @@ describe('常數值與 spec 表一致', () => {
         'NICKNAME_MAX', 'TOPIC_MAX', 'CHAT_MAX', 'CHAT_HISTORY', 'CHAT_MIN_INTERVAL_MS',
         'RECONNECT_GRACE_SECONDS', 'CANVAS_LOGICAL', 'CANVAS_BACKGROUND', 'MAX_SUBMISSION_BYTES',
         'SCORE_MAX', 'BRUSH_MIN', 'BRUSH_MAX', 'BRUSH_DEFAULT', 'PALETTE', 'COLOR_PATTERN',
-        'COMMENT_PERSONA_NAME',
+        'COMMENT_PERSONA_NAME', 'MAX_REFERENCE_BYTES',
       ].sort(),
     );
   });

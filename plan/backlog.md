@@ -18,6 +18,7 @@
 
 | 狀態 | Epic | 起訖 | 詳細 |
 |------|------|------|------|
+| ✅ | Epic 20：繪圖比賽「像不像比賽」模式 | 2026-10-26 ~ 2026-10-26 | [contest-mimic.md](contest-mimic.md)：出題附參考圖（選填，客戶端縮成 JPEG）即為像不像比賽；Clef 同時看參考圖與作品打相似度（0.9）＋完成度（0.1）；作畫中浮動參考圖面板、揭曉第一格參考圖、評語看兩張、歷史存參考圖；契約加 `mode`／`contest:reference`。水手長實作、acceptance-reviewer 驗收通過（協定 9 檔＋新寫 mimic-extra、真 Clef 臨摹 84／亂畫 9）、375px 版面補修、Rex 實測通過；事務長技能預改完成 |
 | ✅ | Epic 19：猜歌「動漫熱門」來源 | 2026-10-20 ~ 2026-10-21 | [song-guess-anime.md](song-guess-anime.md)：第四個題庫來源，無選項；anime／アニメ／動漫 三關鍵字搜 iTunes 聯集、排除原聲帶／翻唱、依 Apple 排序前 60 首抽 5；`SongSource` 加 `'anime-hot'`。水手長實作、acceptance-reviewer 驗收通過（含真 Apple 一局名次重算、排除規則 29 案例、新協定測試 anime-extra）、Rex 實測通過；排除關鍵字補 acoustic／orchestral／karaoke |
 | ✅ | Epic 18：猜歌題庫來源（歌手熱門、台灣熱門、西洋熱門） | 2026-10-16 ~ 2026-10-19 | [song-guess-sources.md](song-guess-sources.md)：出題對話框三選一；歌手模式加「只抽熱門歌」預設勾（iTunes 搜尋順序即熱門度，取前 30 首抽）；台灣熱門／西洋熱門（美國榜）從 Apple Music most-played 100 ＋ lookup 補試聽隨機抽 5；`round:setArtist` → `round:setSource`、`RoundPublic.topic`、`SongPublic.artist`。水手長實作、acceptance-reviewer 驗收通過（含真 Apple 三局、窄螢幕、新協定測試 sources-extra）、Rex 實測通過；順帶修 ended 沒人猜對時字幕列與報讀文案；RSS 逾時獨立 12 秒、ack 25 秒；Rex 定榜單不排除 explicit |
 | ✅ | Epic 17：繪圖比賽歷史（最近 5 場，只存瀏覽器） | 2026-10-13 ~ 2026-10-14 | [contest-history.md](contest-history.md)：揭曉後把畫、分數、排名、評語存進 IndexedDB（最近 5 場、超過刪最舊、不同步）；入口「檔案 › 開啟最近的簡報」，重用投影片瀏覽畫廊；純客戶端，契約不變。水手長實作、acceptance-reviewer 驗收通過（含 IndexedDB 不可用、多分頁）、Rex 實測通過 |

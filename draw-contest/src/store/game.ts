@@ -4,6 +4,8 @@
 //   gallery（揭曉畫廊：playerId → PNG 的 object URL；收到 contest:gallery 且 roundNo 相符才建，新回合開始時全部 revoke）。
 // 評語（Epic 15；architecture §4、§5）：round.results 每筆的 comment／commentPending 以 server 為準（快照與 round:update 直接採用），
 //   揭曉後才完成的評語由 contest:comment 補進 results（applyComment）。
+// 參考圖（Epic 20 像不像比賽；architecture §4、§5.1b、§7）：收到 contest:reference 建 JPEG 的 object URL（reference），以 roundNo 配對；
+//   廣播與 round:update 的先後不定，所以 roundNo ≥ 目前回合就收下，顯示時才比對回合（selectReferenceUrl）；新回合、換了回合的快照、reset 時 revoke。
 import { create } from 'zustand'
 import {
   BRUSH_DEFAULT,
@@ -12,6 +14,7 @@ import {
   type CommentUpdate,
   type GalleryImage,
   type PlayerPublic,
+  type ReferenceImage,
   type RoomSnapshot,
   type RoundPublic,
 } from '@fishing-work/shared/draw-contest'
@@ -50,6 +53,12 @@ export interface MyCanvas {
   version: number
 }
 
+/** 參考圖（Epic 20）：哪一回合的、JPEG 的 object URL */
+export interface ReferenceState {
+  roundNo: number
+  url: string
+}
+
 export interface GameState {
   /** 自己的 player id（server 產生的穩定 id，不是 socket.id）；未加入為 null */
   me: string | null
@@ -68,6 +77,11 @@ export interface GameState {
    * 只收 roundNo 等於目前 round.roundNo 的圖；新回合 drawing 開始（roundNo 變大）、換了回合的快照、reset 時全部 revoke 並清空
    */
   gallery: Map<string, string>
+  /**
+   * 像不像比賽的參考圖（Epic 20）：收到 contest:reference 時建 object URL；同時只留一張（後到的換掉前一張並 revoke）。
+   * 新回合開始時，比新回合舊的那張 revoke；換了回合的快照、reset 時 revoke
+   */
+  reference: ReferenceState | null
   connection: ConnectionState
   /** 首頁要顯示的錯誤（加入失敗、自動重加入失敗、被其他連線接手） */
   joinError: string | null
@@ -97,6 +111,11 @@ export interface GameActions {
    * 把該玩家那筆的 comment 填入（失敗為 null）、commentPending 設 false；回合不符、尚無 results、找不到該玩家都忽略
    */
   applyComment(update: CommentUpdate): void
+  /**
+   * 收到 contest:reference（Epic 20）：roundNo 不小於目前回合才收（廣播可能比 round:update 早到），建 JPEG 的 object URL；
+   * 舊的那張 revoke。bytes 空或型別不對忽略
+   */
+  setReference(image: ReferenceImage): void
   setSubmitting(value: boolean): void
   /** 交卷成功（ack ok） */
   markSubmitted(): void
@@ -113,6 +132,7 @@ export const initialRound: RoundPublic = {
   phase: 'idle',
   setterId: null,
   topic: null,
+  mode: null,
   startedAt: null,
   endsAt: null,
   participantIds: [],
@@ -122,6 +142,7 @@ export const initialRound: RoundPublic = {
   commentMode: null,
   results: null,
   lastTopic: null,
+  lastMode: null,
 }
 
 /** 自己是否為本回合出題者 */
@@ -146,6 +167,17 @@ export const selectShowCanvas = (s: Pick<GameState, 'me' | 'round'>): boolean =>
 export const selectShowReveal = (s: Pick<GameState, 'round'>): boolean =>
   (s.round.phase === 'idle' || s.round.phase === 'ended') && s.round.results !== null
 
+/**
+ * 參考圖要顯示的 object URL（Epic 20）：手上那張正是目前回合的才算（揭曉後 idle／ended 的 roundNo 仍是 results 那一回合）；
+ * 沒有或不是這一回合的為 null。是否為像不像比賽看 round.mode／lastMode，不看這裡（圖可能還在路上）
+ */
+export const selectReferenceUrl = (s: Pick<GameState, 'round' | 'reference'>): string | null =>
+  s.reference !== null && s.reference.roundNo === s.round.roundNo ? s.reference.url : null
+
+/** 作畫中的參考圖面板（design §2）：本回合是像不像比賽且 drawing／judging；出題者、參賽者、旁觀者都看得到 */
+export const selectShowReferencePanel = (s: Pick<GameState, 'round'>): boolean =>
+  s.round.mode === 'mimic' && (s.round.phase === 'drawing' || s.round.phase === 'judging')
+
 /** 預設白筆（PALETTE[0]＝hsvToHex(0, 0, 100)） */
 export const initialBrush: Brush = { tool: 'pen', color: PALETTE[0], size: BRUSH_DEFAULT, hue: 0, sat: 0, val: 100 }
 
@@ -159,6 +191,7 @@ export const initialGameState: GameState = {
   submitted: false,
   submitting: false,
   gallery: new Map(),
+  reference: null,
   connection: 'disconnected',
   joinError: null,
   autoJoining: false,
@@ -168,6 +201,11 @@ export const initialGameState: GameState = {
 /** 釋放畫廊的所有 object URL */
 function revokeGallery(gallery: ReadonlyMap<string, string>): void {
   for (const url of gallery.values()) URL.revokeObjectURL(url)
+}
+
+/** 釋放參考圖的 object URL */
+function revokeReference(reference: ReferenceState | null): void {
+  if (reference !== null) URL.revokeObjectURL(reference.url)
 }
 
 /** players 裡自己的 submitted（找不到為 false） */
@@ -202,7 +240,10 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
   applySnapshot: (s) =>
     set((state) => {
       const sameRound = s.round.roundNo === state.round.roundNo && state.me !== null
-      if (!sameRound) revokeGallery(state.gallery)
+      if (!sameRound) {
+        revokeGallery(state.gallery)
+        revokeReference(state.reference)
+      }
       return {
         me: s.you,
         players: s.players,
@@ -212,6 +253,7 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
         submitted: (sameRound && state.submitted) || mySubmitted(s.players, s.you),
         submitting: sameRound ? state.submitting : false,
         gallery: sameRound ? state.gallery : new Map(),
+        reference: sameRound ? state.reference : null,
         joinError: null,
       }
     }),
@@ -223,12 +265,16 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
     set((state) => {
       if (!isNewRound(state.round, round)) return { round }
       revokeGallery(state.gallery)
+      // 參考圖的廣播可能比這則 round:update 早到：已是新回合（或更新）的那張留著
+      const keepReference = state.reference !== null && state.reference.roundNo >= round.roundNo
+      if (!keepReference) revokeReference(state.reference)
       return {
         round,
         myCanvas: { ops: [], version: state.myCanvas.version + 1 },
         submitted: false,
         submitting: false,
         gallery: new Map(),
+        reference: keepReference ? state.reference : null,
       }
     }),
 
@@ -288,6 +334,15 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
       return { round: { ...round, results } }
     }),
 
+  setReference: ({ roundNo, jpeg }) =>
+    set((state) => {
+      if (roundNo < state.round.roundNo) return state
+      const bytes = galleryBytes(jpeg)
+      if (bytes === null) return state
+      revokeReference(state.reference)
+      return { reference: { roundNo, url: URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' })) } }
+    }),
+
   setSubmitting: (submitting) => set({ submitting }),
 
   markSubmitted: () => set({ submitted: true }),
@@ -304,6 +359,7 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
   reset: (joinError = null) =>
     set((state) => {
       revokeGallery(state.gallery)
+      revokeReference(state.reference)
       return {
         me: null,
         players: [],
@@ -313,6 +369,7 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
         submitted: false,
         submitting: false,
         gallery: new Map(),
+        reference: null,
         autoJoining: false,
         resuming: false,
         joinError,

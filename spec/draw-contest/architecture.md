@@ -92,6 +92,8 @@ export type ContestPhase = 'idle' | 'choosing' | 'drawing' | 'judging' | 'ended'
 export type JudgeMode = 'ai' | 'random';
 /** Epic 15：本回合評語器；'off' = 環境變數關閉或本回合連續兩次失敗跳過 */
 export type CommentMode = 'ai' | 'off';
+/** Epic 20：回合模式；topic＝只有題目（現況）；mimic＝像不像比賽（出題附參考圖，評分為與參考圖的相似度） */
+export type ContestMode = 'topic' | 'mimic';
 
 export interface PlayerPublic {
   id: string;             // server 產生的穩定 id（重連接管後不變）
@@ -123,6 +125,7 @@ export interface RoundPublic {
   phase: ContestPhase;
   setterId: string | null;      // 出題者；idle 為 null
   topic: string | null;         // drawing 起所有人看得到；choosing 時尚未設定為 null
+  mode: ContestMode | null;     // Epic 20：drawing 起有值（setTopic 帶 reference → 'mimic'，否則 'topic'）；idle／choosing 為 null
   startedAt: number | null;     // drawing 開始 epoch ms
   endsAt: number | null;        // choosing：出題期限；drawing：交卷期限；其餘 null
   participantIds: string[];     // 本回合參賽者（drawing 開始時定案；寬限期滿離開者移除）
@@ -132,6 +135,7 @@ export interface RoundPublic {
   commentMode: CommentMode | null; // Epic 15：本回合評語器（judging 起；關閉或本回合失敗跳過後為 'off'）；生命週期同 judgeMode
   results: ResultEntry[] | null; // ended 才有；下一回合 drawing 開始時清空（idle／choosing 期間資料保留；畫面上 idle／ended 顯示畫廊，choosing 不顯示）
   lastTopic: string | null;     // results 對應的題目（揭曉畫面與中途加入者顯示用）；與 results 同生命週期
+  lastMode: ContestMode | null; // Epic 20：results 對應的模式；與 results 同生命週期
 }
 
 export type ChatKind = 'chat' | 'system';
@@ -160,10 +164,13 @@ export interface GalleryImage { roundNo: number; playerId: string; png: ArrayBuf
 /** Epic 15：一張畫的評語完成（成功為字串、失敗為 null）；只在 ended 之後才發，ended 前完成的直接寫進 results */
 export interface CommentUpdate { roundNo: number; playerId: string; comment: string | null }
 
+/** Epic 20：像不像比賽的參考圖（客戶端正規化後的 JPEG，長邊 ≤ 1280）；drawing 開始時廣播；join 時若 round.mode 為 mimic（本回合）或 results 非 null 且 lastMode 為 mimic（上回合）則補送 */
+export interface ReferenceImage { roundNo: number; jpeg: ArrayBuffer }
+
 export type ErrorCode =
   | 'NICKNAME_INVALID' | 'NICKNAME_TAKEN' | 'NOT_IN_ROOM' | 'ROOM_FULL'
   | 'ROUND_BUSY' | 'NOT_SETTER' | 'NOT_ENOUGH_PLAYERS' | 'TOPIC_INVALID'
-  | 'NOT_DRAWING' | 'NOT_PARTICIPANT' | 'ALREADY_SUBMITTED' | 'SUBMISSION_INVALID'
+  | 'NOT_DRAWING' | 'NOT_PARTICIPANT' | 'ALREADY_SUBMITTED' | 'SUBMISSION_INVALID' | 'REFERENCE_INVALID'
   | 'MESSAGE_INVALID' | 'RATE_LIMITED';
 
 export type Ack<T = void> =
@@ -174,8 +181,8 @@ export interface ClientToServerEvents {
   'player:join': (payload: { nickname: string; token?: string }, ack: (r: Ack<JoinResult>) => void) => void;
   /** 我出題：idle／ended 且在線 ≥ MIN_PLAYERS → choosing */
   'round:volunteer': (ack: (r: Ack) => void) => void;
-  /** 出題者送題 → drawing（參賽者＝此刻在線者） */
-  'round:setTopic': (payload: { topic: string }, ack: (r: Ack) => void) => void;
+  /** 出題者送題 → drawing（參賽者＝此刻在線者）；Epic 20：reference 為選填的參考圖（JPEG bytes，1..MAX_REFERENCE_BYTES），有 → 本回合 mode 'mimic' */
+  'round:setTopic': (payload: { topic: string; reference?: ArrayBuffer }, ack: (r: Ack) => void) => void;
   /** 出題者在 choosing 取消 → idle */
   'round:cancel': (ack: (r: Ack) => void) => void;
   /** 交卷：drawing（或 endsAt 後 SUBMIT_GRACE_SECONDS 內）、參賽者、每回合一次；png 為 PNG 檔 bytes */
@@ -188,6 +195,8 @@ export interface ServerToClientEvents {
   'round:update': (round: RoundPublic) => void;
   /** 揭曉：每位交卷者一則（ended 時廣播；join 時若 results 非 null 則補送） */
   'contest:gallery': (image: GalleryImage) => void;
+  /** Epic 20：mimic 回合的參考圖；drawing 開始時廣播給所有在線者，join 時依 ReferenceImage 註解補送 */
+  'contest:reference': (image: ReferenceImage) => void;
   /** Epic 15：ended 後評語陸續完成時廣播；收到即把 results 該筆的 comment 填入、commentPending 設 false */
   'contest:comment': (update: CommentUpdate) => void;
   'chat:message': (message: ChatMessage) => void;
@@ -196,12 +205,12 @@ export interface ServerToClientEvents {
 
 ### 常數（`shared/src/draw-contest/constants.ts`）
 
-> Epic 15 新增：`COMMENT_PERSONA_NAME = 'メスガキ'`（評審名稱唯一來源：server 提示詞與揭曉卡片都讀它；Rex 2026-10-12 定名）。
+> Epic 15 新增：`COMMENT_PERSONA_NAME = 'メスガキ'`（Rex 2026-10-12 定名）。**2026-10-21 起值改為 `'ミオ'`**（Rex 2026-10-21 選定的日文名；原想用評語的日文「コメント」，Rex 改要「一個日文名字」，海圖提 ミオ／リン／ナナ／アカネ，Rex 選 ミオ；只做字串替換），只給客戶端顯示（卡片前綴、pending、aria-label、說明對話框）；server 提示詞的人設改寫死 `メスガキ`，人格不變（plan/contest-commentary.md Phase 6）。
 
 | 常數 | 值 | 說明 |
 |------|----|------|
 | `DRAW_SECONDS` | 120 | 作畫時間（秒）；唯一來源，README／說明文字由此推導 |
-| `COMMENT_PERSONA_NAME` | `'メスガキ'` | Epic 15 評審名稱；server 提示詞與揭曉卡片前綴都讀它 |
+| `COMMENT_PERSONA_NAME` | `'ミオ'` | 揭曉卡片評語行前綴（原 `'メスガキ'`，2026-10-21 改）；**server 提示詞不讀它**，人設寫死 メスガキ |
 | `CHOOSING_SECONDS` | 60 | 出題期限 |
 | `SUBMIT_GRACE_SECONDS` | 5 | endsAt 後仍接受交卷的寬限（自動交卷在途） |
 | `MIN_PLAYERS` | 2 | 我出題所需在線人數 |
@@ -215,6 +224,7 @@ export interface ServerToClientEvents {
 | `CANVAS_LOGICAL` | `{ width: 1280, height: 720 }` | 邏輯畫布；交卷 PNG 即此尺寸 |
 | `CANVAS_BACKGROUND` | `'#1E1E1E'` | 畫布預設底色（與我畫你猜一致） |
 | `MAX_SUBMISSION_BYTES` | 2_097_152 | 交卷 PNG 上限（2 MiB；線條畫通常 < 100 KB）；Socket.IO `maxHttpBufferSize` 以此 + 64 KiB |
+| `MAX_REFERENCE_BYTES` | 2_097_152 | Epic 20 參考圖 JPEG 上限（2 MiB；客戶端已縮到長邊 ≤ 1280、品質 0.9，通常 100～400 KB） |
 | `SCORE_MAX` | 100 | 單回合滿分 |
 | `BRUSH_MIN`／`BRUSH_MAX`／`BRUSH_DEFAULT` | 1／64／4 | 同我畫你猜 |
 | `PALETTE`／`COLOR_PATTERN` | 同我畫你猜 | 色塊與色碼格式 |
@@ -230,17 +240,17 @@ idle ──volunteer（在線≥2）──▶ choosing ──setTopic──▶ d
 ```
 
 - **choosing**：`setterId`、`endsAt = now + CHOOSING_SECONDS`。逾時、`round:cancel`、出題者寬限期滿離開 → `idle`（`results` 保留）。
-- **drawing**：`roundNo++`、`topic`、`startedAt`、`endsAt = now + DRAW_SECONDS`、`participantIds = 此刻 connected 的玩家`（含出題者）、`results = null`、清掉上回合的交卷與畫廊。`players.participating／submitted` 同步更新。
+- **drawing**：`roundNo++`、`topic`、`mode`（Epic 20：payload 有合法 `reference` → `'mimic'`，否則 `'topic'`；mimic 時存下參考圖 bytes 並對所有在線者廣播 `contest:reference`）、`startedAt`、`endsAt = now + DRAW_SECONDS`、`participantIds = 此刻 connected 的玩家`（含出題者）、`results = null`、清掉上回合的交卷與畫廊。`players.participating／submitted` 同步更新。
 - **交卷** `contest:submit`：須 phase 為 `drawing`，或 `judging` 且 `now ≤ endsAt + SUBMIT_GRACE_SECONDS`；須為參賽者；每回合一次（`ALREADY_SUBMITTED`）；PNG 驗證見 §5.1。成功 → 存入 submissions、`submittedCount++`、排進評分佇列、`players:update`、`round:update`。所有參賽者都交卷 → 立即 `judging`。
 - **judging**：`judgeMode` 設為目前評分器模式。佇列一次一張；每張完成 `judgedCount++` 並 `round:update`。`endsAt + SUBMIT_GRACE_SECONDS` 過後不再收交卷；未交卷者視為 0 分。**佇列清空，且（所有參賽者都已交卷 或 `now > endsAt + SUBMIT_GRACE_SECONDS`）** → `ended`（全員提前交卷時不等寬限；2026-10-07 帆指出原文矛盾後修正）。
-- **ended**：計算 `results`（§5.2）、總分累加、廣播 `round:update` 與每張 `contest:gallery`。無計時器。`round:volunteer` 可用（同 idle）。
+- **ended**：計算 `results`（§5.2）、`lastMode = mode`（Epic 20）、總分累加、廣播 `round:update` 與每張 `contest:gallery`。無計時器。`round:volunteer` 可用（同 idle）。
 - **評語（Epic 15）**：每張評分完成（含退回 random）的瞬間排進評語佇列（§6.1，一次一張）；`judging` 開始時 `commentMode` 設為目前評語器模式。**`ended` 不等評語**：計算 `results` 時已完成的評語直接寫進 `comment`，未完成者 `commentPending: true`；**第一名重做稱讚版（Epic 15 Phase 4，Rex 2026-10-12）**：`commentMode === 'ai'` 時，取 `rank === 1` 且 `submitted` 者（排名規則保證唯一），不論其評語是否已完成，一律設 `comment: null`、`commentPending: true` 寫進 results，並把它的評語工作以**稱讚版**提示詞（§6.1）插到評語佇列最前面（在途那張跑完才輪到）；若它原本的工作仍在佇列中則取代之；**正在產生中則讓它跑完**（2026-10-13 Phase 5 改：原本直接中止；跑完的批評版不顯示、只存起來當稱讚版失敗的退路），稱讚版緊接著跑；在途的是別人的也等它跑完。稱讚版的逾時從開始產生時起算。**稱讚版失敗或被跳過 → 退回原本的批評版**（揭曉當下已有字串、或揭曉時在途跑完的那句；原工作仍在排隊中就沒有退路，`comment: null`，不補跑批評版），以 `contest:comment` 送出；log `comment.failed`（`praise: true`）加欄位 `fallback: 'criticism' | null`（2026-10-13 Rex 定案，推翻原「不退回」：模型忙碌時寧可看到批評也不要空白）；其餘照規則 (b)。`commentMode` 已為 `'off'`（關閉或本回合已連續兩次失敗）時不重設、不重做，第一名維持原值。完成後照常 `contest:comment`。單人回合的第一名也稱讚；之後每完成一張廣播 `contest:comment`（成功或失敗都發）並同步更新 server 端的 `results`（中途加入者快照即為最新）。進入 `drawing` 時丟棄上回合未完成的評語工作（中止在途的那張**不算失敗**，新回合仍從 `'ai'` 開始）。**丟棄只發生在 `drawing`／`judging`**：參賽者在這兩階段寬限期滿離開時，其交卷與評語工作一起丟棄（本來就不進 results）；**`ended` 之後離開的人，評語工作照常跑完並發 `contest:comment`**（results 與畫廊是已揭曉的紀錄，保留），不會留下永遠 pending 的卡片（水手長 Q2，2026-10-12 定案）。未交卷者 `comment: null`、`commentPending: false`。`commentMode === 'off'`（環境變數關閉）時不排佇列、所有人 `commentPending: false`。
 - **參賽者離開**（寬限期滿）：從 `participantIds` 移除；已交卷的那張仍在佇列的話丟棄（不計入 `judgedCount`、不進 results）。判定「全員交卷」與「全員評完」都以當下的 `participantIds` 為準。
 - **出題者離開**：choosing → idle；drawing／judging 不影響（題目已公開）。
 - **階段不符的回合事件**：`idle`／`ended` 時 `round:setTopic`、`round:cancel` → `NOT_SETTER`（比照 draw-guess 的 `NOT_DRAWER`）；`choosing` 時非出題者 → `NOT_SETTER`；`drawing`／`judging` 時 `round:volunteer`、`round:setTopic`、`round:cancel` → `ROUND_BUSY`。
 - **計數**：參賽者離開時 `submittedCount`、`judgedCount` 依當下 `participantIds` 重算（已評分者離開兩數都減，n/m 不會卡住）。`ended` 之後離開的人，`results`、`lastTopic` 與畫廊都保留（已揭曉的紀錄）。
 - **欄位生命週期**：`participating`／`submitted` 在 `idle`／`choosing` 一律 false；`isSetter` 在 `ended` 仍為 true、`setterId` 保留到下一次 `volunteer`；`topic` 在 `drawing` 起有值、下一回合 `choosing` 時回 null，`lastTopic` 與 `results` 同進退（`ended` 時設為本回合題目、下一回合 `drawing` 開始時清空）。
-- **system 訊息**：加入／離開、「X 取消出題」「X 出題逾時」「出題者 X 離開」、回合開始（含題目）、揭曉（第一名；沒人交卷時「揭曉：沒有人交卷」）。
+- **system 訊息**：加入／離開、「X 取消出題」「X 出題逾時」「出題者 X 離開」、回合開始（含題目；Epic 20 mimic 回合為「X 出題「{topic}」（像不像比賽：照著參考圖畫）」）、揭曉（第一名；沒人交卷時「揭曉：沒有人交卷」）。
 - **重複 join**：同一 socket 再送 `player:join` 時照「results 非 null 則補送畫廊」的字面再補送一次（無害，不特別擋）。
 - **交卷檢查順序**：phase（含寬限）→ `NOT_DRAWING`；參賽者 → `NOT_PARTICIPANT`；已交卷 → `ALREADY_SUBMITTED`；PNG → `SUBMISSION_INVALID`。
 - **廣播**：每次狀態轉移各廣播一則 `round:update`，不合併（全員交卷且佇列已清空時，`judging` 與 `ended` 各一則）。題目去頭尾空白後存。`contest:gallery` 廣播給所有在線者（含旁觀者），每位交卷者各一則。
@@ -251,6 +261,14 @@ idle ──volunteer（在線≥2）──▶ choosing ──setTopic──▶ d
 - payload 為物件、`png` 為 ArrayBuffer／Buffer／Uint8Array（Socket.IO 二進位），長度 1 ～ `MAX_SUBMISSION_BYTES`。
 - 前 8 bytes 為 PNG magic `89 50 4E 47 0D 0A 1A 0A`；IHDR 的寬高須等於 `CANVAS_LOGICAL`（客戶端以 1280×720 匯出）。
 - 不合法 → `SUBMISSION_INVALID`。server 不解碼圖片，只存 bytes。
+
+### 5.1b 參考圖驗證（Epic 20，`reference.ts`）
+
+- `round:setTopic` 的 `reference` 省略或 `undefined` → topic 模式（現況）；**`null` 或其他型別照字面 → `REFERENCE_INVALID`**（水手長 2，2026-10-26）。有值須為 ArrayBuffer／Buffer／Uint8Array、長度 1 ～ `MAX_REFERENCE_BYTES`、前 3 bytes 為 JPEG magic `FF D8 FF`；不合法 → `REFERENCE_INVALID`。檢查順序：phase／身分 → 題目（`TOPIC_INVALID`）→ 參考圖。server 不解碼，只存 bytes；**只存一份**（以 `roundNo` 對應）：本回合與 results 對應的上回合不會同時需要（下一回合 drawing 開始時 results 才清、同時換圖），對外行為同補送規則（水手長 3）。
+- join 補送：`round.mode === 'mimic'`（drawing／judging／ended）→ 送本回合參考圖；否則 `results` 非 null 且 `lastMode === 'mimic'` → 送上回合參考圖（`roundNo` 為該回合）。
+- Socket.IO `maxHttpBufferSize` 為 `MAX_IMAGE_BYTES`（10 MiB，`app.ts`）+ 64 KiB，setTopic payload（題目 ＋ 參考圖 ≤ 2 MiB）在範圍內（水手長 1 更正原「MAX_SUBMISSION_BYTES + 64 KiB」）。
+- **事件順序**（水手長 4）：drawing 開始 `round:update` → `contest:reference` → `players:update` → `chat:message`；join 補送 `contest:reference` 在 `contest:gallery` 之前。log：`judge.scored` 加 `mode`、`comment.done` 加 `mimic`、回合 log 加 `mode`。
+- 客戶端正規化（決策 2）：選檔或拖曳的 png／jpeg／webp／gif 以 `<img>` 載入 → canvas **先鋪白底 `REFERENCE_MATTE = '#FFFFFF'`**（透明 PNG／GIF 轉 JPEG 否則變黑底、黑線稿看不見；像素內容不是畫面樣式，不走 token；水手長 5）→ 長邊 ≤ 1280（不放大）→ `toBlob('image/jpeg', 0.9)`；非圖片、載入失敗、轉檔失敗、太大各有錯誤文案（design §2）、不送出，之前選好的參考圖保留。
 
 ### 5.2 排名與總分（`ranking.ts`，純函式）
 
@@ -273,13 +291,14 @@ idle ──volunteer（在線≥2）──▶ choosing ──setTopic──▶ d
 | `NOT_PARTICIPANT` | 你不是本回合的參賽者 |
 | `ALREADY_SUBMITTED` | 你已經交卷了 |
 | `SUBMISSION_INVALID` | 圖片格式不正確或太大 |
+| `REFERENCE_INVALID` | 參考圖格式不正確或太大（請選圖片檔） |
 | 其餘 | 與我畫你猜同文案 |
 
 ## 6. 評分器（`judge/`）
 
 ```ts
 // judge/types.ts
-export interface JudgeInput { png: Buffer; topic: string }
+export interface JudgeInput { png: Buffer; topic: string; reference?: Buffer }   // Epic 20：mimic 回合帶參考圖 JPEG
 export interface JudgeOutput { score: number; confidence: number }   // 0..SCORE_MAX 整數；0..1
 export interface Judge {
   readonly mode: JudgeMode;
@@ -299,19 +318,26 @@ export interface Judge {
   - **2026-10-10 換 `clef:27b-nvfp4` 實測**（Ollama 0.40.2、M5 Max 128 GB、640 寬、約 597 tokens、合成圖）：請求與回應格式不變。蘋果線稿對「an apple」77 分（likeness 2.81／is_topic 0.92／effort 1.40）、對「蘋果」74 分、彩色蘋果 79 分、汽車線稿對「汽車」81 分；畫錯題（蘋果圖對「a car」9 分、汽車圖對「蘋果」10 分）、空白 3 分、亂塗 4 分，分得開，與 Q4 版同一水準。延遲：暖機首張 4.7 秒，之後每張約 0.6–1.3 秒。未驗：Docker 容器經 host.docker.internal、32 GB 機器上的速度。
   - **`confidence` 的含義**：熵正規化的「模型有多確定」，不是「畫得多好」：蘋果圖的 likeness confidence 只有 0.19–0.22（機率分散在 2～4 級），空白圖反而 0.78–0.83（集中在 0 級）。v1 只存進 `results.confidence`、畫面不顯示；日後若要用，只能當「AI 不太確定」的標記，不得當品質指標。
 - **佇列**（`queue.ts`）：一次一張（`JUDGE_CONCURRENCY` 固定 1，不開放設定；27B 單張 4.5 秒，30 人最壞約 2.5 分鐘，交卷即評所以大多在倒數內算完）；每張 `JUDGE_TIMEOUT_MS` 逾時（AbortSignal）；失敗或逾時 → 該張改用 random 評分、`judgeMode` 設為 `'random'`，本回合剩餘各張直接走 random。回合結束（參賽者離開）時丟棄已無對應者的工作。
-- **假的 Ollama**（Phase 3，`user/mock/systemone.mjs`）：只實作 `POST /v1/systemone`，回應格式與真 Ollama 相同、分數由圖片雜湊決定；用來在模型未就緒時測 `ollama.ts` 的組請求與解析。
+- **像不像比賽（Epic 20，`input.reference` 有值）**：`images: [reference, png]`、`state: { task: MIMIC_TASK, topic }`（`MIMIC_TASK = 'A player tried to copy the first image (the reference) by drawing the second image in a drawing contest.'`），兩題：
+  - `similarity`（score；instructions `The first image is the reference and the second is the player's drawing. How closely does the drawing reproduce the reference in shapes, composition and main subject, ignoring colour and line thickness?`；5 級：Completely different／Slightly similar／Roughly similar／Very similar／Nearly identical）
+  - `effort`（同現況）；**不問 `is_topic`**（主體由參考圖定義）。
+  - 合成：`score = round(100 × (0.9 × similarity/4 + 0.1 × effort/2))`，`confidence = similarity.confidence`。
+  - `random`：種子 = FNV-1a(reference ‖ png ‖ topic)。
+  - 海圖 2026-10-26 真 Clef 探測（中文指示版、256px 合成圖）：白底紅圓參考圖對黑底白線圓環 similarity 2.33、方框 0.19、三角形 0.11、原圖 3.65，分得開且「不管顏色與線條粗細」有效。英文指示版（水手長 2026-10-26，1280×720）：圓環 2.585／方框 0.177／三角形 0.118／原圖 3.746，fixture `server/test/fixtures/draw-contest.mimic-clef.json`；驗收子代理同日真 Clef 回合：線稿臨摹 similarity 3.31 → 84 分、隨機折線 0.32 → 9 分。
+- **假的 Ollama**（Phase 3，`user/mock/systemone.mjs`）：Epic 20 起 `images` 可為兩張（分數雜湊含兩張、題目名稱 `similarity` 亦回 score 題）；只實作 `POST /v1/systemone`，回應格式與真 Ollama 相同、分數由圖片雜湊決定；用來在模型未就緒時測 `ollama.ts` 的組請求與解析。
 
 ### 6.1 評語器（Epic 15，`commentary/`）
 
 - **目的**：每張畫一句メスガキ評語，只顯示在揭曉卡片（Rex 2026-10-12 定案）。Clef 負責分數、gemma4 只負責文字，兩者各自獨立。
 - **模組**：`server/src/games/draw-contest/commentary/`：`ollamaChat.ts`（組請求、解析、後處理）、`queue.ts`（一次一張、逾時、回合內連續兩次失敗才跳過、丟棄規則）、`index.ts`（讀 `COMMENT`／`COMMENT_MODEL`／`COMMENT_TIMEOUT_MS`、啟動探測與背景暖機）。
-- **請求**：`POST ${OLLAMA_URL}/api/chat`，body `{ model: COMMENT_MODEL, stream: false, think: false, keep_alive: '30m', messages, options: { temperature: 0.9, num_predict: 80 } }`。`messages`：
-  - system（逐字）：`你是メスガキ，繪圖比賽的評審。規則只有兩條：用繁體中文（台灣用語）；一句話，40 字內。`（`メスガキ` 讀 `COMMENT_PERSONA_NAME`）
-  - user（逐字）：`題目「{topic}」，評分 {score} 分。這是參賽者的畫，給一句評語。`，`images: [base64(交卷原 PNG)]`。
-  - **第一名稱讚版**（Phase 4）：user 改為（逐字）`題目「{topic}」，評分 {score} 分，這張是本回合第一名。妳不甘心，但還是得承認它畫得好，用雌小鬼的口氣誇它，一句評語。`，system 不變、其餘參數不變。只有 §5 的第一名重做用它。**文案由來**（水手長 2026-10-12 真模型比較，同圖同參數各 5 句）：初稿「用雌小鬼的方式稱讚它」5 句中 3 句仍直說「超爛／笨拙」；加禁止句「可以嘴硬，但不可以說它畫得爛」改善有限；告訴模型「它畫得好、妳得承認」才 5 句全有正面肯定（例：「哈啊？這種簡單的蘋果也能拿第一？雖然畫得很像樣啦，但別太得意喔！」）。海圖定案採此版；簡體字（例「强」）不做後處理，留 Rex 目視。
-  - **不加禁詞、不加範例句、不給暱稱與名次**（Rex 2026-10-12：讓 gemma4 自由發揮，規則只有兩條）。第一名稱讚版是唯一例外，且也只告訴模型「這是第一名、它畫得好、妳得承認、用雌小鬼的口氣誇它」。
+- **請求**：`POST ${OLLAMA_URL}/api/chat`，body `{ model: COMMENT_MODEL, stream: false, think: false, keep_alive: '30m', messages, options: { temperature: 0.9, num_predict: 120 } }`（`num_predict` 2026-10-21 由 80 改 120：60 字約 60～90 token，留餘裕；Phase 7）。`messages`：
+  - system（逐字；`メスガキ` 寫死在 `ollamaChat.ts`，不讀 `COMMENT_PERSONA_NAME`，2026-10-21 起）：`你是メスガキ，繪圖比賽的評審。規則只有兩條：用繁體中文（台灣用語）；一句話，60 字內。`（2026-10-21 由 40 改 60；Phase 7）
+  - user（逐字）：`題目「{topic}」，評分 {score} 分。這是參賽者「{nickname}」的畫，給一句評語。`，`images: [base64(交卷原 PNG)]`。（2026-10-21 Phase 7 加入暱稱：Rex「傳使用者的名稱給模型，不需要多打什麼 prompt，嘗試看看模型會不會利用名稱」；原句「這是參賽者的畫」。暱稱已由 `validateNickname` 限制 1～12 字、無控制字元，提示詞注入面很小。）
+  - **mimic 回合（Epic 20）**：`images: [base64(reference JPEG), base64(交卷 PNG)]`；user（逐字）：`題目「{topic}」，評分 {score} 分。第一張是參考圖，第二張是參賽者「{nickname}」照著畫的，給一句評語。`；稱讚版（逐字）：`題目「{topic}」，評分 {score} 分，這張是本回合第一名，參賽者「{nickname}」。第一張是參考圖，第二張是它照著畫的。妳不甘心，但還是得承認它畫得像，用雌小鬼的口氣誇它，一句評語。`；system 與參數不變。
+  - **第一名稱讚版**（Phase 4）：user 改為（逐字）`題目「{topic}」，評分 {score} 分，這張是本回合第一名，參賽者「{nickname}」。妳不甘心，但還是得承認它畫得好，用雌小鬼的口氣誇它，一句評語。`（2026-10-21 Phase 7 加暱稱；原句無「，參賽者「{nickname}」」），system 不變、其餘參數不變。只有 §5 的第一名重做用它。**文案由來**（水手長 2026-10-12 真模型比較，同圖同參數各 5 句）：初稿「用雌小鬼的方式稱讚它」5 句中 3 句仍直說「超爛／笨拙」；加禁止句「可以嘴硬，但不可以說它畫得爛」改善有限；告訴模型「它畫得好、妳得承認」才 5 句全有正面肯定（例：「哈啊？這種簡單的蘋果也能拿第一？雖然畫得很像樣啦，但別太得意喔！」）。海圖定案採此版；簡體字（例「强」）不做後處理，留 Rex 目視。
+  - **不加禁詞、不加範例句、不給名次**（Rex 2026-10-12：讓 gemma4 自由發揮，規則只有兩條；**暱稱 2026-10-21 起給**，但不教模型怎麼用）。第一名稱讚版是唯一例外，且也只告訴模型「這是第一名、它畫得好、妳得承認、用雌小鬼的口氣誇它」。
   - **`think: false` 必帶**：gemma4 預設思考，`num_predict` 80 會全被思考吃掉、`content` 空白（海圖 2026-10-12 實測 14.7 秒空回覆；關掉後 0.4～0.5 秒）。
-- **回應**：`200 { message: { role: 'assistant', content }, done: true, ... }`。後處理：`content` 去頭尾空白、取第一行；空字串視為失敗。**不截斷**（40 字是給模型的規則，畫面以 `line-clamp` 處理）。
+- **回應**：`200 { message: { role: 'assistant', content }, done: true, ... }`。後處理：`content` 去頭尾空白、取第一行；空字串視為失敗。**不截斷**（60 字是給模型的規則；畫面不截斷，Epic 15 Phase 2.5 定案）。
 - **啟動**：`COMMENT=ollama` 時 `GET /api/tags` 探測（逾時 3 秒、不阻塞 listen，同評分器）；清單裡沒有 `COMMENT_MODEL` 只 log warn `commentUnavailable`，每回合仍嘗試。有模型時**背景暖機一次**（內容「嗨」、`num_predict: 1`、`think: false`、`keep_alive: '30m'`、逾時 60 秒；探測失敗就不暖機；結果只 log `warmup`／`warmupFailed`）：冷啟動載入實測 9～17 秒，不暖機第一回合第一張會等。**Clef 也比照暖機**（2026-10-12 海圖定案，Epic 15 收尾）：`JUDGE=ollama` 且探測到模型時，啟動後背景送一張 1×1 PNG（寫死 69 bytes、單一像素 `#1E1E1E`）的 `/v1/systemone` 請求（state／questions 同評分三題、題目 `'warmup'`、逾時 60 秒、**帶 `keep_alive: '30m'`**——不帶的話 Clef 只留 Ollama 預設 5 分鐘，啟動後 5 分鐘沒人玩暖機就白做；代價是閒置多佔 18 GB 約 25 分鐘，接受），結果只 log `draw-contest.judge.warmup`（model、ms、inputTokens）／`warmupFailed`（model、ms、reason）；`JUDGE=random` 不暖機。Clef 與 gemma4 的暖機各接在自己的探測後同時送出、不排先後。原因：水手長實測 Clef 冷啟動第一張 13.4 秒；暖機後第一張 1.5 秒。log 事件名：`draw-contest.comment.{config, ollamaReady, commentUnavailable, warmup, warmupFailed, done, failed, skipped, envInvalid}`（`done` 印出評語原文）。Room 未注入評語器時預設關閉；`JUDGE_IMAGE_WIDTH` 設了不讀也不 warn。
 - **佇列**：一次一張，與評分佇列獨立；每張 `COMMENT_TIMEOUT_MS` 逾時（AbortSignal）。失敗（逾時、非 2xx、解析失敗、空字串）→ 該張 `comment: null`；**同一回合連續兩次失敗**（中間沒有成功）才把剩餘各張直接跳過（不呼叫模型，各張 `comment: null`），`commentMode` 改 `'off'` 並 `round:update`；下一回合重新嘗試（2026-10-13 由「第一次失敗即跳過」放寬：單次逾時多半是模型被擠出記憶體後重載，下一張就好）。有界：最壞多等兩次逾時。**事件（水手長 Q3，2026-10-12 定案；2026-10-13 Phase 5 改為「連續兩次」）**：**單次失敗**（未達連續兩次）：ended 前 → 該張 `comment: null`、`commentPending: false`，不發事件；ended 後 → 只發該張一則 `contest:comment`（null；若是稱讚版則為批評版或 null），**不發 `round:update`**，`commentMode` 維持 `'ai'`。**連續第二次失敗**才照下列收尾：(a) 失敗在 `ended` 之前 → 失敗那張與之後排進來的各張直接 `comment: null`、`commentPending: false`，寫進 results，不發 `contest:comment`；(b) 失敗在 `ended` 之後 → 失敗那張與當下仍 pending 的每一張各發一則 `contest:comment`（被跳過的若是第一名稱讚版，帶批評版，沒有才 null），再發一則 `round:update`（`commentMode 'off'`）；**例外**：若已進入下一回合 `choosing`（`commentMode` 依生命週期已是 null），只發各張 `contest:comment`、不發 `round:update`（水手長回報 3，2026-10-12 定案）。(c) 失敗在 `drawing`（交卷即評）→ 當下 `commentMode` 仍為 null、不發事件；drawing 中只失敗一次 → 進 `judging` 仍是 `'ai'`，drawing 中連續兩次 → 進 `judging` 直接 `'off'`（回報 4，定案；2026-10-13 修）。**連續計數**：稱讚版失敗也計入；被取消的（換回合丟棄、參賽者離開丟棄、排隊中被稱讚版取代）不計也不歸零；換回合歸零；成功歸零。log `comment.failed` 帶 `consecutive`（1 或 2；連續第二次且沒人排隊時 `skipped` 為空陣列，靠它分辨）與 `fallback`（Room 層填；稱讚版被跳過而退回時不另記）；連續第二次失敗若是第一名在途的批評版，`skipped` 會含他自己的 id（被跳過的是稱讚版）。`round:update` 與 `contest:comment` 的先後順序不強制。丟棄規則見 §5。
 - **實測**（海圖 2026-10-12，M5 Max 128 GB、Ollama 0.40.3、`gemma4:26b-mlx-bf16`）：640 寬 0.5 秒、1280 原圖 1.9 秒（600 tokens）；兩模型同時常駐約 71 GB。樣本：「就這也叫蘋果？這種沒靈魂的圓圈也想拿高分，真是笨蛋雜魚呢！」。**驗收子代理 2026-10-12 端到端（建置版、預設環境變數、合成圖）**：原圖直送 Clef `inputTokens` 1257；Clef 暖機 2.7 秒（熱）、gemma4 暖機 55 ms（已載入）；彩色蘋果 80、粗線稿 71、細線稿 62、空白 3；交卷到揭曉 1.7～5.9 秒；評語每張 0.5～2.4 秒、25～29 字，揭曉後 0.2～1.7 秒補齊；沒有永遠「…」的卡片。**Phase 4 稱讚版**（驗收 2026-10-12，三回合）：prompt 629 tokens、537～670 ms；揭曉後 +536～1069 ms 到（在途是自己的被中止時第一個到）；三句皆含正面肯定但為傲嬌式（「還算及格」「畫得很不錯」「還算可以」），語氣待 Rex 目視定案。
@@ -323,8 +349,9 @@ export interface Judge {
 
 - 本機偏好鍵：`fishing-work:draw-contest:shell`、`fishing-work:draw-contest:session`（不與 draw-guess 撞鍵）。
 - `index.html` 內嵌腳本依 session 鍵設 `data-theme`，與 draw-guess 同法。
+- **Epic 20 像不像比賽（2026-10-26）**：`features/reference/`——`normalize.ts`（選檔 → canvas 長邊 ≤ 1280 → JPEG 0.9 的純函式，canvas／Image 可注入測試）、`ReferencePanel.tsx`（作畫中浮動面板：展開／收合／放大，Esc 關放大）、出題對話框的參考圖區（拖曳區、「選擇圖片」、縮圖預覽、「移除參考圖」、錯誤）；store 收 `contest:reference` 建 object URL（新回合 revoke）、`round.mode`／`lastMode`；揭曉畫廊第一格參考圖卡（`revealView.ts` 產 `kind: 'reference'` 卡，不在 `results` 內）；歷史存檔加 `reference: Blob | null`（舊存檔視為 null）並在回看時顯示。殼層只多偽裝字樣（面板標題、放大按鈕名、備忘稿列「（像不像）」）。
 - **Epic 17 歷史（2026-10-13）**：`features/history/`——`historyDb.ts`（原生 IndexedDB wrapper，資料庫 `fishing-work:draw-contest`、store `history`、主鍵 `id = round.startedAt`；可注入記憶體假實作）、`historyStore.ts`（`ended` 且 `results` 非 null 且至少一人交卷時建檔，`id` 記在記憶體；同 `roundNo` 之後的 `contest:gallery`／`contest:comment` 更新該筆；進入 `drawing` 停止更新；加入時 phase 非 `ended` 不建檔；寫入後修剪到 `HISTORY_MAX = 5`，刪 `savedAt` 最舊；`savedAt` 首次建檔後不變；存檔含 `me`）、`historyDisplay.ts`（清單列文字、存檔 → `RevealCard[]`；原名 `historyView.ts` 與 `HistoryView.tsx` 在 macOS 只差大小寫會撞 TS1149）、`HistoryView.tsx`（重用 `RevealView`；object URL 的建立與 revoke 在 historyStore，與 game store 的 gallery 同做法）。銜接點只有兩處：App 掛載時 `startHistory()` 訂閱 game store；`socket/client.ts` 的 `contest:gallery` 呼叫 `recordGalleryImage`；評語由 store 的 `round.results` 訂閱取得。殼層介面加 `ShellProps.history: { entries: { id, label }[], openId, canOpen, open(id), close(), refresh() }`、`ShellGameSlots` 加 `historyView`／`historyStatus`、`TermsView.recent`、`HelpView.recentHint`、說明佔位符 `{recent}`。停止更新與自動關閉的條件：進入 `drawing`、直接看到 `judging`、`roundNo` 變了、離開遊戲（`me` 變 null）、自己成為出題者。**契約、server、shared 不變**；存的內容就是客戶端已收到的 `results`（含 `comment`）、`lastTopic`、`judgeMode`、`commentMode`、畫廊 PNG（`Blob`）。規劃 `plan/contest-history.md`、畫面 design §3.1。
-- **Epic 15**：store 處理 `contest:comment`（更新 `round.results[].comment`／`commentPending`）；`features/reveal/` 卡片**縮圖下方**加評語行（2026-10-12 定案改到縮圖下方，標題列與縮圖高度固定、同列縮圖對齊；評語行數不同只影響卡片底部；評語行上方間距 6px，讓出前三名外框與焦點外框；**放大檢視的完整句同樣放圖片下方**）（design §3：`メスガキ` 粗體前綴＋12px 斜體 `--fg-muted`、**不截斷**（2026-10-12 移除 `line-clamp-2`）；`commentPending` 顯示「メスガキ：正在寫評語」（2026-10-12 由「メスガキ：…」改，避免與截斷的「…」混淆）；**顯示與否只看該卡片自己的欄位：`comment !== null` 或 `commentPending` 才顯示該行**，客戶端不看 `commentMode`（水手長 Q1，2026-10-12 定案：回合中途失敗時已產生的評語照常顯示；`COMMENT=off` 時每張本來就是 null／false）），放大檢視顯示完整句；`revealView.ts` 純函式加 `comment` 欄位。
+- **Epic 15**：store 處理 `contest:comment`（更新 `round.results[].comment`／`commentPending`）；`features/reveal/` 卡片**縮圖下方**加評語行（2026-10-12 定案改到縮圖下方，標題列與縮圖高度固定、同列縮圖對齊；評語行數不同只影響卡片底部；評語行上方間距 6px，讓出前三名外框與焦點外框；**放大檢視的完整句同樣放圖片下方**）（design §3：`COMMENT_PERSONA_NAME`（2026-10-21 起為 `ミオ`）粗體前綴＋12px 斜體 `--fg-muted`、**不截斷**（2026-10-12 移除 `line-clamp-2`）；`commentPending` 顯示「{COMMENT_PERSONA_NAME}：正在寫評語」（現為「ミオ：正在寫評語」；原「メスガキ：正在寫評語」，2026-10-12 由「メスガキ：…」改，避免與截斷的「…」混淆）；**顯示與否只看該卡片自己的欄位：`comment !== null` 或 `commentPending` 才顯示該行**，客戶端不看 `commentMode`（水手長 Q1，2026-10-12 定案：回合中途失敗時已產生的評語照常顯示；`COMMENT=off` 時每張本來就是 null／false）），放大檢視顯示完整句；`revealView.ts` 純函式加 `comment` 欄位。
 - 新增 `features/reveal/`：揭曉畫廊（投影片瀏覽），資料來自 store 的 `round.results` 與 `gallery: Map<playerId, objectURL>`（`contest:gallery` 收到就建 object URL；新回合 drawing 開始時 revoke）。
 - store 新增：`myCanvas`（本機筆跡、僅記憶體）、`submitted`、`gallery`。自動交卷：`round.endsAt` 到時若未交卷，客戶端匯出 PNG 送 `contest:submit`（在 `SUBMIT_GRACE_SECONDS` 內）。
 - `shellBoundary` 測試沿用（殼層不讀 store、功能元件不出現偽裝字樣）。殼層介面相對 draw-guess 的差異：`ShellRoundState` 加 `submitted`、`showReveal`；插槽加 `finish`（「完成」，功能區右端固定）、`reveal`（投影片瀏覽）；`ShellViews` 加 `terms`（「標題」「儲存」「投影片瀏覽」等偽裝字樣由殼層傳入，功能元件不得出現）；`DialogPurpose` 加 `'submit'`；`DialogProps` 加 `trapFocus`。工具列收合斷點 540px（design §4）。
@@ -332,12 +359,17 @@ export interface Judge {
 
 ## 8. 驗證方式（派工與驗收共用）
 
+> Epic 20（2026-10-26）：協定測試加 `user/protocol/draw-contest-mimic.mjs`（水手長；`JUDGE=ollama COMMENT=ollama` 指向自帶假 Ollama，驗雙圖請求形狀、mode／lastMode、補送）與 `draw-contest-mimic-extra.mjs`（驗收子代理；`JUDGE=random JUDGE_FAKE_DELAY_MS=1500 COMMENT=off`，驗 `REFERENCE_INVALID` 各型別、`TOPIC_INVALID` 先於參考圖、事件順序、三階段 join 補送、`lastMode` 生命週期）。
+
 四項指令同平台（`npm run typecheck`、`npm test`、`npm run lint`、`npm run build`，分開跑、各自看 exit code）。協定測試：`user/protocol/draw-contest-phase1.mjs`（加入／出題／作畫／交卷／評分／揭曉／排名／中途加入補收畫廊／重連）只依本檔 §4／§5 打 Socket，`JUDGE=random JUDGE_FAKE_DELAY_MS=0 COMMENT=off` 跑（Epic 15 起加 `COMMENT=off`，否則會暖機並呼叫真模型、results 出現 `commentPending: true`；phase1 對 results／round 的斷言補 `comment`／`commentPending`／`commentMode` 欄位）；server 的 vitest 預設 `COMMENT=off`（`vitest.config.ts`，與 `JUDGE=random`、`OLLAMA_URL=127.0.0.1:1` 並列），`AppOptions` 加評語器注入點（比照 `judge`），要測評語的測試一律注入或連假 Ollama，**不得打到真模型**；Epic 15 另有 `user/protocol/draw-contest-comment.mjs`（對假 Ollama 的 `/api/chat`：交卷→揭曉→`contest:comment`；`COMMENT=off` 時 `commentMode 'off'`、無事件；中途加入者快照帶 `comment`）；**不新增縮時用的環境變數**：需要等真實計時的情境（出題逾時回 idle、出題者或參賽者寬限期滿離開與佇列丟棄、`results = []`、`ROOM_FULL`）放 server 的 vitest 單元與 e2e（`AppOptions.durations` 縮時，比照 draw-guess），協定測試只測真實時間可及的，另附 `TEST_SLOW=1` 才跑的慢速段；須與 `user/protocol/draw-guess-*.mjs` 全過並存（server 兩個 namespace 互不影響）。瀏覽器實測用 `.claude/launch.json` 的 `draw-guess-built`（同一程序服務兩款遊戲，開 `/draw-contest/`）。
 
 ## 9. 變更紀錄
 
 | 日期 | 內容 |
 |------|------|
+| 2026-10-26 | **Epic 20 像不像比賽**：§4 `ContestMode`、`RoundPublic.mode`／`lastMode`、`ReferenceImage`、`contest:reference`、`round:setTopic` payload 加選填 `reference`、`REFERENCE_INVALID`、常數 `MAX_REFERENCE_BYTES`；§5 drawing／ended、§5.1b 參考圖驗證與 join 補送、§5.4 文案；§6 `JudgeInput.reference`、mimic 版 systemone（similarity＋effort，0.9／0.1）、random 種子；§6.1 mimic 評語雙圖文案；§7 `features/reference/` | Rex 2026-10-26 選做「像不像比賽」、評分用 Clef、形式為繪圖比賽的出題模式（`plan/contest-mimic.md`）；海圖真 Clef 雙圖探測可行 |
+| 2026-10-21 | §6.1 評語提示詞：字數規則 40 → **60 字內**、`num_predict` 80 → **120**、user 文案加入**參賽者暱稱**（批評版與稱讚版都加，不另加指示） | Rex 2026-10-21：「改 60 個字」「token 跟著改高」「傳使用者的名稱給模型，不需要多打什麼 prompt，嘗試看看模型會不會利用名稱」（plan/contest-commentary.md Phase 7） |
+| 2026-10-21 | §4 `COMMENT_PERSONA_NAME` 值 `'メスガキ'` → `'ミオ'`（只影響客戶端顯示：卡片前綴、pending、aria-label、說明）；§6.1 提示詞人設寫死 `メスガキ` 不再讀常數；契約不變 | Rex 2026-10-21：不要「メスガキ」這個詞，改成一個日文名字、只做字串替換，選定「ミオ」（plan/contest-commentary.md Phase 6；人格與語氣不變） |
 | 2026-10-13 | **Epic 15 Phase 5 評語韌性（Rex 定案）**：稱讚版失敗或被跳過退回批評版；連續兩次失敗才跳過本回合剩餘；`COMMENT_TIMEOUT_MS` 預設 20000 → 30000。起因：pi-agent 的 qwen3.8（58.6 GB）與 Clef＋gemma4 共 129 GB 超過 Metal 107 GB，Ollama 反覆換頁、評語 7～16 秒甚至逾時 | Rex 2026-10-13 實測三局後定案 |
 | 2026-10-13 | **Epic 17 歷史（海圖定案）**：§7 加 `features/history/`（IndexedDB 最近 5 場、入口「檔案 › 開啟最近的簡報」、重用揭曉畫廊）；契約不變 | Rex 2026-10-13：比賽結果只存瀏覽器、最近 5 場、不同步 |
 | 2026-10-12 | 事務長實戰回報兩點體驗（Rex 轉交）：design §2 ended 備忘稿列帶題目「{題目}　第一名：X（n 分）」；design §3／§7 評語行不截斷、pending 文字改「メスガキ：正在寫評語」（海圖定案，小修正派水手長） |

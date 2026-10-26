@@ -149,7 +149,7 @@ export class JudgeQueue {
     }
     if (attempt.kind === 'cancelled' || entry.cancelled) return;
     // fallback 也失敗（理論上不會）：最後手段，以純函式算確定性分數
-    const out = attempt.kind === 'ok' ? attempt.out : randomScore(entry.job.input.png, entry.job.input.topic);
+    const out = attempt.kind === 'ok' ? attempt.out : randomScore(entry.job.input.png, entry.job.input.topic, entry.job.input.reference);
     if (attempt.kind === 'failed') judgedBy = 'random';
     this.current = null;
     try {

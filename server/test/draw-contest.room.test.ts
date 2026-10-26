@@ -157,6 +157,7 @@ describe('join', () => {
       phase: 'idle',
       setterId: null,
       topic: null,
+      mode: null,
       startedAt: null,
       endsAt: null,
       participantIds: [],
@@ -166,6 +167,7 @@ describe('join', () => {
       commentMode: null,
       results: null,
       lastTopic: null,
+      lastMode: null,
     });
     expect(data.snapshot.chat.map((m) => m.text)).toEqual(['Alice 加入']);
     expect(Object.keys(data.snapshot).sort()).toEqual(['chat', 'players', 'round', 'you']);
@@ -310,6 +312,7 @@ describe('§5 round:setTopic／round:cancel', () => {
       phase: 'drawing',
       setterId: B,
       topic: '蘋果',
+      mode: 'topic',
       startedAt: now,
       endsAt: now + DRAW_MS,
       participantIds: [A, B, D],
@@ -319,6 +322,7 @@ describe('§5 round:setTopic／round:cancel', () => {
       commentMode: null,
       results: null,
       lastTopic: null,
+      lastMode: null,
     });
     expect(players(r.effects).map((p) => [p.id, p.isSetter, p.participating, p.submitted])).toEqual([
       [A, false, true, false],

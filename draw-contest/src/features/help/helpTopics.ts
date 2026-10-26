@@ -10,6 +10,8 @@
 // Phase 5：稱讚版失敗時 server 退回一般評語，說明補一句）。
 // 評審名稱讀 shared 的 COMMENT_PERSONA_NAME（唯一來源，本檔不寫死）。
 // Epic 17：「排名與總分」最後補一段，說明最近幾場可以回看、只存在這台瀏覽器（plan/contest-history.md 任務表）。
+// Epic 20（像不像比賽；plan/contest-mimic.md 決策 9）：「如何出題」「評分」最後各加一句（附參考圖＝像不像比賽、評分改看與參考圖的相似度）；
+// 「參考圖（選填）」「選擇圖片」讀 features/reference/referenceText（與對話框同一個來源）。
 import {
   CHAT_MAX,
   CHOOSING_SECONDS,
@@ -21,6 +23,7 @@ import {
   TOPIC_MAX,
 } from '@fishing-work/shared/draw-contest'
 import { HISTORY_MAX } from '../history/historyDb'
+import { REFERENCE_PICKER_TEXT } from '../reference/referenceText'
 import { COMMENT_PENDING_TEXT } from '../reveal/revealView'
 import { formatDuration } from './helpText'
 
@@ -50,6 +53,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       `房間至少 ${MIN_PLAYERS} 人在線、沒有回合進行中時，按「{volunteer}」，你就是本回合的出題者。`,
       `在 ${CHOOSING_SECONDS} 秒內輸入題目（1–${TOPIC_MAX} 字）並按 Enter，比賽立刻開始；按 Esc 放棄出題，逾時沒送出也會取消。`,
       '題目會公開給所有人，出題者也一起畫。',
+      `題目下方的「${REFERENCE_PICKER_TEXT.heading}」可以拖進一張圖片或按「${REFERENCE_PICKER_TEXT.choose}」：附了參考圖就是「像不像比賽」，大家照著參考圖畫，作畫時畫面右上角看得到它（可放大、收合）；不附就是一般的回合。`,
     ],
   },
   {
@@ -77,6 +81,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       `每交一張就排隊評一張，由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分，畫得越像題目分數越高；畫面會顯示「正在評分」的進度。`,
       `評語由另一位評審「${COMMENT_PERSONA_NAME}」負責，每張交卷的畫一句；評語不影響分數與排名。`,
       '連不上 Ollama（執行這兩個模型的服務）時，本回合剩下的畫會退回隨機評分，也不會有評語。隨機評分的分數由圖片本身決定、和畫得像不像無關，同一張圖永遠同分；揭曉時分數旁會標示「隨機」。',
+      '像不像比賽的分數改看你的畫和參考圖有多像（形狀、構圖與主體，不管顏色與線條粗細），揭曉時第一格是參考圖。',
     ],
   },
   {

@@ -17,6 +17,7 @@ import { HistoryStatus, HistoryView } from './features/history/HistoryView'
 import { canViewHistory, historyMenuEntries } from './features/history/historyDisplay'
 import { closeHistory, openHistory, refreshHistory, startHistory, useHistoryStore } from './features/history/historyStore'
 import { PlayerList } from './features/players/PlayerList'
+import { ReferencePanel } from './features/reference/ReferencePanel'
 import { startAutoSubmit } from './features/round/autoSubmit'
 import { Reveal } from './features/reveal/Reveal'
 import { RoundStatus, VolunteerStatus } from './features/round/RoundStatus'
@@ -109,6 +110,7 @@ function App() {
           toolbar={<ToolBar />}
           finish={<FinishButton />}
           reveal={<Reveal />}
+          reference={<ReferencePanel />}
           historyView={<HistoryView />}
           historyStatus={<HistoryStatus />}
           chat={<ChatPanel />}

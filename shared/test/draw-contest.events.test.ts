@@ -3,8 +3,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type {
+  Ack,
+  ClientToServerEvents,
   CommentMode,
   CommentUpdate,
+  ContestMode,
+  ErrorCode,
+  ReferenceImage,
   ResultEntry,
   RoundPublic,
   ServerToClientEvents,
@@ -83,6 +88,8 @@ describe('Epic 15 評語契約（型別層）', () => {
       commentMode: 'ai',
       results: [{ ...base, comment: null, commentPending: true }],
       lastTopic: '貓',
+      mode: 'topic',
+      lastMode: 'topic',
     };
     const idle: RoundPublic = { ...round, phase: 'idle', commentMode: null };
     const off: RoundPublic = { ...round, commentMode: 'off' };
@@ -101,5 +108,82 @@ describe('Epic 15 評語契約（型別層）', () => {
     handler(ok);
     handler(failed);
     expect(received).toEqual([ok, failed]);
+  });
+});
+
+// Epic 20「像不像比賽」新增的契約：型別由 tsc 把關，這裡只留最小的執行期斷言
+describe('Epic 20 像不像比賽契約（型別層）', () => {
+  const ended: RoundPublic = {
+    roundNo: 2,
+    phase: 'ended',
+    setterId: 'p0',
+    topic: '皮卡丘',
+    mode: 'mimic',
+    startedAt: 1_000,
+    endsAt: null,
+    participantIds: ['p1'],
+    submittedCount: 1,
+    judgedCount: 1,
+    judgeMode: 'ai',
+    commentMode: 'off',
+    results: [],
+    lastTopic: '皮卡丘',
+    lastMode: 'mimic',
+  };
+
+  it('ContestMode 只有 topic／mimic', () => {
+    const modes: ContestMode[] = ['topic', 'mimic'];
+    expect(modes).toEqual(['topic', 'mimic']);
+    // @ts-expect-error 沒有其他模式
+    const bad: ContestMode = 'copy';
+    expect(bad).toBe('copy');
+  });
+
+  it('RoundPublic 帶 mode 與 lastMode（ContestMode | null，皆必填）', () => {
+    const choosing: RoundPublic = { ...ended, phase: 'choosing', topic: null, mode: null };
+    const nextDrawing: RoundPublic = { ...ended, roundNo: 3, phase: 'drawing', mode: 'topic', results: null, lastTopic: null, lastMode: null };
+    expect(ended.mode).toBe('mimic');
+    expect(ended.lastMode).toBe('mimic');
+    expect(choosing.mode).toBeNull();
+    expect(choosing.lastMode).toBe('mimic');
+    expect(nextDrawing.lastMode).toBeNull();
+    const { mode: _m, lastMode: _l, ...missing } = ended;
+    // @ts-expect-error mode、lastMode 為必填
+    const noModes: RoundPublic = missing;
+    expect(noModes.roundNo).toBe(2);
+  });
+
+  it("ReferenceImage 與 ServerToClientEvents['contest:reference']", () => {
+    const image: ReferenceImage = { roundNo: 2, jpeg: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]).buffer };
+    const received: ReferenceImage[] = [];
+    const handler: ServerToClientEvents['contest:reference'] = (img) => {
+      received.push(img);
+    };
+    handler(image);
+    expect(received).toEqual([image]);
+    expect(new Uint8Array(received[0].jpeg)[0]).toBe(0xff);
+  });
+
+  it("round:setTopic payload：reference 選填（ArrayBuffer）", () => {
+    const sent: Parameters<ClientToServerEvents['round:setTopic']>[0][] = [];
+    const emit: ClientToServerEvents['round:setTopic'] = (payload, ack) => {
+      sent.push(payload);
+      ack({ ok: true, data: undefined });
+    };
+    const acks: Ack[] = [];
+    emit({ topic: '蘋果' }, (r) => acks.push(r));
+    emit({ topic: '照著畫', reference: new ArrayBuffer(4) }, (r) => acks.push(r));
+    expect(sent[0].reference).toBeUndefined();
+    expect(sent[1].reference?.byteLength).toBe(4);
+    expect(acks).toHaveLength(2);
+  });
+
+  it('ErrorCode 含 REFERENCE_INVALID', () => {
+    const code: ErrorCode = 'REFERENCE_INVALID';
+    const failed: Ack = { ok: false, error: code, message: '參考圖格式不正確或太大（請選圖片檔）' };
+    expect(failed.ok).toBe(false);
+    // @ts-expect-error 不存在的錯誤碼
+    const bad: ErrorCode = 'IMAGE_INVALID';
+    expect(bad).toBe('IMAGE_INVALID');
   });
 });

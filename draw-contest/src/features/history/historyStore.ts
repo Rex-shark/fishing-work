@@ -13,9 +13,12 @@
 //   開著的那一筆被更新（圖片陸續補上）時只替新的圖片建 URL。
 // 三、銜接點（都在本檔與兩處呼叫）：startHistory() 訂閱遊戲 store 的 round／me（App 掛載時啟動一次，同自動交卷）；
 //   socket/client 收到 contest:gallery 時多呼叫一次 recordGalleryImage（store 只留 object URL，原始 PNG 要從事件拿）。
+// 參考圖（Epic 20 像不像比賽；plan/contest-mimic.md 決策 7）：contest:reference 在 drawing 開始時就到（比建檔早），
+//   所以紀錄器先記著最近一張（roundNo＋Blob）；建檔時該回合是 mimic（lastMode）且 roundNo 相符就一起存，建檔後才到的（中途加入補送）補進那一筆。
+//   檢視時參考圖同樣建 object URL（HistoryOpen.referenceUrl），關閉時一起 revoke。
 // IndexedDB 不可用、被封鎖、配額滿（決策 9）：所有存取都在這裡接住，只 console.warn；清單維持空的，遊戲不受影響。
 import { create } from 'zustand'
-import type { GalleryImage, ResultEntry, RoundPublic } from '@fishing-work/shared/draw-contest'
+import type { GalleryImage, ReferenceImage, ResultEntry, RoundPublic } from '@fishing-work/shared/draw-contest'
 import { galleryBytes, selectIsSetter, useGameStore, type GameState } from '../../store/game'
 import { HISTORY_MAX, createIndexedDbHistory, trimHistory, type HistoryDb, type HistoryRecord } from './historyDb'
 import { canViewHistory } from './historyDisplay'
@@ -31,6 +34,7 @@ export function recordFromRound(
   me: string | null,
   id: number,
   savedAt: number,
+  reference: Blob | null = null,
 ): HistoryRecord {
   return {
     id,
@@ -42,6 +46,7 @@ export function recordFromRound(
     me,
     results: (round.results ?? []).map(withoutPending),
     images: {},
+    reference,
   }
 }
 
@@ -50,7 +55,7 @@ export function recordFromRound(
  * - id、savedAt、roundNo、me、題目：保留先寫的（me、題目原本是空的才補）；
  * - 評分器與評語器：新快照有值就用新的（揭曉後評語失敗會從 ai 變 off），新快照是 null（idle／choosing 已清掉）就保留舊的；
  * - results：以新快照為準（名次與分數由 server 決定），但評語以非 null 優先——新快照是 null 而舊的有字就保留舊的；
- * - 圖片：已有的不動，只補上沒有的
+ * - 圖片：已有的不動，只補上沒有的；參考圖同理（已有的不動，沒有才用新的）
  */
 export function mergeRecord(existing: HistoryRecord | undefined, incoming: HistoryRecord): HistoryRecord {
   if (existing === undefined) return incoming
@@ -67,10 +72,12 @@ export function mergeRecord(existing: HistoryRecord | undefined, incoming: Histo
     me: existing.me ?? incoming.me,
     results,
     images: existing.images,
+    reference: existing.reference ?? incoming.reference,
   }
   const withImages = addImages(next, incoming.images)
   const unchanged =
     withImages.images === existing.images &&
+    next.reference === existing.reference &&
     next.topic === existing.topic &&
     next.judgeMode === existing.judgeMode &&
     next.commentMode === existing.commentMode &&
@@ -101,6 +108,8 @@ export interface HistoryRecorder {
   round(round: RoundPublic, me: string | null): void
   /** 收到 contest:gallery 時呼叫 */
   gallery(image: GalleryImage): void
+  /** 收到 contest:reference 時呼叫（Epic 20）：先記著；記著的那一回合已建檔就補進去 */
+  reference(image: ReferenceImage): void
   /** 記著的那一回合（還會被更新的那一筆）；沒有為 null */
   active(): { id: number; roundNo: number } | null
   /** 排隊中的寫入都做完時 resolve（測試用；不會 reject） */
@@ -114,6 +123,8 @@ interface Patch {
   /** 最新的回合快照（null＝這次只有圖片） */
   record: HistoryRecord | null
   images: Record<string, Blob>
+  /** 參考圖（null＝這次沒有） */
+  reference: Blob | null
 }
 
 function applyPatch(existing: HistoryRecord | undefined, patch: Patch): HistoryRecord | null {
@@ -121,12 +132,15 @@ function applyPatch(existing: HistoryRecord | undefined, patch: Patch): HistoryR
   if (existing === undefined && !patch.create) return null
   const merged = patch.record !== null ? mergeRecord(existing, patch.record) : existing
   if (merged === undefined) return null
-  const next = addImages(merged, patch.images)
+  const withImages = addImages(merged, patch.images)
+  const next = patch.reference !== null && withImages.reference === null ? { ...withImages, reference: patch.reference } : withImages
   return next === existing ? null : next
 }
 
 export function createHistoryRecorder(deps: HistoryRecorderDeps): HistoryRecorder {
   let active: { id: number; roundNo: number } | null = null
+  /** 最近收到的參考圖（drawing 開始就到，比建檔早） */
+  let latestReference: { roundNo: number; blob: Blob } | null = null
   const pending = new Map<number, Patch>()
   let scheduled = false
   let queue: Promise<void> = Promise.resolve()
@@ -134,7 +148,7 @@ export function createHistoryRecorder(deps: HistoryRecorderDeps): HistoryRecorde
   function patchFor(id: number): Patch {
     let patch = pending.get(id)
     if (patch === undefined) {
-      patch = { create: false, record: null, images: {} }
+      patch = { create: false, record: null, images: {}, reference: null }
       pending.set(id, patch)
     }
     return patch
@@ -174,7 +188,9 @@ export function createHistoryRecorder(deps: HistoryRecorderDeps): HistoryRecorde
   /** 回合快照併進等待中的變更（先前排的快照也合併：非 null 的評語與先到的欄位不會被後到的 null 蓋掉） */
   function queueRound(id: number, round: RoundPublic, me: string, create: boolean): void {
     const patch = patchFor(id)
-    const incoming = recordFromRound(round, me, id, deps.now())
+    // 只有 mimic 回合才帶參考圖（roundNo 相符；server 重啟後 roundNo 會重複，所以也看 lastMode）
+    const reference = round.lastMode === 'mimic' && latestReference?.roundNo === round.roundNo ? latestReference.blob : null
+    const incoming = recordFromRound(round, me, id, deps.now(), reference)
     patch.record = patch.record !== null ? mergeRecord(patch.record, incoming) : incoming
     patch.create ||= create
     schedule()
@@ -209,6 +225,16 @@ export function createHistoryRecorder(deps: HistoryRecorderDeps): HistoryRecorde
       schedule()
     },
 
+    reference(image) {
+      const bytes = galleryBytes(image.jpeg)
+      if (bytes === null) return
+      const blob = new Blob([bytes], { type: 'image/jpeg' })
+      latestReference = { roundNo: image.roundNo, blob }
+      if (active === null || image.roundNo !== active.roundNo) return
+      patchFor(active.id).reference = blob
+      schedule()
+    },
+
     active: () => active,
 
     settled: async () => {
@@ -224,10 +250,11 @@ export function createHistoryRecorder(deps: HistoryRecorderDeps): HistoryRecorde
 
 // ─── 檢視：清單與開著的那一筆 ──────────────────────────────────────────
 
-/** 開著的那一筆：存檔內容＋每張圖的 object URL（playerId → URL） */
+/** 開著的那一筆：存檔內容＋每張圖的 object URL（playerId → URL）＋參考圖的 object URL（Epic 20；沒有為 null） */
 export interface HistoryOpen {
   record: HistoryRecord
   urls: ReadonlyMap<string, string>
+  referenceUrl: string | null
 }
 
 export interface HistoryState {
@@ -252,8 +279,29 @@ function urlsFor(images: Readonly<Record<string, Blob>>, keep: ReadonlyMap<strin
   return urls
 }
 
+/** 參考圖的 object URL（已有就沿用）；沒有參考圖或建不出來為 null */
+function referenceUrlFor(reference: Blob | null, keep: string | null = null): string | null {
+  if (reference === null) {
+    if (keep !== null) URL.revokeObjectURL(keep)
+    return null
+  }
+  if (keep !== null) return keep
+  try {
+    return URL.createObjectURL(reference)
+  } catch (error) {
+    env.warn('比賽歷史的參考圖無法顯示', error)
+    return null
+  }
+}
+
 function revokeUrls(urls: ReadonlyMap<string, string>): void {
   for (const url of urls.values()) URL.revokeObjectURL(url)
+}
+
+/** 釋放開著的那一筆的所有 object URL（畫與參考圖） */
+function revokeOpen(open: HistoryOpen): void {
+  revokeUrls(open.urls)
+  if (open.referenceUrl !== null) URL.revokeObjectURL(open.referenceUrl)
 }
 
 /** 換上重讀的清單；開著的那一筆若還在就跟著更新（新補上的圖片建 URL），已不在清單裡（被修剪）就維持記憶體裡的內容 */
@@ -261,7 +309,10 @@ function setEntries(entries: HistoryRecord[]): void {
   useHistoryStore.setState((state) => {
     const record = state.open !== null ? entries.find((r) => r.id === state.open?.record.id) : undefined
     if (state.open === null || record === undefined) return { entries }
-    return { entries, open: { record, urls: urlsFor(record.images, state.open.urls) } }
+    return {
+      entries,
+      open: { record, urls: urlsFor(record.images, state.open.urls), referenceUrl: referenceUrlFor(record.reference, state.open.referenceUrl) },
+    }
   })
 }
 
@@ -276,15 +327,15 @@ export function openHistory(id: number): void {
   if (!allowed(useGameStore.getState()) || open?.record.id === id) return
   const record = entries.find((r) => r.id === id)
   if (record === undefined) return
-  if (open !== null) revokeUrls(open.urls)
-  useHistoryStore.setState({ open: { record, urls: urlsFor(record.images) } })
+  if (open !== null) revokeOpen(open)
+  useHistoryStore.setState({ open: { record, urls: urlsFor(record.images), referenceUrl: referenceUrlFor(record.reference) } })
 }
 
 /** 關閉（回到目前的畫面）並 revoke 所有圖片的 URL；沒有開著時不動作 */
 export function closeHistory(): void {
   const { open } = useHistoryStore.getState()
   if (open === null) return
-  revokeUrls(open.urls)
+  revokeOpen(open)
   useHistoryStore.setState({ open: null })
 }
 
@@ -330,6 +381,11 @@ let recorder: HistoryRecorder = newRecorder()
 /** socket/client 收到 contest:gallery 時呼叫（已加入才會被呼叫）：圖片補進記著的那一回合；沒有記著的回合時不動作 */
 export function recordGalleryImage(image: GalleryImage): void {
   recorder.gallery(image)
+}
+
+/** socket/client 收到 contest:reference 時呼叫（Epic 20；已加入才會被呼叫）：先記著，建檔時一起存；已建檔的那一回合直接補上 */
+export function recordReferenceImage(image: ReferenceImage): void {
+  recorder.reference(image)
 }
 
 /** 排隊中的歷史寫入都做完時 resolve（測試用） */

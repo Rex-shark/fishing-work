@@ -9,7 +9,13 @@
 // - drawing：roundNo++、參賽者＝此刻在線者；交卷期限計時。全員交卷或期限到 → judging。
 // - judging：endsAt 對外為 null，內部另存交卷期限（submitDeadline）做寬限判斷；
 //   佇列清空且（全員交卷 或 寬限已過）→ ended。
-// - ended：results（ranking.ts）、lastTopic＝本回合題目、總分累加、每位交卷者一則 contest:gallery。
+// - ended：results（ranking.ts）、lastTopic＝本回合題目、lastMode＝本回合模式、總分累加、每位交卷者一則 contest:gallery。
+//
+// 像不像比賽（Epic 20，§5 drawing、§5.1b）：setTopic 帶合法 reference（JPEG）→ 本回合 mode 'mimic'，否則 'topic'。
+// - drawing 開始時存下參考圖並對所有在線者廣播 contest:reference；評分與評語都帶參考圖（images 兩張）。
+// - 參考圖只留一份（referenceImage）：本回合的（mode 'mimic'，drawing／judging／ended），或 results 對應的上一回合的
+//   （idle／choosing 且 lastMode 'mimic'）。兩者不會同時需要，下一回合 drawing 開始時換掉（topic 回合則清空）。
+// - join 補送：round.mode 為 'mimic' → 本回合參考圖；否則 results 非 null 且 lastMode 'mimic' → 上回合參考圖。
 //
 // 評語（Epic 15，§5「評語」、§6.1）：每張評分完成的瞬間排進評語佇列（commentary/queue.ts，與評分佇列獨立）。
 // - ended **不等評語**：揭曉當下已完成的寫進 results.comment，未完成者 commentPending=true，
@@ -42,7 +48,9 @@ import {
   type ErrorCode,
   type GalleryImage,
   type JoinResult,
+  type ContestMode,
   type PlayerPublic,
+  type ReferenceImage,
   type ResultEntry,
   type RoomSnapshot,
   type RoundPublic,
@@ -54,6 +62,7 @@ import { JudgeQueue, type JudgeFallbackInfo, type JudgeJob, type JudgeResult } f
 import { createRandomJudge } from './judge/random';
 import type { Judge } from './judge/types';
 import { rankResults, type JudgedSubmission } from './ranking';
+import { checkReference } from './reference';
 import { copyToArrayBuffer, checkSubmission } from './submission';
 
 // ─── 時鐘與計時器抽象（測試注入假時鐘） ─────────────────────────────
@@ -188,6 +197,7 @@ export const ROUND_ERROR_MESSAGES = {
   NOT_PARTICIPANT: '你不是本回合的參賽者',
   ALREADY_SUBMITTED: '你已經交卷了',
   SUBMISSION_INVALID: '圖片格式不正確或太大',
+  REFERENCE_INVALID: '參考圖格式不正確或太大（請選圖片檔）',
   ROOM_FULL: `房間已滿（上限 ${MAX_PLAYERS} 人），請稍後再試`,
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
@@ -226,13 +236,14 @@ interface Submission {
   praise: { fallback: string | null } | null;
 }
 
-/** idle 回合；roundNo、results、lastTopic 沿用上一回合（畫廊停著，§5 欄位生命週期） */
-function idleRound(roundNo: number, results: ResultEntry[] | null, lastTopic: string | null): RoundPublic {
+/** idle 回合；roundNo、results、lastTopic、lastMode 沿用上一回合（畫廊停著，§5 欄位生命週期） */
+function idleRound(roundNo: number, results: ResultEntry[] | null, lastTopic: string | null, lastMode: ContestMode | null): RoundPublic {
   return {
     roundNo,
     phase: 'idle',
     setterId: null,
     topic: null,
+    mode: null,
     startedAt: null,
     endsAt: null,
     participantIds: [],
@@ -242,6 +253,7 @@ function idleRound(roundNo: number, results: ResultEntry[] | null, lastTopic: st
     commentMode: null,
     results,
     lastTopic,
+    lastMode,
   };
 }
 
@@ -292,7 +304,7 @@ export class Room {
   private readonly bySocket = new Map<string, string>();
   private readonly byToken = new Map<string, string>();
 
-  protected round: RoundPublic = idleRound(0, null, null);
+  protected round: RoundPublic = idleRound(0, null, null, null);
   private roundTimer: TimerHandle | null = null;
   /** 本回合交卷期限（drawing 的 endsAt）；judging 時 round.endsAt 為 null，寬限判斷以此為準 */
   private submitDeadline: number | null = null;
@@ -301,6 +313,13 @@ export class Room {
 
   /** 本回合的交卷（參賽者 id → 交卷）；下一回合 drawing 開始時清空，idle／choosing 期間保留給畫廊 */
   private readonly submissions = new Map<string, Submission>();
+
+  /**
+   * 像不像比賽的參考圖（Epic 20，§5.1b）：mimic 回合 drawing 開始時存入，roundNo 為該回合；
+   * 本回合（mode 'mimic'）與 results 對應的上一回合（lastMode 'mimic'）共用這一份——下一回合 drawing 開始時才換掉或清空，
+   * 所以 idle／choosing 期間仍是上一回合的。topic 回合為 null。
+   */
+  private referenceImage: ReferenceImage | null = null;
 
   /** 環狀緩衝：最多 CHAT_HISTORY 則 */
   private readonly chatLog: ChatMessage[] = [];
@@ -347,7 +366,7 @@ export class Room {
     const boundId = this.bySocket.get(socketId);
     if (boundId !== undefined) {
       const player = this.mustGet(boundId);
-      return { ack: this.joinAck(player), effects: this.galleryEffects({ only: player.id }) };
+      return { ack: this.joinAck(player), effects: [...this.referenceEffects({ only: player.id }), ...this.galleryEffects({ only: player.id })] };
     }
 
     const tokenOwner = token === undefined ? undefined : this.byToken.get(token);
@@ -388,6 +407,7 @@ export class Room {
       effects: [
         this.playersUpdate(),
         { kind: 'emit', to: { except: player.id }, event: 'chat:message', payload: msg },
+        ...this.referenceEffects({ only: player.id }),
         ...this.galleryEffects({ only: player.id }),
       ],
     };
@@ -437,7 +457,7 @@ export class Room {
     if (this.onlineCount() < MIN_PLAYERS) return fail('NOT_ENOUGH_PLAYERS');
 
     this.round = {
-      ...idleRound(this.round.roundNo, this.round.results, this.round.lastTopic),
+      ...idleRound(this.round.roundNo, this.round.results, this.round.lastTopic, this.round.lastMode),
       phase: 'choosing',
       setterId: player.id,
       endsAt: this.clock.now() + this.durations.choosingMs,
@@ -448,16 +468,21 @@ export class Room {
   }
 
   /**
-   * 出題：phase = choosing、呼叫者為出題者、題目合法 → drawing。
-   * idle／ended 或非出題者 → NOT_SETTER；drawing／judging 的出題者 → ROUND_BUSY。
+   * 出題：phase = choosing、呼叫者為出題者、題目合法、參考圖（選填）合法 → drawing。
+   * 檢查順序（§5.1b）：phase／身分（idle／ended 或非出題者 → NOT_SETTER；drawing／judging 的出題者 → ROUND_BUSY）
+   * → 題目（TOPIC_INVALID）→ 參考圖（REFERENCE_INVALID）；失敗皆維持 choosing。
+   * reference 為 payload 的原值（undefined = 沒附 → topic 模式；合法 JPEG → mimic 模式，Epic 20）。
    */
-  setTopic(socketId: string, rawTopic: string): ActionOutcome {
+  setTopic(socketId: string, rawTopic: string, reference?: unknown): ActionOutcome {
     const player = this.playerBySocket(socketId);
     if (player === undefined) return fail('NOT_IN_ROOM');
     const denied = this.setterGate(player);
     if (denied !== null) return denied;
     const check = validateTopic(rawTopic);
     if (!check.ok) return { ack: { ok: false, error: 'TOPIC_INVALID', message: TOPIC_INVALID_MESSAGE }, effects: [] };
+    const ref = checkReference(reference);
+    if (!ref.ok) return fail('REFERENCE_INVALID');
+    const mode: ContestMode = ref.jpeg === null ? 'topic' : 'mimic';
 
     // 新回合：清掉上回合的交卷與畫廊、評分佇列換回合；上回合未完成的評語工作一併丟棄（不算失敗，§5 評語）
     this.submissions.clear();
@@ -467,11 +492,15 @@ export class Room {
     const endsAt = now + this.durations.drawMs;
     this.submitDeadline = endsAt;
     this.submitClosed = false;
+    const roundNo = this.round.roundNo + 1;
+    // 上回合的參考圖在此換掉（topic 回合清空），§5.1b
+    this.referenceImage = ref.jpeg === null ? null : { roundNo, jpeg: ref.jpeg };
     this.round = {
-      roundNo: this.round.roundNo + 1,
+      roundNo,
       phase: 'drawing',
       setterId: player.id,
       topic: check.topic,
+      mode,
       startedAt: now,
       endsAt,
       participantIds: this.playerList().filter((p) => p.connected).map((p) => p.id),
@@ -481,13 +510,25 @@ export class Room {
       commentMode: null,
       results: null,
       lastTopic: null,
+      lastMode: null,
     };
     this.setRoundTimer(this.durations.drawMs, () => this.toJudging());
 
-    const msg = this.pushSystem(`${player.nickname} 出題「${check.topic}」，開始作畫`);
+    // 回合開始訊息（§5 system 訊息）：mimic 回合為「X 出題「{topic}」（像不像比賽：照著參考圖畫）」
+    const text =
+      mode === 'mimic'
+        ? `${player.nickname} 出題「${check.topic}」（像不像比賽：照著參考圖畫）`
+        : `${player.nickname} 出題「${check.topic}」，開始作畫`;
+    const msg = this.pushSystem(text);
     return {
       ack: OK,
-      effects: [this.roundUpdate(), this.playersUpdate(), { kind: 'emit', to: 'all', event: 'chat:message', payload: msg }],
+      effects: [
+        this.roundUpdate(),
+        // mimic：drawing 開始時對所有在線者廣播參考圖（排在 round:update 之後，收到時 roundNo 已是本回合）
+        ...this.referenceEffects('all'),
+        this.playersUpdate(),
+        { kind: 'emit', to: 'all', event: 'chat:message', payload: msg },
+      ],
     };
   }
 
@@ -528,7 +569,7 @@ export class Room {
     this.syncCounts();
     this.queue.push({
       playerId: player.id,
-      input: { png: Buffer.from(png), topic: this.round.topic ?? '' },
+      input: { png: Buffer.from(png), topic: this.round.topic ?? '', ...this.referenceInput() },
     });
 
     const effects: Effect[] = [this.playersUpdate(), this.roundUpdate()];
@@ -668,11 +709,12 @@ export class Room {
     const sub = this.submissions.get(job.playerId);
     if (sub === undefined || sub.result !== null) return [];
     sub.result = result;
-    // 送給評語器的是原圖、題目與該張最終分數（退回 random 時就是 random 的分數）；不給暱稱與名次。
+    // 送給評語器的是原圖、題目、該張最終分數（退回 random 時就是 random 的分數）與該玩家當下的暱稱；不給名次。
+    // 暱稱 2026-10-21 起給（Phase 7 決策 18，Rex：嘗試看看模型會不會利用名稱），見 commentNickname。
     // 關閉或本回合已連續兩次失敗時 push 回 false：這張沒有評語（comment null、commentPending false）
     sub.commentPending = this.comments.push({
       playerId: sub.playerId,
-      input: { png: Buffer.from(sub.png), topic: job.input.topic, score: result.score },
+      input: { png: Buffer.from(sub.png), topic: job.input.topic, score: result.score, nickname: this.commentNickname(sub.playerId), ...this.referenceInput() },
     });
     this.syncCounts();
     if (phase === 'judging') this.round = { ...this.round, judgeMode: this.queue.mode };
@@ -763,6 +805,7 @@ export class Room {
       commentMode,
       results,
       lastTopic: this.round.topic,
+      lastMode: this.round.mode,
     };
 
     const first = results[0];
@@ -793,13 +836,51 @@ export class Room {
     if (sub === undefined || sub.result === null) return;
     const job: CommentJob = {
       playerId: sub.playerId,
-      input: { png: Buffer.from(sub.png), topic: this.round.topic ?? '', score: sub.result.score, praise: true },
+      input: {
+        png: Buffer.from(sub.png),
+        topic: this.round.topic ?? '',
+        score: sub.result.score,
+        nickname: this.commentNickname(sub.playerId),
+        praise: true,
+        ...this.referenceInput(),
+      },
     };
     if (!this.comments.pushFront(job)) return;
     sub.praise = { fallback: sub.comment };
     sub.comment = null;
     sub.commentPending = true;
     results[0] = { ...winner, comment: null, commentPending: true };
+  }
+
+  /**
+   * 評語提示詞用的暱稱（§6.1，Phase 7）：該玩家此刻的 nickname（已過 validateNickname，不另過濾）。
+   * 呼叫點（onJudged、redoWinnerComment）都有交卷紀錄，而參賽者離開時交卷紀錄會一併丟棄，所以玩家理應還在；
+   * 萬一不在（不該發生），比照 rankResults 的退路給空字串、評語照常產生，不因此丟掉這張評語。
+   */
+  private commentNickname(playerId: string): string {
+    return this.players.get(playerId)?.nickname ?? '';
+  }
+
+  /**
+   * 評分與評語的參考圖欄位（Epic 20）：本回合是 mimic 時為 { reference }，否則為空物件（topic 回合的輸入完全不變）。
+   * 只在 drawing／judging／ended 呼叫（交卷、評完、揭曉），此時 referenceImage 必為本回合的。
+   */
+  private referenceInput(): { reference?: Buffer } {
+    if (this.round.mode !== 'mimic' || this.referenceImage === null) return {};
+    return { reference: Buffer.from(this.referenceImage.jpeg) };
+  }
+
+  /**
+   * contest:reference（§4 ReferenceImage 註解、§5.1b join 補送）：
+   * round.mode 為 'mimic'（drawing／judging／ended）→ 本回合參考圖；否則 results 非 null 且 lastMode 為 'mimic' → 上回合參考圖；
+   * 其餘不送。roundNo 為參考圖所屬回合（idle／choosing 時 round.roundNo 仍是上一回合）。
+   */
+  private referenceEffects(to: Audience): Effect[] {
+    const { mode, results, lastMode, roundNo } = this.round;
+    const wanted = mode === 'mimic' || (results !== null && lastMode === 'mimic');
+    const image = this.referenceImage;
+    if (!wanted || image === null || image.roundNo !== roundNo) return [];
+    return [{ kind: 'emit', to, event: 'contest:reference', payload: { roundNo: image.roundNo, jpeg: image.jpeg } }];
   }
 
   /** round.results 非 null 時，每位交卷者一則 contest:gallery（依 rank 順序） */
@@ -848,7 +929,7 @@ export class Room {
     const setter = this.round.setterId === null ? undefined : this.players.get(this.round.setterId);
     const nickname = setter?.nickname ?? leftNickname ?? '';
     this.clearRoundTimer();
-    this.round = idleRound(this.round.roundNo, this.round.results, this.round.lastTopic);
+    this.round = idleRound(this.round.roundNo, this.round.results, this.round.lastTopic, this.round.lastMode);
 
     const text = {
       cancel: `${nickname} 取消出題`,
@@ -914,7 +995,7 @@ export class Room {
 
     // 不發 system 訊息：從寬限期回來只更新玩家清單的 connected
     if (wasGrace) effects.push(this.playersUpdate());
-    effects.push(...this.galleryEffects({ only: player.id }));
+    effects.push(...this.referenceEffects({ only: player.id }), ...this.galleryEffects({ only: player.id }));
     return { ack: this.joinAck(player), effects };
   }
 

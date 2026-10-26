@@ -18,7 +18,7 @@ compatibility: 需要能操作瀏覽器的工具（開網址、在頁面執行 J
 
 ## 第 0 步：開網址、裝腳本
 
-網址由派你來的人提供，形如 `http://<主機>/draw-contest/`（本機是 `http://localhost/draw-contest/`）。開啟後停在首頁（標題「繪圖比賽」），先裝腳本再加入。
+網址由派你來的人提供，形如 `http://<主機>/draw-contest/`（本機是 `http://localhost/draw-contest/`）。開啟後停在首頁（頁面上的大標題是「繪圖比賽」；瀏覽器分頁標題是「fishing-work」，加入後才變成「簡報1 - PowerPoint」），先裝腳本再加入。
 
 腳本是本技能目錄下的 `scripts/draw-helper.min.js`。依你的工具擇一：
 
@@ -69,10 +69,12 @@ await dc.waitFor('drawing', 25)
 
 ### 3. 畫圖、交卷
 
-題目在 `status.topic`。想好構圖後一次送出：
+題目在 `status.topic`。想好構圖後，**把所有步驟放進同一次 `dc.draw` 呼叫送出**，不要一步呼叫一次：每次呼叫都要等模型回一輪，分開送的話光來回就會耗掉大半時間。`dc.draw` 本身幾十步也只要不到一秒。
+
+**先看 `status.mimic`。** 是 `true` 的話，這一回合是「像不像比賽」：出題者附了一張參考圖，畫面右上角會浮著「參考圖」面板（點它可以放大），**評分看的是你的畫像不像那張參考圖，不是像不像題目**。先截圖看參考圖，照它的構圖、主體位置、配色畫；截圖不能用時，就照題目畫。
 
 ```js
-await dc.draw([ /* steps，寫法見下面 */ ])
+await dc.draw([ /* 全部的 steps，寫法見下面 */ ])
 ```
 
 回 `{ ok: true, done: n }` 就是畫完了。截一張圖確認（剛畫完就截可能還沒更新，等 1 秒）。不滿意就再呼叫一次 `dc.draw` 補畫，滿意就交卷：
@@ -80,6 +82,14 @@ await dc.draw([ /* steps，寫法見下面 */ ])
 ```js
 await dc.submit()
 ```
+
+**截圖不能用，或你的模型回一輪要很久時，畫完直接交卷**，作畫和交卷放在同一次呼叫：
+
+```js
+const d = await dc.draw([ /* steps */ ]); const s = await dc.submit(); return { draw: d, submit: s.ok }
+```
+
+`d.ok` 是 `true`、`d.done` 等於步驟數，就代表每一步都畫上去了，沒截圖也不必擔心。不要為了截圖反覆重試把時間耗光，時間到才自動交卷的話，你就沒有機會確認交出去的是什麼。
 
 回的 `status.submitted` 是 `true` 就交卷成功。**交了不能改。**
 
@@ -93,13 +103,14 @@ await dc.waitForComments(25)       // 等評語寫完；回 { done, results }，
 `results` 每張畫一筆 `{ label, commentPending }`，`label` 長這樣：
 
 ```
-第 1 名 暱稱，87 分，你，メスガキ：<評語>
+第 1 名 暱稱，87 分，你，ミオ：<評語>
 ```
 
 - 有「你」的那一筆是你的。
+- 像不像比賽的揭曉畫面第一格是「參考圖」卡，沒有名次與分數，`results` 已經把它略過。
 - 分數後面有「隨機評分」表示這回合 AI 評審沒上線、分數是隨機的，不代表畫得好壞。
 - 同分時先交卷的排前面；沒交卷的排最後、0 分。
-- 「メスガキ」是評審的名字，後面是她對這張畫的一句評語。`label` 裡沒有這一段表示這張沒有評語。
+- 「ミオ」是評審的名字，後面是她對這張畫的一句評語。`label` 裡沒有這一段表示這張沒有評語。
 - 評語比分數晚到，第一名那句通常最晚，最久可能要一分鐘左右。`dc.waitForComments` 最多呼叫 4 次（約 100 秒）；到時 `done` 還是 `false` 就不等了，照手上的 `results` 回報，並註明哪幾張的評語還沒出來（`commentPending` 是 `true` 的那幾筆）。
 
 題目用 `dc.status().lastTopic` 取。把題目、你的名次、分數、評語回報給派你來的人。
@@ -113,7 +124,7 @@ await dc.waitForComments(25)       // 等評語寫完；回 { done, results }，
 | 呼叫 | 用途 |
 |---|---|
 | `await dc.join(nickname)` | 在首頁以暱稱加入；回 `{ ok, error, status }` |
-| `dc.status()` | 目前狀態：`phase`、`text`（畫面上那一列的原文）、`secondsLeft`、`canVolunteer`；作畫中另有 `topic`、`role`、`canDraw`、`submitted`；其他階段有 `lastTopic` |
+| `dc.status()` | 目前狀態：`phase`、`text`（畫面上那一列的原文）、`secondsLeft`、`canVolunteer`；作畫中另有 `topic`、`role`、`canDraw`、`submitted`、`mimic`（是不是像不像比賽）；其他階段有 `lastTopic` |
 | `await dc.waitFor(phase, seconds)` | 等到進入指定階段（可給陣列，如 `['judging', 'ended']`）；回 `{ reached, status }` |
 | `await dc.draw(steps)` | 依序畫出 `steps`；回 `{ ok, done, status }`，失敗時多 `error` 與 `failedStep` |
 | `await dc.submit()` | 交卷，交了不能改 |
@@ -122,7 +133,7 @@ await dc.waitForComments(25)       // 等評語寫完；回 { done, results }，
 | `await dc.say(text)` | 在聊天室送一則訊息（最多 200 字）；回 `{ ok, error }` |
 | `dc.chat(n)` | 聊天室最後 `n` 則（預設 20）：玩家訊息 `{ who, time, text }`，系統訊息的 `who` 是 `null` |
 | `dc.topics()` | 出過的題目，舊到新（只列得出聊天室還看得到的） |
-| `await dc.volunteer()`、`await dc.setTopic(topic)`、`await dc.cancelTopic()` | 出題用，見 set-draw-contest-topic |
+| `dc.suggestTopics(level, n)`、`await dc.volunteer()`、`await dc.setTopic(topic)`、`await dc.cancelTopic()` | 出題用，見 set-draw-contest-topic |
 
 `phase` 的值：
 
@@ -151,14 +162,14 @@ await dc.waitForComments(25)       // 等評語寫完；回 { done, results }，
 | `undo` | 選填 `times` | 復原最後一筆 |
 | `clear` | | 清空所有筆跡（背景色保留） |
 
-- 每個會畫東西的步驟都可以帶 `color`（`#RRGGBB`）與 `size`（粗細 1–64）。**設定後一直沿用到下次更改**，所以同色的步驟不必重複寫。
+- 每個會畫東西的步驟都可以帶 `color`（`#RRGGBB`）與 `size`（粗細 1–64）。**設定後一直沿用到下次更改**：沒寫 `color` 的步驟用的是上一步的顏色，不是白色。實戰中有人畫光束時漏寫顏色，沿用了上一步的黑色，畫在夜空上幾乎看不見。**換畫一個新東西時就寫上 `color`**，同一個東西的連續幾筆才省略。
 - `fill: true` 是整塊塗滿；沒有 `fill` 只畫外框，線寬是目前的 `size`。
 - **後畫的蓋住先畫的**，順序是：背景 → 大色塊 → 細節。
 - 顏色可以是任意 `#RRGGBB`。常用色：白 `#FFFFFF`、黑 `#000000`、灰 `#9E9E9E`、紅 `#F44747`、橘 `#FF8C00`、黃 `#FFD700`、綠 `#6A9955`、藍 `#569CD6`、紫 `#C586C0`、膚色 `#FFECEA`、咖啡 `#8B4513`、天藍 `#87CEEB`。
 - 形狀可以超出畫布，超出的部分會被壓在邊緣上。圓心放在畫布下方的大橢圓，露出來的上緣就是一座山丘。
 - 同心的半圓由大到小疊，就是彩虹或西瓜切片。
 
-範例（題目「太陽和樹」）。第 4 步沒寫 `color`，沿用上一步的黃色：
+範例（畫天空、草地、太陽和一棵樹）。第 4 步沒寫 `color`，沿用上一步的黃色：
 
 ```js
 await dc.draw([
@@ -174,7 +185,7 @@ await dc.draw([
 
 ## 時間分配
 
-`dc.draw` 本身只要兩三秒，時間幾乎都花在構思。實測的 agent 都在題目出現後 20 秒內畫完，剩 90 秒以上交卷。
+`dc.draw` 本身不到一秒，時間幾乎都花在構思和模型回應。實測雲端大模型在題目出現後 20 秒內畫完、剩 90 秒以上交卷；回應慢的模型每一輪就要十幾秒到一分鐘，所以呼叫次數越少越好：一次畫完、畫完就交。
 
 | 剩餘時間 | 做什麼 |
 |---|---|
@@ -193,7 +204,7 @@ await dc.draw([
 - 用這個東西最典型的顏色（蘋果紅、葉子綠、太陽黃）。
 - 畫出一兩個讓人一眼認得的特徵（蘋果的梗和葉子、貓的尖耳朵和鬍鬚）。
 - 背景與主體要有對比。黑底配深色主體會看不清楚，先用 `bg` 換背景色。
-- 題目有兩個東西（「太陽和樹」）就兩個都要畫出來。
+- 題目有兩個東西就兩個都要畫出來。
 
 ## 規矩
 
@@ -211,6 +222,7 @@ await dc.draw([
 | `dc.draw` 回 `ok: false` 且有 `failedStep` | 那一步寫錯了（缺欄位、色碼不是 `#RRGGBB`）。前面的步驟已經畫上去，修正後只重送剩下的 |
 | 截圖裡看不到剛畫的東西 | 等 1 秒再截一次 |
 | 截圖工具只回一個檔名 | 圖存成檔案了（Playwright MCP 存在 `.playwright-mcp/` 底下），把那個圖檔讀出來看 |
+| 截圖一直逾時（卡在「waiting for fonts to load」或「waiting for element to be stable」） | 瀏覽器視窗被別的視窗蓋住或縮小了，Chrome 不繪製畫面就截不到圖。不要重試，畫完直接交卷（見第 3 步）。要恢復截圖，請派你來的人把視窗露出來，或讓 Playwright MCP 以 `--headless` 執行 |
 | `dc.submit` 回 `ok: false` | 再呼叫一次 |
 | 一次呼叫等很久然後逾時 | 等待類的呼叫單次不要超過 25 秒，分多次呼叫 |
 | `dc.status().phase` 回到 `home`，首頁寫「此暱稱已在其他分頁或連線重新加入」 | 有人用同一個暱稱加入了；換一個暱稱 `dc.join` |

@@ -336,7 +336,7 @@ describe('出題對話框（TopicDialog）：送出中交給殼層的 busy，輸
     const p = captureTopic()
     p?.items[0]?.onSelect()
     await vi.waitFor(() => expect(setTopic).toHaveBeenCalledTimes(1))
-    expect(setTopic).toHaveBeenLastCalledWith('')
+    expect(setTopic).toHaveBeenLastCalledWith('', undefined)
     await expect(vi.mocked(setTopic).mock.results[0]?.value).resolves.toEqual(FAIL)
     p?.items[0]?.onSelect()
     await vi.waitFor(() => expect(setTopic).toHaveBeenCalledTimes(2))

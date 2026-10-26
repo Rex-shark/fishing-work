@@ -1,6 +1,8 @@
 // Clef 決策模型評分器：spec/draw-contest/architecture.md §3「評分器環境變數」、§6「ollama」
 // POST ${OLLAMA_URL}/v1/systemone，三題 likeness／is_topic／effort，合成 0..SCORE_MAX 的分數。
 // 圖片為交卷原 PNG 的 base64（2026-10-12 起不再縮圖：clef:27b-nvfp4 在 MLX 後端 1280×720 約 2.4 秒）。
+// Epic 20 像不像比賽（input.reference 有值）：images 為 [參考圖 JPEG, 交卷 PNG]、state.task 為 MIMIC_TASK，
+// 兩題 similarity／effort（不問 is_topic），合成 score = round(100 × (0.9 × similarity/4 + 0.1 × effort/2))。
 //
 // 真實 API 格式（2026-10-07 以 Ollama 0.40.0、clef:27b-q4_k_m 實測）：
 //   請求 { model, images: [base64], state: {...任意 JSON}, questions: { <名稱>: Question } }
@@ -49,6 +51,44 @@ export interface SystemOneRequest {
     likeness: { type: 'score'; instructions: string; criteria: string[] };
     is_topic: { type: 'noul'; instructions: string };
     effort: { type: 'score'; instructions: string; criteria: string[] };
+  };
+}
+
+// ─── 像不像比賽（Epic 20，§6「像不像比賽」；文案逐字）──────────────
+
+export const MIMIC_TASK = 'A player tried to copy the first image (the reference) by drawing the second image in a drawing contest.';
+export const SIMILARITY_CRITERIA = [
+  'Completely different',
+  'Slightly similar',
+  'Roughly similar',
+  'Very similar',
+  'Nearly identical',
+] as const;
+/** similarity 的題目文字（§6 逐字，與題目無關：主體由參考圖定義） */
+export const SIMILARITY_INSTRUCTIONS =
+  "The first image is the reference and the second is the player's drawing. How closely does the drawing reproduce the reference in shapes, composition and main subject, ignoring colour and line thickness?";
+
+export interface SystemOneMimicRequest {
+  model: string;
+  /** [參考圖 JPEG, 交卷 PNG]（順序固定：instructions 以「first／second」指稱） */
+  images: [string, string];
+  state: { task: string; topic: string };
+  questions: {
+    similarity: { type: 'score'; instructions: string; criteria: string[] };
+    effort: { type: 'score'; instructions: string; criteria: string[] };
+  };
+}
+
+/** mimic 版請求：不問 is_topic（主體由參考圖定義）；effort 與現況相同 */
+export function buildMimicRequest(model: string, topic: string, referenceBase64: string, imageBase64: string): SystemOneMimicRequest {
+  return {
+    model,
+    images: [referenceBase64, imageBase64],
+    state: { task: MIMIC_TASK, topic },
+    questions: {
+      similarity: { type: 'score', instructions: SIMILARITY_INSTRUCTIONS, criteria: [...SIMILARITY_CRITERIA] },
+      effort: { type: 'score', instructions: EFFORT_INSTRUCTIONS, criteria: [...EFFORT_CRITERIA] },
+    },
   };
 }
 
@@ -146,6 +186,39 @@ export function combineScore(raw: SystemOneRaw): JudgeOutput {
   return { score, confidence };
 }
 
+/** mimic 版模型原始兩值（給 log 與測試） */
+export interface SystemOneMimicRaw {
+  /** 0..4 */
+  similarity: number;
+  /** similarity 的信心值 0..1 */
+  similarityConfidence: number;
+  /** 0..2 */
+  effort: number;
+}
+
+/** 解析 mimic 版回應；缺欄位、型別或數值不合法一律 throw（佇列會退回 random） */
+export function parseMimicResponse(json: unknown): SystemOneMimicRaw {
+  if (typeof json !== 'object' || json === null) throw new Error('systemone 回應不是 JSON 物件');
+  const answers = (json as Record<string, unknown>).answers;
+  if (typeof answers !== 'object' || answers === null) throw new Error('systemone 回應缺 answers');
+  const ans = answers as Record<string, unknown>;
+  const similarity = readAnswer(ans, 'similarity', 'score');
+  const effort = readAnswer(ans, 'effort', 'score');
+  return {
+    similarity: readNumber(similarity.score, 'similarity.score', 0, SIMILARITY_CRITERIA.length - 1),
+    similarityConfidence: readNumber(similarity.confidence, 'similarity.confidence', 0, 1),
+    effort: readNumber(effort.score, 'effort.score', 0, EFFORT_CRITERIA.length - 1),
+  };
+}
+
+/** §6 mimic 合成：score = round(100 × (0.9 × similarity/4 + 0.1 × effort/2))，夾在 0..SCORE_MAX；confidence = similarity.confidence */
+export function combineMimicScore(raw: SystemOneMimicRaw): JudgeOutput {
+  const value = 100 * (0.9 * (raw.similarity / 4) + 0.1 * (raw.effort / 2));
+  const score = Math.min(SCORE_MAX, Math.max(0, Math.round(value)));
+  const confidence = Math.min(1, Math.max(0, raw.similarityConfidence));
+  return { score, confidence };
+}
+
 // ─── 評分器 ───────────────────────────────────────────────────────
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -157,8 +230,8 @@ export interface OllamaJudgeOptions {
   model: string;
   /** 測試注入；預設全域 fetch */
   fetch?: FetchLike;
-  /** 每張評分完成時回報原始三值與耗時（給 log） */
-  onScored?: (info: { topic: string; raw: SystemOneRaw; out: JudgeOutput; ms: number; inputTokens?: number }) => void;
+  /** 每張評分完成時回報原始值與耗時（給 log）；mode 'mimic' 時 raw 為 similarity／effort 兩值（Epic 20） */
+  onScored?: (info: { topic: string; mode: 'topic' | 'mimic'; raw: SystemOneRaw | SystemOneMimicRaw; out: JudgeOutput; ms: number; inputTokens?: number }) => void;
 }
 
 /** fetch 失敗的可讀說明：Node 的 fetch 只說「fetch failed」，原因在 cause（ECONNREFUSED、bad port…） */
@@ -190,7 +263,7 @@ async function httpError(res: Response): Promise<Error> {
 }
 
 /** POST /v1/systemone 並回傳解析後的 JSON；連線失敗、非 2xx、壞 JSON 皆 throw；中止（逾時／丟棄）原樣拋出，讓佇列辨認 */
-async function postSystemOne(fetchImpl: FetchLike, endpoint: string, body: SystemOneRequest, signal: AbortSignal): Promise<unknown> {
+async function postSystemOne(fetchImpl: FetchLike, endpoint: string, body: SystemOneRequest | SystemOneMimicRequest, signal: AbortSignal): Promise<unknown> {
   let res: Response;
   try {
     res = await fetchImpl(endpoint, {
@@ -226,14 +299,28 @@ export function createOllamaJudge(options: OllamaJudgeOptions): Judge {
     async score(input: JudgeInput, signal: AbortSignal): Promise<JudgeOutput> {
       if (signal.aborted) throw abortReason(signal);
       const started = Date.now();
-      // 交卷原圖（1280×720）直送，不縮圖（Epic 15 決策 12；spec §6）
-      const body = buildSystemOneRequest(options.model, input.topic, input.png.toString('base64'));
+      // 交卷原圖（1280×720）直送，不縮圖（Epic 15 決策 12；spec §6）；mimic 回合參考圖在前、作品在後（Epic 20）
+      const png = input.png.toString('base64');
+      const mimic = input.reference !== undefined;
+      const body = mimic
+        ? buildMimicRequest(options.model, input.topic, input.reference!.toString('base64'), png)
+        : buildSystemOneRequest(options.model, input.topic, png);
       const json = await postSystemOne(fetchImpl, endpoint, body, signal);
-      const raw = parseSystemOneResponse(json);
-      const out = combineScore(raw);
+      let raw: SystemOneRaw | SystemOneMimicRaw;
+      let out: JudgeOutput;
+      if (mimic) {
+        const r = parseMimicResponse(json);
+        raw = r;
+        out = combineMimicScore(r);
+      } else {
+        const r = parseSystemOneResponse(json);
+        raw = r;
+        out = combineScore(r);
+      }
       const inputTokens = readInputTokens(json);
       options.onScored?.({
         topic: input.topic,
+        mode: mimic ? 'mimic' : 'topic',
         raw,
         out,
         ms: Date.now() - started,

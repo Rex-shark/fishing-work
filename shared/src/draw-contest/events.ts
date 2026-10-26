@@ -9,6 +9,8 @@ export type ContestPhase = 'idle' | 'choosing' | 'drawing' | 'judging' | 'ended'
 export type JudgeMode = 'ai' | 'random';
 /** Epic 15：本回合評語器；'off' = 環境變數關閉或本回合連續兩次失敗跳過 */
 export type CommentMode = 'ai' | 'off';
+/** Epic 20：回合模式；topic＝只有題目（現況）；mimic＝像不像比賽（出題附參考圖，評分為與參考圖的相似度） */
+export type ContestMode = 'topic' | 'mimic';
 
 export interface PlayerPublic {
   id: string;             // server 產生的穩定 id（重連接管後不變）
@@ -40,6 +42,7 @@ export interface RoundPublic {
   phase: ContestPhase;
   setterId: string | null;      // 出題者；idle 為 null
   topic: string | null;         // drawing 起所有人看得到；choosing 時尚未設定為 null
+  mode: ContestMode | null;     // Epic 20：drawing 起有值（setTopic 帶 reference → 'mimic'，否則 'topic'）；idle／choosing 為 null
   startedAt: number | null;     // drawing 開始 epoch ms
   endsAt: number | null;        // choosing：出題期限；drawing：交卷期限；其餘 null
   participantIds: string[];     // 本回合參賽者（drawing 開始時定案；寬限期滿離開者移除）
@@ -49,6 +52,7 @@ export interface RoundPublic {
   commentMode: CommentMode | null; // Epic 15：本回合評語器（judging 起；關閉或本回合失敗跳過後為 'off'）；生命週期同 judgeMode
   results: ResultEntry[] | null; // ended 才有；下一回合 drawing 開始時清空（idle／choosing 期間資料保留；畫面上 idle／ended 顯示畫廊，choosing 不顯示）
   lastTopic: string | null;     // results 對應的題目（揭曉畫面與中途加入者顯示用）；與 results 同生命週期
+  lastMode: ContestMode | null; // Epic 20：results 對應的模式；與 results 同生命週期
 }
 
 export type ChatKind = 'chat' | 'system';
@@ -77,10 +81,13 @@ export interface GalleryImage { roundNo: number; playerId: string; png: ArrayBuf
 /** Epic 15：一張畫的評語完成（成功為字串、失敗為 null）；只在 ended 之後才發，ended 前完成的直接寫進 results */
 export interface CommentUpdate { roundNo: number; playerId: string; comment: string | null }
 
+/** Epic 20：像不像比賽的參考圖（客戶端正規化後的 JPEG，長邊 ≤ 1280）；drawing 開始時廣播；join 時若 round.mode 為 mimic（本回合）或 results 非 null 且 lastMode 為 mimic（上回合）則補送 */
+export interface ReferenceImage { roundNo: number; jpeg: ArrayBuffer }
+
 export type ErrorCode =
   | 'NICKNAME_INVALID' | 'NICKNAME_TAKEN' | 'NOT_IN_ROOM' | 'ROOM_FULL'
   | 'ROUND_BUSY' | 'NOT_SETTER' | 'NOT_ENOUGH_PLAYERS' | 'TOPIC_INVALID'
-  | 'NOT_DRAWING' | 'NOT_PARTICIPANT' | 'ALREADY_SUBMITTED' | 'SUBMISSION_INVALID'
+  | 'NOT_DRAWING' | 'NOT_PARTICIPANT' | 'ALREADY_SUBMITTED' | 'SUBMISSION_INVALID' | 'REFERENCE_INVALID'
   | 'MESSAGE_INVALID' | 'RATE_LIMITED';
 
 export type Ack<T = void> =
@@ -91,8 +98,8 @@ export interface ClientToServerEvents {
   'player:join': (payload: { nickname: string; token?: string }, ack: (r: Ack<JoinResult>) => void) => void;
   /** 我出題：idle／ended 且在線 ≥ MIN_PLAYERS → choosing */
   'round:volunteer': (ack: (r: Ack) => void) => void;
-  /** 出題者送題 → drawing（參賽者＝此刻在線者） */
-  'round:setTopic': (payload: { topic: string }, ack: (r: Ack) => void) => void;
+  /** 出題者送題 → drawing（參賽者＝此刻在線者）；Epic 20：reference 為選填的參考圖（JPEG bytes，1..MAX_REFERENCE_BYTES），有 → 本回合 mode 'mimic' */
+  'round:setTopic': (payload: { topic: string; reference?: ArrayBuffer }, ack: (r: Ack) => void) => void;
   /** 出題者在 choosing 取消 → idle */
   'round:cancel': (ack: (r: Ack) => void) => void;
   /** 交卷：drawing（或 endsAt 後 SUBMIT_GRACE_SECONDS 內）、參賽者、每回合一次；png 為 PNG 檔 bytes */
@@ -105,6 +112,8 @@ export interface ServerToClientEvents {
   'round:update': (round: RoundPublic) => void;
   /** 揭曉：每位交卷者一則（ended 時廣播；join 時若 results 非 null 則補送） */
   'contest:gallery': (image: GalleryImage) => void;
+  /** Epic 20：mimic 回合的參考圖；drawing 開始時廣播給所有在線者，join 時依 ReferenceImage 註解補送 */
+  'contest:reference': (image: ReferenceImage) => void;
   /** Epic 15：ended 後評語陸續完成時廣播；收到即把 results 該筆的 comment 填入、commentPending 設 false */
   'contest:comment': (update: CommentUpdate) => void;
   'chat:message': (message: ChatMessage) => void;

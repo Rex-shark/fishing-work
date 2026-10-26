@@ -9,6 +9,8 @@
 // 遊戲說明（purpose 'help'，Epic 6；DESIGN §16）：標題列顯示 title（「說明」或主題名稱）、內文 body 為 14px 段落（段距 8px）；
 //   沒有 body 時 items 為主題清單（一列一個按鈕，↑↓／Home／End 移動）＋右下「關閉」；有 body 時按鈕顯示選項原文（「返回」「關閉」）。
 //   body 未提供時輸出與 Epic 6 前完全相同。
+// 附加區（DialogProps.attachment，Epic 20 出題的參考圖區）：原樣放在輸入框之後、提示與錯誤之前；沒有時輸出不變。
+//   輸入框明確寫 type="text"（附加區裡有 <input type="file">；AI 遊玩技能以 input:not([type="file"]) 取題目框）。
 // 交卷確認（purpose 'submit'，繪圖比賽 design §2）：殼層給標題、內文（descriptions）與按鈕文字；trapFocus 時 Tab／Shift+Tab 在對話框內循環（焦點陷阱）。
 // 送出中（DialogProps.busy；plan/notes.md 2026-10-12）：輸入框改 readOnly＋aria-busy（外觀同原本的停用：opacity .6），不用原生 disabled，
 //   焦點留在輸入框，送出失敗後 Esc／Enter 照常可用；busy 結束時若焦點已不在對話框內，放回輸入框（沒有輸入框時放回第一個可用選項）。
@@ -36,7 +38,7 @@ export interface OfficeDialogConfig {
 }
 
 export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }) {
-  const { purpose, label, input, title, body, items, onEscape, busy = false, note, error, trapFocus, config } = props
+  const { purpose, label, input, title, body, attachment, items, onEscape, busy = false, note, error, trapFocus, config } = props
   const fieldId = useId()
   const rootRef = useRef<(HTMLFormElement & HTMLDivElement) | null>(null)
   const wasBusy = useRef(false)
@@ -104,6 +106,7 @@ export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }
           </div>
           <input
             id={fieldId}
+            type="text"
             autoFocus
             value={input.value}
             onChange={(e) => input.onChange(e.target.value)}
@@ -120,6 +123,8 @@ export function OfficeDialog(props: DialogProps & { config: OfficeDialogConfig }
           />
         </div>
       )}
+
+      {attachment}
 
       {note != null && <p className="mt-2 truncate leading-[18px] text-fg-muted">{note}</p>}
       {error != null && (

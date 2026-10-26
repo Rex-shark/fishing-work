@@ -6,7 +6,7 @@
 //     第三項「開啟最近的簡報 ›」＝比賽歷史的入口（Epic 17；spec/draw-contest/design.md §3.1；資料與動作經 ShellProps.history））
 //   ｜左縮圖窗格（players 插槽 → SlidePlayers）｜中央灰色工作區＋投影片（round.showReveal 時放 reveal 插槽＝投影片瀏覽（揭曉畫廊）；
 //     round.showCanvas 時放 canvas 插槽＝自己的畫布，1px 外框＋投影片陰影，已交卷時右下角小字「已儲存，等待其他人…」；
-//     否則空白投影片「按一下以新增標題」）
+//     否則空白投影片「按一下以新增標題」；工作區另放 reference 插槽＝像不像比賽作畫中的參考圖面板，自己浮在右上角（Epic 20））
 //   ｜功能區右端固定「完成」（finish 插槽；在工具列的捲動區外，窄版也看得到；spec/draw-contest/design.md §4）
 //   ｜投影片下方備忘稿列（roundStatus 插槽）｜右註解窗格（chat 插槽，純文字）
 //   ｜狀態列（投影片 N / M、中文(台灣)、備忘稿；中央「從目前投影片開始」＝ volunteer 插槽（我出題）；右側顯示設定、62% 裝飾）。
@@ -107,7 +107,7 @@ function GameScreen(
   props: { round: ShellRoundState; counts: ShellPlayerCounts; themes: ShellThemeSwitch; help: ShellHelp; history: ShellHistory } & ShellGameSlots,
 ) {
   const { round, counts, themes, help, history, players, canvas, toolbar, finish, reveal, chat, roundStatus, volunteer, connection, dialogs } = props
-  const { historyView, historyStatus } = props
+  const { historyView, historyStatus, reference } = props
   /** 正在看比賽歷史（design §2「歷史檢視」列） */
   const viewing = history.openId !== null
   // 「投影片 N / M」為裝飾（N 在線、M 玩家數）；人數由 App 注入（殼層不讀 store）
@@ -131,6 +131,7 @@ function GameScreen(
       onCloseRecent={viewing ? history.close : undefined}
       thumbnails={players}
       slide={<SlideArea round={round} canvas={canvas} reveal={reveal} recent={viewing ? historyView : null} />}
+      floating={reference}
       dialogs={dialogs}
       notes={
         <>
@@ -191,6 +192,8 @@ interface PptFrameProps {
   thumbnails: ReactNode
   /** 投影片（畫布）；父層為 size container */
   slide: ReactNode
+  /** 浮在投影片上的面板（像不像比賽的參考圖；右上角，對話框之下） */
+  floating?: ReactNode
   /** 浮出對話框（置中於投影片工作區） */
   dialogs?: ReactNode
   /** 備忘稿列 */
@@ -206,7 +209,7 @@ interface PptFrameProps {
 function PptFrame(props: PptFrameProps) {
   const { dirty, connection, ribbonDefault, drawTools, finish, themes, help, thumbnails, slide, dialogs, notes, comments, counter, statusCenter, overlay } =
     props
-  const { recent, onCloseRecent } = props
+  const { recent, onCloseRecent, floating } = props
   const wide = useMediaQuery(WIDE_QUERY)
   /** 寬螢幕：縮圖窗格是否收起；窄螢幕：覆蓋層是否開啟（預設關） */
   const [paneHidden, setPaneHidden] = useState(false)
@@ -259,6 +262,7 @@ function PptFrame(props: PptFrameProps) {
           <main aria-label="投影片" className="relative flex min-h-0 flex-1 bg-editor p-6 max-md:p-3">
             {/* size container：投影片（畫布）依剩餘寬高等比縮放 16:9 不變形；畫布加投影片陰影（§13.2 例外） */}
             <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center [container-type:size] [&_canvas]:shadow-slide">{slide}</div>
+            {floating}
             {dialogs}
           </main>
           <div

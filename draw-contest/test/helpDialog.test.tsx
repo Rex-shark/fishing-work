@@ -104,8 +104,8 @@ describe('HelpDialog：清單 → 內文 → 返回 → 清單 → 關閉（決�
     expect(detail(other, 'submit')).toContain('在確認框按「S」')
     expect(detail(other, 'ranking')).toContain('按「開始」開始下一回合')
     // Epic 15：揭曉的評語說明（評審名稱來自 shared 常數，不是殼層名稱，換殼層不變）
-    expect(detail(PPT_VIEWS, 'ranking')).toContain('<p>揭曉時評審「メスガキ」會給每張交卷的畫一句評語')
-    expect(detail(other, 'ranking')).toContain('揭曉時評審「メスガキ」')
+    expect(detail(PPT_VIEWS, 'ranking')).toContain('<p>揭曉時評審「ミオ」會給每張交卷的畫一句評語')
+    expect(detail(other, 'ranking')).toContain('揭曉時評審「ミオ」')
     // Phase 4：第一名的評語是稱讚版
     // 2026-10-13 Phase 5：稱讚版失敗時退回一般評語
     expect(detail(PPT_VIEWS, 'ranking')).toContain('寫在畫的下面，第一名會被稱讚；稱讚寫不出來時改顯示一般評語。')
@@ -210,13 +210,16 @@ describe('未提供 body 時 PptDialog 的輸出與我畫你猜相同（複製�
    * 其餘仍須與複製時逐字相同：
    *   (1) 輸入框送出中的樣式 disabled:opacity-60 → aria-busy:cursor-default aria-busy:opacity-60；
    *   (2) 送出中的輸入框 disabled → readOnly＋aria-busy；
-   *   (3) 選項按鈕多了 data-dialog-option（busy 結束後還原焦點用）
+   *   (3) 選項按鈕多了 data-dialog-option（busy 結束後還原焦點用）；
+   *   (4) Epic 20（像不像比賽，2026-10-26）：輸入框明確寫 type="text"（出題對話框另有參考圖的 <input type="file">，
+   *       AI 遊玩技能以 input:not([type="file"]) 取題目框；plan/contest-mimic.md 決策 12）
    */
   const beforeFocusFix = (html: string) =>
     html
       .replace('aria-busy:cursor-default aria-busy:opacity-60', 'disabled:opacity-60')
       .replace(' readOnly="" aria-busy="true"', ' disabled=""')
       .replaceAll(' data-dialog-option=""', '')
+      .replace(/(<input id="[^"]*") type="text"/, '$1')
 
   it('焦點修正後的差異只有上述三處（還原前的輸出確實含這些字樣）', () => {
     const topic = renderToStaticMarkup(<PptDialog {...cases.topic!} />)
@@ -227,6 +230,18 @@ describe('未提供 body 時 PptDialog 的輸出與我畫你猜相同（複製�
     expect(busy).toContain(' readOnly="" aria-busy="true"')
     expect(busy).not.toMatch(/\sdisabled=""/)
     expect(beforeFocusFix(busy)).toMatch(/<input [^>]*\sdisabled=""/)
+    // (4) 題目框明確是 type="text"，還原後沒有 type
+    expect(topic).toMatch(/<input id="[^"]*" type="text"/)
+    expect(beforeFocusFix(topic)).not.toContain('type="text"')
+  })
+
+  it('附加區（attachment，Epic 20）：省略或 undefined 時輸出不變；給了就放在輸入框之後、錯誤之前', () => {
+    const html = renderToStaticMarkup(<PptDialog {...cases.topicErr!} />)
+    expect(renderToStaticMarkup(<PptDialog {...cases.topicErr!} attachment={undefined} />)).toBe(html)
+    const withAttachment = renderToStaticMarkup(<PptDialog {...cases.topicErr!} attachment={<div data-attachment="" />} />)
+    const at = withAttachment.indexOf('data-attachment')
+    expect(at).toBeGreaterThan(withAttachment.indexOf('<input '))
+    expect(at).toBeLessThan(withAttachment.indexOf('role="alert"'))
   })
 
   it.each(Object.keys(cases))('%s', async (name) => {

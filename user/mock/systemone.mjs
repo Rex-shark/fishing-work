@@ -2,7 +2,7 @@
 // 假的 Ollama（繪圖比賽 AI 評分器與評語器測試用）：spec/draw-contest/architecture.md §6「假的 Ollama」、§6.1「假的 Ollama」
 //
 // 實作三個端點，格式與真 Ollama 相同（systemone：2026-10-07 以 0.40.0、clef:27b-q4_k_m 實測；chat：2026-10-12 以 0.40.3、gemma4:26b-mlx-bf16 實測）：
-//   POST /v1/systemone  { model, images?: [base64], state, questions: { 名稱: { type, criteria?, instructions? } } }
+//   POST /v1/systemone  { model, images?: [base64]（一或兩張）, state, questions: { 名稱: { type, criteria?, instructions? } } }
 //                       → 200 { model, answers: { 名稱: Answer }, usage: { input_tokens, output_tokens: 0 } }
 //                       score：{ type, score（期望等級）, legend, probabilities, confidence（1 − 熵／ln 等級數） }
 //                       noul ：{ type, noul（0..1） }
@@ -10,12 +10,17 @@
 //                             404 { error }（model 不是評分模型）
 //   POST /api/chat      { model, messages: [{ role, content, images?: [base64] }], stream?, think?, keep_alive?, options? }（Epic 15 評語器）
 //                       → 200 { model, message: { role: 'assistant', content }, done: true, done_reason, …_count／…_duration }
-//                       content 依「最後一則帶圖訊息的 images[0]」的雜湊從固定幾句挑一句（同一張圖永遠同一句）；沒有圖（暖機）時回固定短句。
-//                       第一名稱讚版（Epic 15 Phase 4）：最後一則 user 訊息的文案含「第一名」時，改從另一組稱讚句（MOCK_PRAISES）挑，
+//                       content 依「最後一則帶圖訊息的 images」的雜湊從固定幾句挑一句（同一張圖永遠同一句）；沒有圖（暖機）時回固定短句。
+//                       第一名稱讚版（Epic 15 Phase 4）：最後一則 user 訊息的文案含「這張是本回合第一名」時，改從另一組稱讚句（MOCK_PRAISES）挑，
 //                       與批評句（MOCK_COMMENTS）沒有交集，測試才分得出這張有沒有被重做。
+//                       （2026-10-21 Phase 7 起 user 文案帶參賽者暱稱：原本只比對「第一名」，暱稱本身含「第一名」時批評版會被誤判，
+//                       改比對稱讚版特有的整句片段。）
 //                       錯誤：400 { error }（缺 model、messages 不是陣列、base64 壞）、404 { error }（model 不是評語模型）
 //   GET  /api/tags      → { models: [{ name, model, ... }] }（列評分模型 MOCK_MODEL 與評語模型 MOCK_COMMENT_MODEL 兩個）
-// 分數由「images[0] 的 base64 字串＋題目名稱＋instructions」的 FNV-1a 雜湊決定：同一張圖永遠同分，換圖通常不同。
+// 分數由「images 的 base64 字串＋題目名稱＋instructions」的 FNV-1a 雜湊決定：同一張圖永遠同分，換圖通常不同。
+// Epic 20 像不像比賽（spec §6「假的 Ollama」）：images 可為兩張（[參考圖, 作品]），雜湊含兩張（只有一張時與原本完全相同）；
+// 題目名稱不限（similarity 等任何 score 題照常依 criteria 回分布，noul 題回機率）。
+// /api/chat 同理：最後一則帶圖訊息的 images 全部進雜湊（mimic 回合為 [參考圖, 作品]，換作品就可能換句）。
 //
 // 用法（專案根目錄）：
 //   node user/mock/systemone.mjs                                   # 預設 127.0.0.1:11435
@@ -66,7 +71,7 @@ export const MOCK_COMMENTS = [
   '欸，意外地不差嘛，可別太得意喔。',
   '這是認真畫的嗎？算了，至少有交卷啦。',
 ];
-/** 第一名稱讚版（user 文案含「第一名」）的固定稱讚句；與 MOCK_COMMENTS 沒有交集 */
+/** 第一名稱讚版（user 文案含「這張是本回合第一名」）的固定稱讚句；與 MOCK_COMMENTS 沒有交集 */
 export const MOCK_PRAISES = [
   '哼，這張居然還不錯嘛，第一名就勉強給你啦～',
   '欸？畫得這麼好是想怎樣，才、才沒有在誇你喔！',
@@ -91,19 +96,31 @@ function validateChat(body, commentModel) {
   return null;
 }
 
-/** 是否為第一名稱讚版：最後一則 user 訊息的文案含「第一名」（spec §6.1 稱讚版 user 文案） */
+/** 稱讚版 user 文案特有的片段（spec §6.1）；2026-10-21 Phase 7 由「第一名」改為整句片段，免得暱稱含「第一名」被誤判 */
+export const PRAISE_MARKER = '這張是本回合第一名';
+
+/** 是否為第一名稱讚版：最後一則 user 訊息的文案含 PRAISE_MARKER（spec §6.1 稱讚版 user 文案） */
 function isPraiseChat(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return typeof messages[i].content === 'string' && messages[i].content.includes('第一名');
+    if (messages[i].role === 'user') return typeof messages[i].content === 'string' && messages[i].content.includes(PRAISE_MARKER);
   }
   return false;
 }
 
-/** 最後一則帶圖訊息的第一張圖（base64）；沒有則 null */
+/**
+ * 雜湊用的圖片鍵：一張時就是那張的 base64（與 Epic 20 之前相同），多張（mimic 的 [參考圖, 作品]）以 NUL 串接。
+ * 空陣列或沒有圖 → null。
+ */
+export function imagesKey(images) {
+  if (!Array.isArray(images) || images.length === 0) return null;
+  return images.length === 1 ? images[0] : images.join('\u0000');
+}
+
+/** 最後一則帶圖訊息的圖片鍵（全部圖片，見 imagesKey）；沒有則 null */
 function chatImageKey(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const images = messages[i].images;
-    if (Array.isArray(images) && images.length > 0) return images[0];
+    const key = imagesKey(messages[i].images);
+    if (key !== null) return key;
   }
   return null;
 }
@@ -269,7 +286,7 @@ export function startMockOllama(options = {}) {
           send(res, bad[0], { error: bad[1] });
           return;
         }
-        const imageKey = Array.isArray(body.images) && body.images.length > 0 ? body.images[0] : '';
+        const imageKey = imagesKey(body.images) ?? '';
         const answers = {};
         for (const [name, q] of Object.entries(body.questions)) answers[name] = answerFor(name, q, imageKey);
         const inputTokens = 120 + Math.ceil(imageKey.length / 400);

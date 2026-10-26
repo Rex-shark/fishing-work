@@ -1,0 +1,44 @@
+{
+  "model": "clef:27b-nvfp4",
+  "answers": {
+    "similarity": {
+      "type": "score",
+      "score": 2.5849445863464724,
+      "legend": {
+        "0": "Completely different",
+        "1": "Slightly similar",
+        "2": "Roughly similar",
+        "3": "Very similar",
+        "4": "Nearly identical"
+      },
+      "probabilities": {
+        "0": 0.025316549088908555,
+        "1": 0.13008356427733703,
+        "2": 0.31083766427591836,
+        "3": 0.3018631959140456,
+        "4": 0.23189902644379046
+      },
+      "confidence": 0.11641733662514975
+    },
+    "effort": {
+      "type": "score",
+      "score": 1.4917770495025107,
+      "legend": {
+        "0": "Blank or scribble",
+        "1": "Partial",
+        "2": "Complete drawing"
+      },
+      "probabilities": {
+        "0": 0.09639170545879394,
+        "1": 0.3154395395799014,
+        "2": 0.5881687549613046
+      },
+      "confidence": 0.17932064045043528
+    }
+  },
+  "usage": {
+    "input_tokens": 2093,
+    "output_tokens": 0
+  },
+  "prompt_eval_cached_count": 0
+}

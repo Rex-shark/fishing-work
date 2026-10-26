@@ -152,14 +152,16 @@ async function toEndedAllPending(n = 2): Promise<void> {
 // ─── 排進佇列 ─────────────────────────────────────────────────────
 
 describe('§5 評語：評分完成的瞬間排進評語佇列', () => {
-  it('送給評語器的是交卷原圖、題目、該張最終分數；不給暱稱與名次', async () => {
+  // 2026-10-21 Phase 7：加送該玩家當下的暱稱（原本「不給暱稱」）
+  it('送給評語器的是交卷原圖、題目、該張最終分數與該玩家的暱稱；不給名次', async () => {
     toDrawing(2, ' 蘋果 ');
     submitOk('s1', 1);
     expect(commentator.calls).toHaveLength(0); // 還沒評分就不排
     await judgeCall(0, 80);
     expect(commentator.calls).toHaveLength(1);
     const { input } = commentator.calls[0];
-    expect(Object.keys(input).sort()).toEqual(['png', 'score', 'topic']);
+    expect(Object.keys(input).sort()).toEqual(['nickname', 'png', 'score', 'topic']);
+    expect(input.nickname).toBe('Alice');
     expect(input.topic).toBe('蘋果');
     expect(input.score).toBe(80);
     expect(Buffer.isBuffer(input.png)).toBe(true);
@@ -187,6 +189,22 @@ describe('§5 評語：評分完成的瞬間排進評語佇列', () => {
     await commentCall(0, '甲');
     expect(commentator.calls).toHaveLength(2);
     expect(commentator.calls[1].input.score).toBe(60);
+  });
+
+  // 2026-10-21 Phase 7
+  it('每張的暱稱是交卷者本人的（交卷與評分順序不同也對得上）', async () => {
+    toDrawing(3);
+    submitOk('s3', 3);
+    submitOk('s1', 1);
+    submitOk('s2', 2);
+    await judgeCall(0, 70); // C 的那張先評完
+    await commentCall(0, '甲');
+    await judgeCall(1, 60); // A
+    await commentCall(1, '乙');
+    expect(commentator.calls.map((c) => [c.input.nickname, [...c.input.png]])).toEqual([
+      ['Carol', [...makePng(3)]],
+      ['Alice', [...makePng(1)]],
+    ]);
   });
 });
 
@@ -654,8 +672,10 @@ describe('§5 評語：第一名重做稱讚版（Epic 15 Phase 4）', () => {
     expect(commentUpdates(allAsync())).toEqual([{ roundNo: 1, playerId: B, comment: '雜魚～' }]);
     expect(commentator.calls).toHaveLength(3);
     const praise = commentator.calls[2].input;
-    expect(Object.keys(praise).sort()).toEqual(['png', 'praise', 'score', 'topic']);
-    expect(praise).toMatchObject({ topic: '蘋果', score: 90, praise: true });
+    expect(Object.keys(praise).sort()).toEqual(['nickname', 'png', 'praise', 'score', 'topic']);
+    // 2026-10-21 Phase 7：稱讚版帶的是第一名（A）的暱稱，不是在途那張（B）的
+    expect(praise).toMatchObject({ topic: '蘋果', score: 90, nickname: 'Alice', praise: true });
+    expect(commentator.calls[1].input.nickname).toBe('Bob');
     expect([...praise.png]).toEqual([...makePng(1)]); // 圖還是第一名自己的那張
 
     asyncEffects = [];
@@ -684,11 +704,12 @@ describe('§5 評語：第一名重做稱讚版（Epic 15 Phase 4）', () => {
     await commentCall(2, '給 B');
     await commentCall(3, '給 D');
     expect(commentator.calls).toHaveLength(4); // 四個人、四次呼叫：C 沒有跑兩次
-    expect(commentator.calls.map((c) => [c.input.score, c.input.praise === true])).toEqual([
-      [50, false],
-      [90, true],
-      [60, false],
-      [70, false],
+    // 2026-10-21 Phase 7：插隊的稱讚版帶第一名 Carol 的暱稱，其餘各帶各的
+    expect(commentator.calls.map((c) => [c.input.score, c.input.praise === true, c.input.nickname])).toEqual([
+      [50, false, 'Alice'],
+      [90, true, 'Carol'],
+      [60, false, 'Bob'],
+      [70, false, 'Dave'],
     ]);
     expect(commentUpdates(allAsync()).map((u) => [u.playerId, u.comment])).toEqual([
       [A, '給 A'],
@@ -717,7 +738,7 @@ describe('§5 評語：第一名重做稱讚版（Epic 15 Phase 4）', () => {
     expect(commentsOf()).toEqual([[A, null, true], [B, null, true]]);
     expect(commentsOf(joinOk('s3', 'Carol').data.snapshot.round)).toEqual([[A, null, true], [B, null, true]]);
     expect(commentator.calls).toHaveLength(2);
-    expect(commentator.calls[1].input).toMatchObject({ score: 90, praise: true });
+    expect(commentator.calls[1].input).toMatchObject({ score: 90, praise: true, nickname: 'Alice' }); // 2026-10-21 Phase 7
     expect(failures).toEqual([]);
     expect(skips).toEqual([]);
     expect(round().commentMode).toBe('ai');

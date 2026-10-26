@@ -97,8 +97,8 @@ export function createJudgeSetup(config: JudgeConfig, options: JudgeSetupOptions
     url: config.ollamaUrl,
     model: config.model,
     ...(options.fetch ? { fetch: options.fetch } : {}),
-    onScored: ({ topic, raw, out, ms, inputTokens }) =>
-      info('draw-contest.judge.scored', { topic, ...raw, score: out.score, confidence: out.confidence, ms, ...(inputTokens !== undefined ? { inputTokens } : {}) }),
+    onScored: ({ topic, mode, raw, out, ms, inputTokens }) =>
+      info('draw-contest.judge.scored', { topic, mode, ...raw, score: out.score, confidence: out.confidence, ms, ...(inputTokens !== undefined ? { inputTokens } : {}) }),
   });
   const probe = probeOllama({
     url: config.ollamaUrl,

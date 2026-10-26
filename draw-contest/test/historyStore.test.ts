@@ -103,6 +103,7 @@ describe('recordFromRound／mergeRecord／addImages（純函式）', () => {
       me: 'b',
       results: [result('a', 1), result('b', 2), result('c', 3, { submitted: false, score: 0, judgedBy: null })],
       images: {},
+      reference: null,
     })
     expect(record.results.every((r) => r.commentPending === false)).toBe(true)
   })
@@ -174,6 +175,7 @@ describe('紀錄器：ended 建檔 → gallery → comment → 下一回合 draw
         me: 'b',
         results: [result('a', 1), result('b', 2), result('c', 3, { submitted: false, score: 0, judgedBy: null })],
         images: {},
+        reference: null,
       },
     ])
     expect(t.onSaved).toHaveBeenCalledTimes(1)

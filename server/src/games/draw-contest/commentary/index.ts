@@ -85,11 +85,13 @@ export function createCommentSetup(config: CommentConfig, options: CommentSetupO
   const commentator = createOllamaCommentator({
     ...shared,
     // praise：true = 第一名稱讚版（§5 評語，Phase 4），false = 一般（批評版）
-    onCommented: ({ topic, score, praise, comment, chars, ms, promptTokens, evalTokens }) =>
+    // mimic：true = 像不像比賽（帶參考圖，Epic 20）
+    onCommented: ({ topic, score, praise, mimic, comment, chars, ms, promptTokens, evalTokens }) =>
       info('draw-contest.comment.done', {
         topic,
         score,
         praise,
+        mimic,
         chars,
         ms,
         ...(promptTokens !== undefined ? { promptTokens } : {}),

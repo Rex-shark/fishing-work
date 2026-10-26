@@ -48,6 +48,11 @@ export interface DialogProps {
    * 段落的字級、行高、段距由殼層的容器決定（DESIGN §16：ppt 14px／段距 8px）
    */
   body?: ReactNode
+  /**
+   * 輸入框下方的附加區（Epic 20：出題的「參考圖（選填）」，features/reference/ReferencePicker）。選填；省略時殼層輸出不變。
+   * 殼層原樣放在輸入框之後、提示與錯誤之前；輸入框必須維持對話框裡第一個 <input type="text">（AI 遊玩技能以 input:not([type="file"]) 取題目框）
+   */
+  attachment?: ReactNode
   /** 第一個選項為預設（Enter） */
   items: DialogItem[]
   onEscape?: () => void

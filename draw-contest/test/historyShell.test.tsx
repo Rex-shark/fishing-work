@@ -319,6 +319,7 @@ function frameProps(history: ShellHistory, round: ShellRoundState = roundState()
     toolbar: slot('toolbar'),
     finish: slot('finish'),
     reveal: slot('reveal'),
+    reference: slot('reference'),
     historyView: slot('historyView'),
     historyStatus: slot('historyStatus'),
     chat: slot('chat'),

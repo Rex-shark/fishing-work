@@ -10,7 +10,7 @@ import {
   type JoinResult,
   type ServerToClientEvents,
 } from '@fishing-work/shared/draw-contest'
-import { recordGalleryImage } from '../features/history/historyStore'
+import { recordGalleryImage, recordReferenceImage } from '../features/history/historyStore'
 import { useGameStore } from '../store/game'
 
 export type DrawContestSocket = Socket<ServerToClientEvents, ClientToServerEvents>
@@ -34,6 +34,8 @@ const ACK_TIMEOUT_MS = 5000
  * 逾時只代表沒等到 ack，server 可能已收下；重送會得到 ALREADY_SUBMITTED（視同已交卷）
  */
 const SUBMIT_ACK_TIMEOUT_MS = 15_000
+/** 出題附參考圖（Epic 20，最多 MAX_REFERENCE_BYTES）時的逾時：同交卷，放寬到 15 秒 */
+const SET_TOPIC_WITH_REFERENCE_TIMEOUT_MS = SUBMIT_ACK_TIMEOUT_MS
 
 export interface SavedSession {
   nickname: string
@@ -217,6 +219,14 @@ socket.on('contest:comment', (update) => {
   if (store().me !== null) store().applyComment(update)
 })
 
+// 參考圖（Epic 20 像不像比賽）：drawing 開始時廣播；中途加入者在 join ack 之後補收（本回合或 results 對應的上一回合）。
+// 比賽歷史同樣要原始 bytes（存進 IndexedDB），比照 contest:gallery 順手交給它
+socket.on('contest:reference', (image) => {
+  if (store().me === null) return
+  store().setReference(image)
+  recordReferenceImage(image)
+})
+
 socket.on('round:update', (round) => {
   if (store().me !== null) store().setRound(round)
 })
@@ -231,11 +241,16 @@ export function volunteer(): Promise<ActionOutcome> {
   })
 }
 
-/** 出題者送題 → drawing（phase = choosing） */
-export function setTopic(topic: string): Promise<ActionOutcome> {
+/**
+ * 出題者送題 → drawing（phase = choosing）。reference＝像不像比賽的參考圖（Epic 20；features/reference/normalize 的 JPEG bytes）；
+ * 省略＝一般回合（payload 不帶 reference 欄位）
+ */
+export function setTopic(topic: string, reference?: ArrayBuffer): Promise<ActionOutcome> {
   return new Promise((resolve) => {
     if (!socket.connected) return resolve(NOT_CONNECTED)
-    socket.timeout(ACK_TIMEOUT_MS).emit('round:setTopic', { topic }, (err, res) => resolve(toOutcome(err, res)))
+    const payload = reference === undefined ? { topic } : { topic, reference }
+    const timeout = reference === undefined ? ACK_TIMEOUT_MS : SET_TOPIC_WITH_REFERENCE_TIMEOUT_MS
+    socket.timeout(timeout).emit('round:setTopic', payload, (err, res) => resolve(toOutcome(err, res)))
   })
 }
 

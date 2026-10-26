@@ -42,6 +42,11 @@ export interface ShellGameSlots {
   /** 揭曉畫廊（每位參賽者的畫、名次與分數；殼層只在 round.showReveal 時放；父層須可捲動或給定高度） */
   reveal: ReactNode
   /**
+   * 作畫中的參考圖面板（Epic 20 像不像比賽；元件只在 mimic 回合的 drawing／judging 渲染，其餘時候自己不渲染）。
+   * 殼層放在投影片工作區（父層 position: relative；面板自己浮在右上角、放大檢視蓋住工作區），疊在投影片之上、對話框之下
+   */
+  reference: ReactNode
+  /**
    * 比賽歷史的檢視（Epic 17；design §3.1）：存檔那一場的揭曉畫廊。殼層只在 history.openId 非 null 時放，
    * 位置同 reveal（優先於 reveal 與 canvas）
    */

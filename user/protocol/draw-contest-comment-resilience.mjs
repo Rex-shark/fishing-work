@@ -100,7 +100,8 @@ const praiseOf = (seed) => `欸…第 ${seed} 號圖居然這麼可以，好啦�
 // ── 自帶的假 Ollama：plan 以 `crit:<seed>`／`praise:<seed>` 為鍵，值 'slow'（回得比 COMMENT_TIMEOUT_MS 慢 → 逾時）；沒設就正常 ──
 const plan = new Map();
 const mockLog = [];
-const isPraiseChat = (messages) => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return typeof messages[i].content === 'string' && messages[i].content.includes('第一名'); return false; };
+// 2026-10-21 Phase 7：user 文案帶暱稱後改比對稱讚版特有片段（同 user/mock/systemone.mjs 的 PRAISE_MARKER）
+const isPraiseChat = (messages) => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return typeof messages[i].content === 'string' && messages[i].content.includes('這張是本回合第一名'); return false; };
 const imageOf = (messages) => { for (let i = messages.length - 1; i >= 0; i--) { const im = messages[i].images; if (Array.isArray(im) && im.length > 0) return im[0]; } return null; };
 const send = (res, code, body) => { const s = JSON.stringify(body); res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) }); res.end(s); };
 const mock = createServer((req, res) => {

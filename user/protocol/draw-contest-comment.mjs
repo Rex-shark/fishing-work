@@ -36,7 +36,7 @@ const DRAW_SECONDS = 120;
 const SUBMIT_GRACE_SECONDS = 5;
 const CANVAS_LOGICAL = { width: 1280, height: 720 };
 
-// ── 假 Ollama 的稱讚句：照既有慣例寫死；出處 user/mock/systemone.mjs 的 MOCK_PRAISES（spec §6.1：user 文案含「第一名」時回稱讚句，與批評句區分）──
+// ── 假 Ollama 的稱讚句：照既有慣例寫死；出處 user/mock/systemone.mjs 的 MOCK_PRAISES（spec §6.1：user 文案含「這張是本回合第一名」（2026-10-21 Phase 7 起比對此片段）時回稱讚句，與批評句區分）──
 const MOCK_PRAISES = [
   '哼，這張居然還不錯嘛，第一名就勉強給你啦～',
   '欸？畫得這麼好是想怎樣，才、才沒有在誇你喔！',

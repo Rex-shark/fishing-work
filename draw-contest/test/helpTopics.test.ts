@@ -79,7 +79,8 @@ describe('主題資料', () => {
 
   it('評分主題（Epic 15 Phase 2.5）：由 Clef 評分、評審寫評語；連不上 Ollama 時退回隨機評分；不再有 Epic 14 的舊文案', () => {
     const paragraphs = findHelpTopic('scoring')?.paragraphs ?? []
-    expect(paragraphs).toHaveLength(3)
+    // Epic 20 起多第四段（像不像比賽的評分），前三段不變
+    expect(paragraphs).toHaveLength(4)
     expect(paragraphs[0]).toContain(`由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分`)
     expect(paragraphs[0]).toContain('「正在評分」')
     expect(paragraphs[1]).toContain(`評語由另一位評審「${COMMENT_PERSONA_NAME}」負責`)
@@ -137,7 +138,7 @@ describe('主題資料', () => {
   })
 
   it('評審名稱不寫死：原始碼以 ${COMMENT_PERSONA_NAME} 組字（改常數說明跟著變）', () => {
-    expect(COMMENT_PERSONA_NAME).toBe('メスガキ')
+    expect(COMMENT_PERSONA_NAME).toBe('ミオ')
     expect(helpSource).not.toContain(COMMENT_PERSONA_NAME)
     expect(helpSource.match(/評審「\$\{COMMENT_PERSONA_NAME\}」/g)).toHaveLength(2)
     // 產生中的文字也不寫死（讀 reveal 的常數）
@@ -178,13 +179,24 @@ describe('renderTopic', () => {
     expect(renderTopic(findHelpTopic('submit')!, names)[0]).toBe('畫好按「完成」，在確認框按「儲存」就交卷；交卷後不能再修改。按「取消」可以回去繼續畫。')
     // 評語那一段沒有佔位符，代入後原樣
     expect(renderTopic(findHelpTopic('ranking')!, names)[1]).toBe(
-      '揭曉時評審「メスガキ」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚；稱讚寫不出來時改顯示一般評語。還沒寫好的先顯示「正在寫評語」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。',
+      '揭曉時評審「ミオ」會給每張交卷的畫一句評語，寫在畫的下面，第一名會被稱讚；稱讚寫不出來時改顯示一般評語。還沒寫好的先顯示「正在寫評語」（第一名那句是揭曉後才寫的，會晚一點出現）；評語關閉或出問題時就沒有這一行，不影響分數與排名。',
     )
     expect(renderTopic(findHelpTopic('scoring')!, names)).toEqual([
       `每交一張就排隊評一張，由 AI 模型 Clef 看圖給 0–${SCORE_MAX} 分，畫得越像題目分數越高；畫面會顯示「正在評分」的進度。`,
-      '評語由另一位評審「メスガキ」負責，每張交卷的畫一句；評語不影響分數與排名。',
+      '評語由另一位評審「ミオ」負責，每張交卷的畫一句；評語不影響分數與排名。',
       '連不上 Ollama（執行這兩個模型的服務）時，本回合剩下的畫會退回隨機評分，也不會有評語。隨機評分的分數由圖片本身決定、和畫得像不像無關，同一張圖永遠同分；揭曉時分數旁會標示「隨機」。',
+      '像不像比賽的分數改看你的畫和參考圖有多像（形狀、構圖與主體，不管顏色與線條粗細），揭曉時第一格是參考圖。',
     ])
+  })
+
+  it('像不像比賽（Epic 20 決策 9）：「如何出題」「評分」最後各加一句；區塊名稱與按鈕讀對話框同一份文字', () => {
+    expect(renderTopic(findHelpTopic('be-setter')!, names).at(-1)).toBe(
+      '題目下方的「參考圖（選填）」可以拖進一張圖片或按「選擇圖片」：附了參考圖就是「像不像比賽」，大家照著參考圖畫，作畫時畫面右上角看得到它（可放大、收合）；不附就是一般的回合。',
+    )
+    expect(findHelpTopic('scoring')!.paragraphs.at(-1)).toContain('參考圖有多像')
+    // 其他主題不提像不像比賽
+    const mentions = HELP_TOPICS.filter((t) => t.paragraphs.join('').includes('像不像比賽')).map((t) => t.id)
+    expect(mentions).toEqual(['be-setter', 'scoring'])
   })
 
   it('同一段出現多次也全部代入；不修改原資料', () => {

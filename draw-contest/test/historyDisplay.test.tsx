@@ -58,6 +58,7 @@ const record = (patch: Partial<HistoryRecord> = {}): HistoryRecord => ({
     entry('carol', 3, { nickname: 'Carol', score: 0, submitted: false, judgedBy: null, confidence: null, submittedAt: null }),
   ],
   images: {},
+  reference: null,
   ...patch,
 })
 

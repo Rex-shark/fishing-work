@@ -83,6 +83,7 @@ function logRoundEffects(effects: Effect[]): void {
         judged: r.judgedCount,
         judgeMode: r.judgeMode,
         commentMode: r.commentMode,
+        mode: r.mode,
         ...(r.results ? { results: r.results.map((x) => ({ player: x.playerId, rank: x.rank, score: x.score })) } : {}),
       });
     }
@@ -176,12 +177,13 @@ export function registerDrawContest(nsp: DrawContestNamespace, options: Register
     socket.on(
       'round:setTopic',
       handleAction('setTopic', (payload) => {
-        const topic =
-          typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>).topic : undefined;
+        const fields = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : undefined;
+        const topic = fields?.topic;
         if (typeof topic !== 'string') {
           return { ack: { ok: false, error: 'TOPIC_INVALID', message: TOPIC_INVALID_MESSAGE }, effects: [] };
         }
-        return room.setTopic(socket.id, topic);
+        // Epic 20：reference（選填的參考圖 JPEG）原值交給 Room，形狀與內容在 Room 依 §5.1b 的順序驗（題目之後）
+        return room.setTopic(socket.id, topic, fields?.reference);
       }),
     );
 

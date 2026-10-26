@@ -178,7 +178,7 @@ function commentLine(html: string): string | null {
 
 describe('評語：純邏輯（revealComment、revealCards）', () => {
   it('評審名稱來自 shared 的唯一來源', () => {
-    expect(COMMENT_PERSONA_NAME).toBe('メスガキ')
+    expect(COMMENT_PERSONA_NAME).toBe('ミオ')
     // 產生中的文字不用省略號（2026-10-12 定案：「…」像被截斷）
     expect(COMMENT_PENDING_TEXT).toBe('正在寫評語')
     expect(COMMENT_PENDING_TEXT).not.toMatch(/…|\.\.\./)
@@ -206,7 +206,7 @@ describe('評語：純邏輯（revealComment、revealCards）', () => {
   it('完整說明（label）有評語文字時帶上「評審名稱：評語」；產生中與沒有評語不加；摘要（工具提示）一律不含評語', () => {
     const cards = revealCards(commented, gallery, 'b', PPT_TERMS_VIEW)
     expect(cards[0]?.summary).toBe('第 1 名 Alice，87 分，隨機評分')
-    expect(cards[0]?.label).toBe(`第 1 名 Alice，87 分，隨機評分，メスガキ：${LONG}`)
+    expect(cards[0]?.label).toBe(`第 1 名 Alice，87 分，隨機評分，ミオ：${LONG}`)
     expect(cards[1]?.label).toBe('第 2 名 Bob，74 分，隨機評分，你')
     expect(cards[1]?.summary).toBe(cards[1]?.label)
     expect(cards[2]?.label).toBe('第 3 名 Carol，61 分，隨機評分')
@@ -237,7 +237,7 @@ describe('評語行（RevealView 靜態渲染）', () => {
     const line = commentLine(card(html, 'a'))
     expect(line).not.toBeNull()
     expect(line).toContain('data-reveal-comment="text"')
-    expect(line).toContain('<span class="font-bold text-fg">メスガキ：</span>')
+    expect(line).toContain('<span class="font-bold text-fg">ミオ：</span>')
     expect(line).toContain(`<span class="italic">${LONG}</span>`)
     const cls = /class="([^"]*)"/.exec(line ?? '')?.[1]?.split(' ') ?? []
     for (const c of ['text-[12px]', 'text-fg-muted', 'leading-[18px]', 'break-words']) expect(cls, c).toContain(c)
@@ -266,10 +266,10 @@ describe('評語行（RevealView 靜態渲染）', () => {
     for (const id of ['a', 'b', 'c', 'd', 'e']) expect(card(html, id), id).toMatch(/<\/div><button type="button" data-reveal=/)
   })
 
-  it('產生中：帶評審名稱前綴，評語的位置顯示「正在寫評語」（「メスガキ：正在寫評語」），沒有省略號', () => {
+  it('產生中：帶評審名稱前綴，評語的位置顯示「正在寫評語」（「ミオ：正在寫評語」），沒有省略號', () => {
     const line = commentLine(card(html, 'b'))
     expect(line).toContain('data-reveal-comment="pending"')
-    expect(line).toContain('<span class="font-bold text-fg">メスガキ：</span><span class="italic">正在寫評語</span>')
+    expect(line).toContain('<span class="font-bold text-fg">ミオ：</span><span class="italic">正在寫評語</span>')
     expect(line).not.toContain('…')
     expect(line).not.toContain('line-clamp')
     expect(line).toContain('mt-1.5')
@@ -279,7 +279,7 @@ describe('評語行（RevealView 靜態渲染）', () => {
   it('沒有評語（交卷但 comment null 且不 pending、未交卷）：整行不渲染（卡片變矮，不留空行）', () => {
     for (const id of ['c', 'e']) {
       expect(card(html, id), id).not.toContain('data-reveal-comment')
-      expect(card(html, id), id).not.toContain('メスガキ')
+      expect(card(html, id), id).not.toContain('ミオ')
       expect(card(html, id), id).not.toContain('…')
       expect(card(html, id), id).not.toContain('正在寫評語')
       // 標題列之後直接是縮圖按鈕，縮圖之後沒有東西
@@ -306,7 +306,7 @@ describe('評語行（RevealView 靜態渲染）', () => {
 
   it('評語行 aria-hidden（文字已在縮圖按鈕的無障礙名稱裡）；工具提示用摘要、不含評語', () => {
     expect(commentLine(card(html, 'a'))).toContain('aria-hidden="true"')
-    expect(card(html, 'a')).toContain(`aria-label="第 1 名 Alice，87 分，隨機評分，メスガキ：${LONG}（放大）"`)
+    expect(card(html, 'a')).toContain(`aria-label="第 1 名 Alice，87 分，隨機評分，ミオ：${LONG}（放大）"`)
     expect(card(html, 'a')).toContain('data-tooltip="第 1 名 Alice，87 分，隨機評分"')
     expect(card(html, 'b')).toContain('aria-label="第 2 名 Bob，74 分，隨機評分，你（放大）"')
   })
@@ -314,7 +314,7 @@ describe('評語行（RevealView 靜態渲染）', () => {
   it('既有資料（都沒有評語）：整個畫廊沒有評語行', () => {
     const plain = renderToStaticMarkup(<RevealView cards={revealCards(results, gallery, 'b', PPT_TERMS_VIEW)} label="投影片瀏覽" />)
     expect(plain).not.toContain('data-reveal-comment')
-    expect(plain).not.toContain('メスガキ')
+    expect(plain).not.toContain('ミオ')
   })
 })
 
@@ -326,11 +326,11 @@ describe('第一名稱讚版（Phase 4；architecture §5）：揭曉當下第�
   const render = (first: ResultEntry) =>
     renderToStaticMarkup(<RevealView cards={revealCards([first, ...others], gallery, null, PPT_TERMS_VIEW)} label="投影片瀏覽" />)
 
-  it('揭曉當下：第一名（前三名外框照舊）顯示「メスガキ：正在寫評語」，其他人已有評語', () => {
+  it('揭曉當下：第一名（前三名外框照舊）顯示「ミオ：正在寫評語」，其他人已有評語', () => {
     const html = render(entry({ playerId: 'a', nickname: 'Alice', rank: 1, score: 87, commentPending: true }))
     const a = card(html, 'a')
     expect(a).toContain('outline-2 outline-accent')
-    expect(commentLine(a)).toContain('<span class="font-bold text-fg">メスガキ：</span><span class="italic">正在寫評語</span>')
+    expect(commentLine(a)).toContain('<span class="font-bold text-fg">ミオ：</span><span class="italic">正在寫評語</span>')
     expect(a).toContain('aria-label="第 1 名 Alice，87 分，隨機評分（放大）"')
     expect(commentLine(card(html, 'b'))).toContain('<span class="italic">雜魚～</span>')
     expect(commentLine(card(html, 'c'))).toContain('<span class="italic">就這？</span>')
@@ -340,9 +340,9 @@ describe('第一名稱讚版（Phase 4；architecture §5）：揭曉當下第�
     const before = render(entry({ playerId: 'a', nickname: 'Alice', rank: 1, score: 87, commentPending: true }))
     const after = render(entry({ playerId: 'a', nickname: 'Alice', rank: 1, score: 87, comment: '哼，勉強算你厲害啦～' }))
     const a = card(after, 'a')
-    expect(commentLine(a)).toContain('<span class="font-bold text-fg">メスガキ：</span><span class="italic">哼，勉強算你厲害啦～</span>')
+    expect(commentLine(a)).toContain('<span class="font-bold text-fg">ミオ：</span><span class="italic">哼，勉強算你厲害啦～</span>')
     expect(commentLine(a)).toContain('data-reveal-comment="text"')
-    expect(a).toContain('aria-label="第 1 名 Alice，87 分，隨機評分，メスガキ：哼，勉強算你厲害啦～（放大）"')
+    expect(a).toContain('aria-label="第 1 名 Alice，87 分，隨機評分，ミオ：哼，勉強算你厲害啦～（放大）"')
     for (const id of ['b', 'c']) expect(card(after, id), id).toBe(card(before, id))
   })
 })
@@ -357,7 +357,7 @@ describe('放大檢視（ZoomedCard 靜態渲染）', () => {
     // 與網格卡片相同：間距在上（mt 6px），不是原本標題列下方的 mb
     expect(line).toContain('mt-1.5')
     expect(line).not.toContain('mb-1')
-    expect(line).toContain('<span class="font-bold text-fg">メスガキ：</span>')
+    expect(line).toContain('<span class="font-bold text-fg">ミオ：</span>')
     expect(line).toContain(`<span class="italic">${LONG}</span>`)
     expect(line).not.toContain('line-clamp')
     expect(html).not.toContain('line-clamp')
@@ -367,7 +367,7 @@ describe('放大檢視（ZoomedCard 靜態渲染）', () => {
     // 評語行緊接在圖片按鈕之後（同一塊），是放大檢視的最後一個元素
     expect(html).toMatch(/<\/button><p [^>]*data-reveal-comment="text"[^>]*>.*<\/p><\/div><\/div>$/)
     expect(html.match(/data-reveal-comment/g)).toHaveLength(1)
-    expect(html).toContain(`aria-label="第 1 名 Alice，87 分，隨機評分，メスガキ：${LONG}（回到全部）"`)
+    expect(html).toContain(`aria-label="第 1 名 Alice，87 分，隨機評分，ミオ：${LONG}（回到全部）"`)
   })
 
   it('標題列之後一律直接是圖片（不論有沒有評語），標題列那一塊不含評語行', () => {
@@ -391,8 +391,8 @@ describe('放大檢視（ZoomedCard 靜態渲染）', () => {
     expect(without).toMatch(/<div class="w-\[min\(100cqw,calc\(\(100cqh-28px\)\*16\/9\)\)\]"><button type="button"[^>]* class="block aspect-video w-full /)
   })
 
-  it('產生中：顯示「メスガキ：正在寫評語」（帶前綴，與網格卡片同一個常數）；沒有評語（含未交卷）：不渲染該行', () => {
-    expect(commentLine(zoom('b'))).toContain('<span class="font-bold text-fg">メスガキ：</span><span class="italic">正在寫評語</span>')
+  it('產生中：顯示「ミオ：正在寫評語」（帶前綴，與網格卡片同一個常數）；沒有評語（含未交卷）：不渲染該行', () => {
+    expect(commentLine(zoom('b'))).toContain('<span class="font-bold text-fg">ミオ：</span><span class="italic">正在寫評語</span>')
     expect(commentLine(zoom('b'))).not.toContain('…')
     expect(commentLine(zoom('b'))).not.toContain('line-clamp')
     // 產生中也在圖片下方

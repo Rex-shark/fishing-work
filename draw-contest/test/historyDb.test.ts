@@ -43,6 +43,7 @@ const record = (id: number, patch: Partial<HistoryRecord> = {}): HistoryRecord =
   me: 'a',
   results: [result('a', 1)],
   images: {},
+  reference: null,
   ...patch,
 })
 

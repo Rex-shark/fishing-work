@@ -1,7 +1,14 @@
 // 回合狀態的呈現（純邏輯，可單元測試）：階段文字、「我出題」顯示條件、交卷與評分進度、揭曉摘要、回合狀態列各階段的文字（roundNotes）。
 // 規則依 spec/draw-contest/overview.md 與 architecture §5；文案以 design.md §2 各階段對照表為準。狀態列色調屬殼層。
 // 與偽裝有關的名詞（題目、交卷的叫法）由殼層的 ShellViews.terms 傳入（RoundTerms），本檔不寫死。
-import { MIN_PLAYERS, type ContestPhase, type PlayerPublic, type ResultEntry, type RoundPublic } from '@fishing-work/shared/draw-contest'
+import {
+  MIN_PLAYERS,
+  type ContestMode,
+  type ContestPhase,
+  type PlayerPublic,
+  type ResultEntry,
+  type RoundPublic,
+} from '@fishing-work/shared/draw-contest'
 
 export const PHASE_LABEL: Record<ContestPhase, string> = {
   idle: '等待中',
@@ -67,14 +74,20 @@ export function myResult(results: readonly ResultEntry[] | null, me: string | nu
 /** 題目與第一名之間的全形空白（U+3000；寫成跳脫避免原始碼出現不可見字元） */
 const WIDE_GAP = '\u3000'
 
+/** 像不像比賽（Epic 20，lastMode === 'mimic'）的回合，摘要裡題目後加的標記（plan 決策 7、design §2） */
+export const MIMIC_TOPIC_TAG = '（像不像）'
+
 /**
  * 揭曉的結果摘要（ended 的回合狀態列；design §2，2026-10-12 起帶題目：揭曉當下要對照題目看畫）：
  * 「蘋果（全形空白）第一名：X（87 分）」（隨機評分加「（隨機評分）」；沒有人交卷「蘋果（全形空白）沒有人交卷」）。
- * 題目用 results 對應的 lastTopic（ended 時已有）；沒有題目（理論上不會）退回只有第一名的那一句
+ * 題目用 results 對應的 lastTopic（ended 時已有）；沒有題目（理論上不會）退回只有第一名的那一句。
+ * 像不像比賽（lastMode 'mimic'）題目後加「（像不像）」：「蘋果（像不像）（全形空白）第一名：X（87 分）」
  */
-export function resultSummary(round: { results: readonly ResultEntry[]; lastTopic: string | null }): string {
+export function resultSummary(round: { results: readonly ResultEntry[]; lastTopic: string | null; lastMode?: ContestMode | null }): string {
   const winner = winnerSummary(round.results)
-  return round.lastTopic !== null ? `${round.lastTopic}${WIDE_GAP}${winner}` : winner
+  if (round.lastTopic === null) return winner
+  const tag = round.lastMode === 'mimic' ? MIMIC_TOPIC_TAG : ''
+  return `${round.lastTopic}${tag}${WIDE_GAP}${winner}`
 }
 
 /**
@@ -82,10 +95,10 @@ export function resultSummary(round: { results: readonly ResultEntry[]; lastTopi
  * 沒有結果「上一回合：—」；有題目＝「上一回合：」＋揭曉的結果摘要（resultSummary，與 ended 那一列只差這個前綴）；
  * 沒有題目（理論上不會）退回 design 原文「上一回合第一名：X（87 分）」
  */
-export function lastRoundSummary(round: Pick<RoundPublic, 'results' | 'lastTopic'>): string {
+export function lastRoundSummary(round: Pick<RoundPublic, 'results' | 'lastTopic'> & { lastMode?: ContestMode | null }): string {
   if (round.results === null) return '上一回合：—'
-  const { results, lastTopic } = round
-  return lastTopic !== null ? `上一回合：${resultSummary({ results, lastTopic })}` : `上一回合${winnerSummary(results)}`
+  const { results, lastTopic, lastMode } = round
+  return lastTopic !== null ? `上一回合：${resultSummary({ results, lastTopic, lastMode })}` : `上一回合${winnerSummary(results)}`
 }
 
 /** 回合狀態列的一段：文字＋（選填）倒數；optional＝窄螢幕（< 768px）可省略 */
@@ -97,7 +110,10 @@ export interface NotesSegment {
 }
 
 export interface NotesInput {
-  round: Pick<RoundPublic, 'phase' | 'topic' | 'submittedCount' | 'participantIds' | 'judgedCount' | 'judgeMode' | 'results' | 'lastTopic'>
+  round: Pick<RoundPublic, 'phase' | 'topic' | 'submittedCount' | 'participantIds' | 'judgedCount' | 'judgeMode' | 'results' | 'lastTopic'> & {
+    /** Epic 20：results 對應的模式（'mimic' 時摘要的題目後加「（像不像）」）；省略視同 null */
+    lastMode?: ContestMode | null
+  }
   isSetter: boolean
   isParticipant: boolean
   /** 出題者暱稱（找不到為 null） */
@@ -119,6 +135,7 @@ function clock(seconds: number) {
  * - choosing：出題者「正在輸入標題… 00:45」、其他人「X 正在輸入標題… 00:45」；有上一回合結果時接在後面（窄螢幕省略）
  * - drawing：「作畫中 01:23」「標題：蘋果」「已儲存 3/8」；旁觀者把題目那段換成「本回合旁觀：蘋果」；最後 10 秒倒數為警示
  * - judging：「正在評分 5/8…」（隨機評分加「（隨機評分）」）
+ * - 像不像比賽（lastMode 'mimic'）的 idle／choosing／ended 摘要：題目後加「（像不像）」
  * - ended：「蘋果（全形空白）第一名：X（87 分）」（與 idle 有結果那一列相同，只少「上一回合：」前綴；隨機評分加註；沒有人交卷時「蘋果（全形空白）沒有人交卷」）
  */
 export function roundNotes(input: NotesInput, terms: RoundTerms): NotesSegment[] {
@@ -144,7 +161,9 @@ export function roundNotes(input: NotesInput, terms: RoundTerms): NotesSegment[]
     case 'judging':
       return [{ text: judgingProgress(round) }]
     case 'ended':
-      return [{ text: round.results !== null ? resultSummary({ results: round.results, lastTopic: round.lastTopic }) : '—' }]
+      return [
+        { text: round.results !== null ? resultSummary({ results: round.results, lastTopic: round.lastTopic, lastMode: round.lastMode }) : '—' },
+      ]
   }
 }
 

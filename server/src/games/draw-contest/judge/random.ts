@@ -1,5 +1,6 @@
 // 隨機評分器：spec/draw-contest/architecture.md §6「random」
 // 種子 = FNV-1a(png bytes ‖ topic 的 UTF-8)，同一張圖＋同一題永遠同分（測試可重現）；
+// Epic 20 像不像比賽（input.reference 有值）：種子 = FNV-1a(reference ‖ png ‖ topic)；沒有參考圖時與原本完全相同。
 // score 為 20..95 的整數（均勻）、confidence 為 0.3..0.9（兩位小數）；JUDGE_FAKE_DELAY_MS 後才 resolve，期間尊重 AbortSignal。
 import type { Clock } from '../room';
 import type { Judge, JudgeInput, JudgeOutput } from './types';
@@ -38,9 +39,10 @@ function mulberry32(seed: number): () => number {
 
 const encoder = new TextEncoder();
 
-/** 確定性的隨機分數（純函式）：同一張圖＋同一題永遠回同樣的結果 */
-export function randomScore(png: Uint8Array, topic: string): JudgeOutput {
-  const seed = fnv1a(encoder.encode(topic), fnv1a(png));
+/** 確定性的隨機分數（純函式）：同一張圖＋同一題（＋同一張參考圖）永遠回同樣的結果 */
+export function randomScore(png: Uint8Array, topic: string, reference?: Uint8Array): JudgeOutput {
+  const start = reference === undefined ? undefined : fnv1a(reference);
+  const seed = fnv1a(encoder.encode(topic), fnv1a(png, start));
   const next = mulberry32(seed);
   const score = RANDOM_SCORE_MIN + Math.floor(next() * (RANDOM_SCORE_MAX - RANDOM_SCORE_MIN + 1));
   const raw = RANDOM_CONFIDENCE_MIN + next() * (RANDOM_CONFIDENCE_MAX - RANDOM_CONFIDENCE_MIN);
@@ -76,7 +78,7 @@ export function createRandomJudge(options: RandomJudgeOptions): Judge {
     mode: 'random',
     score(input: JudgeInput, signal: AbortSignal): Promise<JudgeOutput> {
       if (signal.aborted) return Promise.reject(abortReason(signal));
-      const result = randomScore(input.png, input.topic);
+      const result = randomScore(input.png, input.topic, input.reference);
       if (delayMs === 0) return Promise.resolve(result);
       return new Promise((resolve, reject) => {
         const onAbort = () => {

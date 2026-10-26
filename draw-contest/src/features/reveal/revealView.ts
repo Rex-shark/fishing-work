@@ -104,3 +104,33 @@ export function revealCards(
     }
   })
 }
+
+// ─── 參考圖卡（Epic 20 像不像比賽；design §3） ─────────────────────────────
+
+/** 參考圖卡的標題列文字與無障礙名稱的開頭（design §3：標題「參考圖」） */
+export const REFERENCE_CARD_TITLE = '參考圖'
+
+/** 參考圖卡按鈕的屬性名（AI 遊玩技能依賴；不得改成 data-reveal，plan 決策 12） */
+export const REFERENCE_CARD_ATTR = 'data-reveal-reference'
+
+/**
+ * 參考圖卡：網格第一格，沒有名次、分數、評語；不在 results 內（rank 不受影響）。
+ * 按鈕帶 data-reveal-reference（不帶 data-reveal：AI 遊玩技能以 button[data-reveal] 讀名次卡；plan 決策 12）
+ */
+export interface ReferenceRevealCard {
+  kind: 'reference'
+  title: string
+  /** 圖片：有 object URL／還沒收到（載入中）／存檔沒有圖（空白） */
+  image: RevealImage
+  /** 無障礙名稱（不含「（放大）」「（回到全部）」，元件加） */
+  label: string
+}
+
+/**
+ * 參考圖卡的資料。url＝參考圖的 object URL；undefined＝還沒收到（載入中）；
+ * whenMissing 決定沒有 URL 時顯示什麼（揭曉時圖還在路上是「載入中」；歷史存檔沒有圖就是空白，不會再來）
+ */
+export function referenceCard(url: string | null | undefined, whenMissing: 'loading' | 'blank' = 'loading'): ReferenceRevealCard {
+  const image: RevealImage = typeof url === 'string' ? { kind: 'image', url } : { kind: whenMissing }
+  return { kind: 'reference', title: REFERENCE_CARD_TITLE, image, label: REFERENCE_CARD_TITLE }
+}

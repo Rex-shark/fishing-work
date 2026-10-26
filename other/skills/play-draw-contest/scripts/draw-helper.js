@@ -8,13 +8,45 @@
   const W = 1280
   const H = 720
   const PALETTE = ['#FFFFFF', '#000000', '#FFECEA', '#9E9E9E', '#F44747', '#FF8C00', '#FFD700', '#6A9955', '#569CD6', '#C586C0']
-  /** 等 React 重繪（工具列按鈕讀的是上一次繪製時的狀態） */
-  const TICK = 60
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  // 等待一律不靠計時器的短間隔：瀏覽器視窗被遮住或在背景時，Chrome 會把 setTimeout 拉長到 1 秒以上
+  // （實測 39 步要 86 秒），所以「讓頁面先更新一下」用 MessageChannel 讓出執行權，「等到某個狀況成立」用 MutationObserver。
+  const yieldOnce = () =>
+    new Promise((r) => {
+      const ch = new MessageChannel()
+      ch.port1.onmessage = () => r()
+      ch.port2.postMessage(null)
+    })
+  /** 讓頁面處理完剛才的點擊與重繪（工具列按鈕讀的是上一次繪製時的狀態） */
+  const tick = async () => {
+    await yieldOnce()
+    await yieldOnce()
+  }
+  /**
+   * 等到 test() 成立就回 true；seconds 秒內沒成立回 false。
+   * 畫面一有變動就重新檢查（MutationObserver），計時器只用一個當截止時間，視窗在背景時也不會被拖慢
+   */
+  function waitUntil(test, seconds) {
+    return new Promise((resolve) => {
+      if (test()) return resolve(true)
+      let timer = null
+      const observer = new MutationObserver(() => {
+        if (test()) finish(true)
+      })
+      function finish(value) {
+        observer.disconnect()
+        clearTimeout(timer)
+        resolve(value)
+      }
+      observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true })
+      timer = setTimeout(() => finish(test()), seconds * 1000)
+    })
+  }
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
   const q = (sel, root = document) => root.querySelector(sel)
   const buttonByText = (text) => Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === text)
   const liveCanvas = () => q('canvas[aria-label="畫布"]')
+  /** 出題對話框的題目輸入框（像不像比賽起對話框裡另有參考圖的檔案欄位，要排除） */
+  const topicField = () => q('[role="dialog"] input:not([type="file"]):not([type="hidden"])')
   let lastSize = 4
 
   function fire(el, type, x, y) {
@@ -83,7 +115,7 @@
     const swatch = PALETTE.includes(want) ? q(`[role="radio"][aria-label^="顏色 ${want}"]`) : null
     if (swatch) {
       swatch.click()
-      await sleep(TICK)
+      await tick()
       return currentColor()
     }
     if (currentColor() === want) return want
@@ -92,21 +124,21 @@
     const panelSel = '[role="dialog"][aria-label="顏色面板"]'
     if (!q(panelSel)) {
       btn.click()
-      await sleep(TICK)
+      await tick()
     }
     const { h, s, v, gray } = hexToHsv(want)
     if (!gray) {
       const hue = q(`${panelSel} [role="slider"][aria-label="色相"]`)
       const r = hue.getBoundingClientRect()
       press(hue, r.left + (Math.round(h) / 360) * r.width, r.top + r.height / 2)
-      await sleep(TICK)
+      await tick()
     }
     const sv = q(`${panelSel} [role="slider"][aria-label="飽和度與明度"]`)
     const r = sv.getBoundingClientRect()
     press(sv, r.left + (s / 100) * r.width, r.top + (1 - v / 100) * r.height)
-    await sleep(TICK)
+    await tick()
     if (q(panelSel)) btn.click()
-    await sleep(TICK)
+    await tick()
     return currentColor()
   }
 
@@ -126,18 +158,18 @@
       more = q('button[aria-label^="更多畫筆設定"]')
       if (!more) throw new Error('找不到粗細滑桿（工具列不在畫面上）')
       more.click()
-      await sleep(TICK)
+      await tick()
       slider = sizeSlider()
     }
     if (Number(slider.getAttribute('aria-valuenow')) !== want) {
       const r = slider.getBoundingClientRect()
       press(slider, r.left + ((want - 1) / 63) * r.width, r.top + r.height / 2)
-      await sleep(TICK)
+      await tick()
     }
     lastSize = want
     if (more) {
       more.click()
-      await sleep(TICK)
+      await tick()
     }
     return want
   }
@@ -149,19 +181,19 @@
     const btn = q('button[aria-label^="把背景設為目前顏色"]')
     if (!btn) throw new Error('找不到背景色按鈕（工具列不在畫面上）')
     btn.click()
-    await sleep(TICK)
+    await tick()
     if (before && before !== want) await setColor(before)
     return want
   }
 
   async function clickTool(label, times = 1) {
     for (let i = 0; i < times; i++) {
-      await sleep(TICK)
+      await tick()
       const btn = q(`button[aria-label="${label}"]`)
       if (!btn || btn.disabled) return
       btn.click()
     }
-    await sleep(TICK)
+    await tick()
   }
 
   // ─── 形狀 ─────────────────────────────────────────────────────
@@ -294,6 +326,30 @@
 
   // ─── 狀態、交卷、結果 ───────────────────────────────────────────
 
+  // ─── 題目候選（隨機） ──────────────────────────────────────────
+  // 模型自己想題目時很容易收斂到同幾個（照文件裡的例子出），所以出題前先從題庫隨機抽候選，再從中挑。
+  const TOPIC_BANK = {
+    easy: '香蕉 草莓 葡萄 西瓜 鳳梨 櫻桃 檸檬 玉米 紅蘿蔔 香菇 甜甜圈 漢堡 披薩 壽司 冰淇淋 棒棒糖 蛋糕 珍珠奶茶 荷包蛋 粽子 雨傘 剪刀 鉛筆 時鐘 鑰匙 眼鏡 檯燈 電風扇 馬克杯 茶壺 牙刷 拖鞋 帽子 氣球 風箏 蠟燭 手機 吉他 月亮 星星 彩虹 雪人 仙人掌 向日葵 鬱金香 樹葉 金魚 貓頭鷹 蝸牛 瓢蟲 蝴蝶 烏龜 兔子 小雞 企鵝 青蛙 螃蟹 海星 鯨魚 蘋果'.split(' '),
+    medium: '腳踏車 機車 公車 火車 飛機 帆船 潛水艇 火箭 熱氣球 直升機 救護車 消防車 挖土機 紅綠燈 路燈 郵筒 燈塔 風車 城堡 帳篷 摩天輪 溜滑梯 長頸鹿 大象 斑馬 獅子 無尾熊 熊貓 孔雀 恐龍 章魚 水母 鱷魚 刺蝟 松鼠 老鷹 生氣的貓 睡覺的狗 融化的冰淇淋 會飛的豬 戴眼鏡的熊 哭泣的雲 生日蛋糕 聖誕樹 南瓜燈 煙火 電腦 相機 洗衣機 冰箱 電視 沙漏 地球儀 望遠鏡 天秤'.split(' '),
+    hard: '戴帽子的企鵝 貓坐在鋼琴上 下雨天等公車 月亮下的燈塔 海邊的椰子樹 雪地裡的小木屋 騎腳踏車的熊 月球上的太空人 坐在雲上的小羊 沙漠裡的駱駝 湖上的天鵝 森林裡的蘑菇屋 夜市的攤位 颱風天的雨傘 吃冰淇淋的狗 打籃球的猴子 彩虹下的獨角獸 火山爆發 海底的沉船 釣魚的小貓 陽台上的盆栽 公園的長椅 夕陽下的帆船 下雪的城堡 飛過山的熱氣球 樹上的貓頭鷹 撐傘的青蛙 蹺蹺板上的兔子 戴耳機的貓 吃竹子的熊貓 衝浪的企鵝 帳篷和營火 拉麵和筷子 窗邊的貓 海盜船 機器人遛狗 外星人的飛碟 恐龍吃蛋糕 雪地裡的企鵝 魚缸裡的金魚'.split(' '),
+  }
+
+  /**
+   * 隨機給 n 個題目候選（level：'easy'｜'medium'｜'hard'），排除聊天室裡看得到的已出過題目。
+   * 每次呼叫結果都不同；挑一個用，或受啟發自己想一個（自己想的也不要跟已出過的重複）
+   */
+  function suggestTopics(level = 'easy', n = 6) {
+    const pool = TOPIC_BANK[level]
+    if (!pool) throw new Error(`level 要是 'easy'、'medium' 或 'hard'：${level}`)
+    const used = new Set(topics().map((t) => t.trim()))
+    const cands = pool.filter((t) => !used.has(t))
+    for (let i = cands.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[cands[i], cands[j]] = [cands[j], cands[i]]
+    }
+    return cands.slice(0, Math.max(1, n))
+  }
+
   /** 元素內的文字，各段以一個空白相接（倒數與前面的文字是不同節點） */
   function textOf(el) {
     const parts = []
@@ -316,12 +372,16 @@
       )
   }
 
+  /** 回合開始的系統訊息：一般是「X 出題「題目」，開始作畫」，像不像比賽是「X 出題「題目」（像不像比賽：照著參考圖畫）」 */
+  const ROUND_START = /出題「(.+)」(，開始作畫|（像不像比賽：照著參考圖畫）)$/
+  const roundStarts = () =>
+    chat(Infinity)
+      .map((m) => (m.who === null ? ROUND_START.exec(m.text) : null))
+      .filter(Boolean)
+
   /** 出過的題目（依聊天室的系統訊息，舊到新）。只看得到聊天室還留著的部分：伺服器重啟會清空，空陣列不代表沒出過 */
   function topics() {
-    return chat(Infinity)
-      .map((m) => (m.who === null ? /出題「(.+)」，開始作畫$/.exec(m.text) : null))
-      .filter(Boolean)
-      .map((m) => m[1])
+    return roundStarts().map((m) => m[1])
   }
 
   /** 目前回合狀態（讀畫面上的文字，不讀遊戲內部狀態） */
@@ -345,13 +405,16 @@
       out.role = (segments[1] ?? '').startsWith('本回合旁觀') ? 'spectator' : 'participant'
       out.canDraw = liveCanvas() !== null
       out.submitted = out.role === 'participant' && !out.canDraw
+      // 像不像比賽：照著參考圖畫，評分看像不像參考圖。畫面上有「參考圖」面板就是；聊天室的開始訊息當備援
+      out.mimic = q('section[aria-label="參考圖"]') !== null || (roundStarts().pop()?.[2] ?? '').includes('像不像')
     } else {
       // 最近一題：揭曉是「題目　第一名：…」、等待中是「上一回合：題目　第一名：…」（中間是全形空白）；讀不到就從聊天室找
       const summary = phase === 'ended' || phase === 'idle' ? head.replace(/^上一回合：/, '') : ''
-      out.lastTopic = (summary.includes('\u3000') ? summary.split('\u3000')[0] : null) ?? topics().pop() ?? null
+      // 像不像比賽的回合，題目後面多「（像不像）」
+      out.lastTopic = (summary.includes('\u3000') ? summary.split('\u3000')[0].replace(/（像不像）$/, '') : null) ?? topics().pop() ?? null
     }
     // 自己正在出題時：對話框輸入框裡目前的字（確認字有打進去）
-    if (phase === 'choosing') out.topicInput = q('[role="dialog"] input')?.value ?? null
+    if (phase === 'choosing') out.topicInput = topicField()?.value ?? null
     // 送出中的按鈕是 aria-disabled／aria-busy，不是原生 disabled
     out.canVolunteer = Array.from(document.querySelectorAll('button')).some(
       (b) => (b.getAttribute('aria-label') ?? '').endsWith('：我出題') && !b.disabled && b.getAttribute('aria-disabled') !== 'true',
@@ -365,21 +428,16 @@
    */
   async function waitFor(phases, seconds = 25) {
     const want = Array.isArray(phases) ? phases : [phases]
-    const until = Date.now() + seconds * 1000
-    for (;;) {
-      const s = status()
-      if (want.includes(s.phase)) return { reached: true, status: s }
-      if (Date.now() >= until) return { reached: false, status: s }
-      await sleep(250)
-    }
+    const reached = await waitUntil(() => want.includes(status().phase), seconds)
+    return { reached, status: status() }
   }
 
   /** 依序執行作畫步驟；任何一步失敗就停下並回報是哪一步。題目剛送出、畫布還沒出現時會先等一下（最多 5 秒） */
   async function draw(steps) {
     if (!Array.isArray(steps)) return { ok: false, error: 'steps 要是陣列', status: status() }
-    for (let i = 0; i < 50 && !liveCanvas(); i++) await sleep(100)
+    await waitUntil(() => liveCanvas() !== null, 5)
     if (!liveCanvas()) return { ok: false, done: 0, error: '畫布現在不能畫（不是作畫階段、你是旁觀者，或已經交卷）', status: status() }
-    await sleep(TICK)
+    await tick()
     let done = 0
     try {
       for (const step of steps) {
@@ -389,45 +447,45 @@
     } catch (e) {
       return { ok: false, done, failedStep: steps[done], error: String(e?.message ?? e), status: status() }
     }
-    await sleep(TICK)
+    await tick()
     return { ok: true, done, status: status() }
   }
 
   /** 交卷：按「完成」再按確認框的「儲存」；交卷後不能再改 */
   async function submit() {
     if (!liveCanvas()) return { ok: false, error: '現在不能交卷（不是作畫階段、你是旁觀者，或已經交卷）', status: status() }
-    await sleep(TICK)
+    await tick()
     const finish = buttonByText('完成')
     if (!finish) return { ok: false, error: '找不到「完成」按鈕', status: status() }
     finish.click()
-    let save
-    for (let i = 0; i < 40 && !save; i++) {
-      await sleep(50)
-      save = buttonByText('儲存')
-    }
+    await waitUntil(() => buttonByText('儲存') !== undefined, 3)
+    const save = buttonByText('儲存')
     if (!save) return { ok: false, error: '確認框沒有出現', status: status() }
     // 比對時去掉倒數（每秒都在變）
     const progress = () => status().text.replace(/\d\d:\d\d/, '')
     const before = progress()
     save.click()
-    for (let i = 0; i < 300 && liveCanvas(); i++) await sleep(50)
+    await waitUntil(() => liveCanvas() === null, 15)
     if (liveCanvas()) return { ok: false, error: '交卷沒有成功，看畫面上「完成」旁邊的錯誤訊息', status: status() }
     // 畫布鎖定就是交卷成功；「已儲存 n/m」晚一點才更新，稍等讓回傳的 status 是新的
-    for (let i = 0; i < 30 && progress() === before; i++) await sleep(50)
+    await waitUntil(() => progress() !== before, 1.5)
     return { ok: true, status: status() }
   }
 
   /**
    * 揭曉結果：每張畫一筆 { label, commentPending }；label 有名次、暱稱、分數與完整評語（卡片上的評語太長會被截斷，以這裡為準）。
-   * commentPending 為 true 表示評語還在寫，過幾秒再讀。還沒揭曉（或畫廊已收起）回 null
+   * commentPending 為 true 表示評語還在寫，過幾秒再讀。還沒揭曉（或畫廊已收起）回 null。
+   * 像不像比賽的第一格是「參考圖」卡（按鈕帶 data-reveal-reference、不帶 data-reveal，沒有名次與分數），不列入
    */
   function results() {
     const list = q('ol[aria-label="投影片瀏覽"]')
     if (!list) return null
-    return Array.from(list.children).map((li) => ({
-      label: (q('button[data-reveal]', li)?.getAttribute('aria-label') ?? '').replace(/（放大）$/, ''),
-      commentPending: q('[data-reveal-comment="pending"]', li) !== null,
-    }))
+    return Array.from(list.children)
+      .map((li) => ({
+        label: (q('button[data-reveal]', li)?.getAttribute('aria-label') ?? li.querySelector('button')?.getAttribute('aria-label') ?? '').replace(/（放大）$/, ''),
+        commentPending: q('[data-reveal-comment="pending"]', li) !== null,
+      }))
+      .filter((r) => /^第 \d+ 名/.test(r.label))
   }
 
   // ─── 加入、聊天、出題（填輸入框、送出表單、按按鈕；跟用鍵盤滑鼠操作是同一條路） ───────────
@@ -439,22 +497,14 @@
     el.dispatchEvent(new Event('input', { bubbles: true }))
   }
   const alertText = (root = document) => q('[role="alert"]', root)?.textContent.trim() ?? null
-  /** 每 100ms 檢查一次，成立就回 true；seconds 秒內沒成立回 false */
-  async function until(test, seconds) {
-    const end = Date.now() + seconds * 1000
-    for (;;) {
-      if (test()) return true
-      if (Date.now() >= end) return false
-      await sleep(100)
-    }
-  }
+  const until = waitUntil
 
   /** 在首頁輸入暱稱加入房間；回 { ok, error, status }。暱稱重複等錯誤會在 error 裡，換一個再呼叫即可 */
   async function join(nickname) {
     const input = q('input[name="nickname"]')
     if (!input) return { ok: status().phase !== 'unknown', error: '不在首頁（已經在房間裡了？）', status: status() }
     setInput(input, nickname)
-    await sleep(TICK)
+    await tick()
     input.form.requestSubmit()
     // 上一次失敗的錯誤訊息還在畫面上：先等它被清掉，才不會把舊訊息當成這一次的結果
     await until(() => !q('input[name="nickname"]') || alertText() === null, 1)
@@ -471,7 +521,7 @@
     const count = () => document.querySelectorAll('[aria-label="聊天訊息"] > li[data-kind="chat"]').length
     const before = count()
     setInput(input, text)
-    await sleep(TICK)
+    await tick()
     input.form.requestSubmit()
     const sent = await until(() => count() > before || alertText(input.form) !== null, 4)
     return count() > before ? { ok: true } : { ok: false, error: (sent && alertText(input.form)) || '訊息沒有送出' }
@@ -482,19 +532,19 @@
     const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.getAttribute('aria-label') ?? '').endsWith('：我出題'))
     if (!btn) return { ok: false, error: '現在不能出題（有回合在進行，或在線不到 2 人）', status: status() }
     btn.click()
-    const opened = await until(() => q('[role="dialog"] input') !== null, 5)
+    const opened = await until(() => topicField() !== null, 5)
     return opened ? { ok: true, status: status() } : { ok: false, error: alertText() ?? '出題對話框沒有出現（可能被別人搶先）', status: status() }
   }
 
   /** 在出題對話框輸入題目並送出（1–20 字）；成功時作畫已經開始，接著呼叫 draw。回 { ok, error, status } */
   async function setTopic(topic) {
-    const input = q('[role="dialog"] input')
+    const input = topicField()
     if (!input) return { ok: false, error: '出題對話框不在畫面上（你不是出題者，或還沒呼叫 volunteer）', status: status() }
     setInput(input, topic)
-    await sleep(TICK)
+    await tick()
     input.form.requestSubmit()
-    await until(() => q('[role="dialog"] input') === null || alertText(q('[role="dialog"]')) !== null, 6)
-    if (q('[role="dialog"] input') !== null) return { ok: false, error: alertText(q('[role="dialog"]')) ?? '題目沒有送出', status: status() }
+    await until(() => topicField() === null || alertText(q('[role="dialog"]')) !== null, 6)
+    if (topicField() !== null) return { ok: false, error: alertText(q('[role="dialog"]')) ?? '題目沒有送出', status: status() }
     await until(() => status().phase === 'drawing', 3)
     return { ok: status().phase === 'drawing', status: status() }
   }
@@ -504,21 +554,20 @@
     const btn = Array.from(document.querySelectorAll('[role="dialog"] button')).find((b) => b.textContent.trim() === '取消')
     if (!btn) return { ok: false, error: '出題對話框不在畫面上', status: status() }
     btn.click()
-    const closed = await until(() => q('[role="dialog"] input') === null, 4)
+    const closed = await until(() => topicField() === null, 4)
     return { ok: closed, status: status() }
   }
 
   /** 等揭曉且每張畫的評語都寫完（或確定沒有評語）才回傳；最多等 seconds 秒。回 { done, results } */
   async function waitForComments(seconds = 25) {
-    const until = Date.now() + seconds * 1000
-    for (;;) {
+    const allWritten = () => {
       const r = results()
-      const done = r !== null && r.every((x) => !x.commentPending)
-      if (done || Date.now() >= until) return { done, results: r }
-      await sleep(500)
+      return r !== null && r.every((x) => !x.commentPending)
     }
+    const done = await waitUntil(allWritten, seconds)
+    return { done, results: results() }
   }
 
-  window.dc = { join, say, volunteer, setTopic, cancelTopic, draw, submit, status, waitFor, waitForComments, results, chat, topics, W, H, PALETTE }
+  window.dc = { join, say, volunteer, setTopic, cancelTopic, suggestTopics, draw, submit, status, waitFor, waitForComments, results, chat, topics, W, H, PALETTE }
   return `dc 已安裝（畫布 ${W}×${H}）：${JSON.stringify(status())}`
 })()

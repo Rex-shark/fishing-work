@@ -161,7 +161,7 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 
 - **交卷原圖直送，不再縮圖**（2026-10-12）：Clef `clef:27b-nvfp4` 在 Ollama 0.40.3 的 MLX 後端下 1280×720 原圖約 2.4 秒，`JUDGE_IMAGE_WIDTH` 已移除（設了也不會讀）。
 - **記憶體需求**：評分與評語兩個模型會同時常駐，合計約 **71 GB**（Clef 約 18 GB＋gemma4 約 52.5 GB），128 GB 的機器沒問題；**32 GB 的機器請設 `COMMENT=off`**（只留評分），或連評分也不用時再加 `JUDGE=random`。
-- **評語不影響揭曉**：分數與排名只由評分器決定；每張評完分才開始產生評語，揭曉不等它，晚到的評語會自動補在卡片上（等待中顯示「メスガキ：正在寫評語」）。**第一名會被稱讚**：名次揭曉時才知道，所以第一名的評語在揭曉當下重做一次「稱讚版」（同一個評審人設），會比其他人晚一點出現；稱讚版失敗時退回他原本的一般評語（揭曉前已寫好、或揭曉當下正在寫的那句；都沒有才沒有評語）。啟動時若清單裡有 `COMMENT_MODEL` 會先在背景暖機一次（log `draw-contest.comment.warmup`，冷啟動載入約 9～17 秒）；連不上或沒有該模型只會警告 `draw-contest.comment.commentUnavailable`，遊戲照常可玩、卡片只是沒有評語。
+- **評語不影響揭曉**：分數與排名只由評分器決定；每張評完分才開始產生評語，揭曉不等它，晚到的評語會自動補在卡片上（等待中顯示「ミオ：正在寫評語」）。**第一名會被稱讚**：名次揭曉時才知道，所以第一名的評語在揭曉當下重做一次「稱讚版」（同一個評審人設），會比其他人晚一點出現；稱讚版失敗時退回他原本的一般評語（揭曉前已寫好、或揭曉當下正在寫的那句；都沒有才沒有評語）。啟動時若清單裡有 `COMMENT_MODEL` 會先在背景暖機一次（log `draw-contest.comment.warmup`，冷啟動載入約 9～17 秒）；連不上或沒有該模型只會警告 `draw-contest.comment.commentUnavailable`，遊戲照常可玩、卡片只是沒有評語。
 
 - **預設 `ollama`**：連不上 Ollama 或沒有該模型時，啟動 log 警告 `draw-contest.judge.ollamaUnavailable`（附原因），**遊戲照常可玩**：每回合仍先試 Ollama，連不上就該回合自動退回隨機，畫面備忘稿標「（隨機評分）」。Ollama 之後才開也**不用重啟** server，下一回合就會改用 AI 評分。確定沒有 Ollama 的機器直接設 `JUDGE=random` 與 `COMMENT=off`，省掉每回合的連線嘗試與 log。啟動時若清單裡有 `JUDGE_MODEL`，會先在背景暖機一次（送一張 1×1 的圖把 Clef 載進記憶體並常駐 30 分鐘，log `draw-contest.judge.warmup`；Clef 冷啟動第一張約 13 秒，暖機後第一回合第一張不必等），暖機失敗只警告 `draw-contest.judge.warmupFailed`、不影響評分。`/healthz` 不檢查 Ollama。
 - **模型不進映像**：Ollama 跑在主機上，容器只以 HTTP 呼叫它。

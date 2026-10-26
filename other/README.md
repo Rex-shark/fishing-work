@@ -21,13 +21,14 @@ other/skills/install.sh /Users/liuyoucheng/IdeaProjects/pi-agent/.pi/skills
 
 - 目標填對方的技能目錄：pi 是 `<專案>/.pi/skills`，Claude Code 是 `<專案>/.claude/skills`。
 - 只會帶 `SKILL.md`、`references/` 與壓縮版腳本；同名技能整個換掉，其他技能不動。
-- **改了這裡的技能或腳本之後要重跑一次**，安裝過去的是複本，不會自動更新。
+- **改了這裡的技能或腳本之後要重跑一次**，安裝過去的是複本，不會自動更新。Rex 2026-10-26 定案：技能改版後由事務長自動重裝到下表所有位置，事後告知。
 
 已安裝的地方：
 
 | 專案 | 位置 | 最後安裝 |
 |---|---|---|
-| pi-agent（pi ＋ 本機 Ollama 模型 ＋ Playwright MCP） | `/Users/liuyoucheng/IdeaProjects/pi-agent/.pi/skills/` | 2026-10-13 |
+| pi-agent（pi ＋ 本機 Ollama 模型 ＋ Playwright MCP） | `/Users/liuyoucheng/IdeaProjects/pi-agent/.pi/skills/` | 2026-10-26 |
+| ollama-agent（Claude Code） | `/Users/liuyoucheng/Desktop/ollama-agent/.claude/skills/` | 2026-10-26 |
 
 ## 不安裝，直接派工
 

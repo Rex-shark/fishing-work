@@ -31,10 +31,16 @@ export const CANVAS_LOGICAL = { width: 1280, height: 720 } as const;
 export const CANVAS_BACKGROUND = '#1E1E1E';
 /** 交卷 PNG 上限（bytes，2 MiB；線條畫通常 < 100 KB）；Socket.IO maxHttpBufferSize 設為此值 + 64 KiB */
 export const MAX_SUBMISSION_BYTES = 2_097_152;
+/** Epic 20 參考圖 JPEG 上限（bytes，2 MiB；客戶端已縮到長邊 ≤ 1280、品質 0.9，通常 100～400 KB） */
+export const MAX_REFERENCE_BYTES = 2_097_152;
 /** 單回合滿分 */
 export const SCORE_MAX = 100;
-/** 評審名稱（Epic 15 評語）；唯一來源，server 提示詞與揭曉卡片都讀它（Rex 2026-10-12 定名） */
-export const COMMENT_PERSONA_NAME = 'メスガキ';
+/**
+ * 評審名稱（Epic 15 評語；揭曉卡片評語行前綴）；揭曉卡片前綴、產生中文字、aria-label、說明對話框都讀它。
+ * 2026-10-21 由 'メスガキ' 改為 'ミオ'（Rex 選定的評審名，只做字串替換）；
+ * server 提示詞的人設不讀它，寫死在 commentary/ollamaChat.ts（雌小鬼人格不變）。
+ */
+export const COMMENT_PERSONA_NAME = 'ミオ';
 /** 筆刷粗細下限（邏輯像素，整數；同我畫你猜） */
 export const BRUSH_MIN = 1;
 /** 筆刷粗細上限（邏輯像素，整數；同我畫你猜） */

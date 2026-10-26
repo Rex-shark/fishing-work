@@ -9,44 +9,76 @@
 //   顯示與否只看該卡片自己的 comment／commentPending（revealView.revealComment），不看 round.commentMode。
 //   放大檢視（選做）：點縮圖（或 Enter／Space）放大到工作區中央，再點或 Esc 回網格，焦點還給原縮圖；
 //   評語與網格卡片一樣在圖片下方，完整顯示（不截斷；design §3，2026-10-12 定案與網格卡片一致）。
+//   參考圖卡（Epic 20 像不像比賽，lastMode === 'mimic'；design §3）：網格第一格，標題列「參考圖」、無名次分數評語；
+//   縮圖是參考圖 JPEG（16:9 內 contain、--bg-editor 底），可放大；按鈕帶 data-reveal-reference（不帶 data-reveal，plan 決策 12），
+//   無障礙名稱「參考圖（放大）」／放大時「參考圖（回到全部）」。圖還沒到顯示「載入中」。
 // 殼層把本元件放在中央工作區（round.showReveal）；外層無障礙名稱與「未儲存」的叫法來自 ShellViews.terms，本檔不寫死偽裝字樣。
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { COMMENT_PERSONA_NAME } from '@fishing-work/shared/draw-contest'
 import { tip } from '../../layout/tooltipPlacement'
 import { useTermsView } from '../../shells/views'
-import { useGameStore } from '../../store/game'
-import { COMMENT_PENDING_TEXT, revealCards, type RevealCard, type RevealComment, type RevealImage } from './revealView'
+import { selectReferenceUrl, useGameStore } from '../../store/game'
+import {
+  COMMENT_PENDING_TEXT,
+  REFERENCE_CARD_ATTR,
+  referenceCard,
+  revealCards,
+  type ReferenceRevealCard,
+  type RevealCard,
+  type RevealComment,
+  type RevealImage,
+} from './revealView'
 
 export function Reveal() {
   const results = useGameStore((s) => s.round.results)
+  const mimic = useGameStore((s) => s.round.lastMode === 'mimic')
+  const referenceUrl = useGameStore(selectReferenceUrl)
   const gallery = useGameStore((s) => s.gallery)
   const me = useGameStore((s) => s.me)
   const terms = useTermsView()
   if (results === null) return null
-  return <RevealView cards={revealCards(results, gallery, me, terms)} label={terms.gallery} />
+  return (
+    <RevealView cards={revealCards(results, gallery, me, terms)} label={terms.gallery} reference={mimic ? referenceCard(referenceUrl) : null} />
+  )
 }
 
-/** 畫廊本體（不接 store；測試以靜態渲染驗證） */
-export function RevealView({ cards, label }: { cards: readonly RevealCard[]; label: string }) {
-  const [zoomed, setZoomed] = useState<string | null>(null)
-  const zoomedCard = cards.find((c) => c.playerId === zoomed)
+/** 放大中的那一格：某位參賽者的畫，或參考圖 */
+type Zoom = { kind: 'player'; id: string } | { kind: 'reference' }
+
+/** 畫廊本體（不接 store；測試以靜態渲染驗證）。reference＝像不像比賽的參考圖卡（第一格）；省略或 null＝沒有 */
+export function RevealView({ cards, label, reference = null }: { cards: readonly RevealCard[]; label: string; reference?: ReferenceRevealCard | null }) {
+  const [zoomed, setZoomed] = useState<Zoom | null>(null)
+  const zoomedCard = zoomed?.kind === 'player' ? cards.find((c) => c.playerId === zoomed.id) : undefined
   /** 放大前有焦點的縮圖（回網格時還焦點） */
-  const returnTo = useRef<string | null>(null)
+  const returnTo = useRef<Zoom | null>(null)
   const listRef = useRef<HTMLOListElement>(null)
 
   useEffect(() => {
     if (zoomed !== null || returnTo.current === null) return
-    const id = returnTo.current
+    const target = returnTo.current
     returnTo.current = null
-    listRef.current?.querySelector<HTMLElement>(`[data-reveal="${CSS.escape(id)}"]`)?.focus()
+    const selector = target.kind === 'reference' ? `[${REFERENCE_CARD_ATTR}]` : `[data-reveal="${CSS.escape(target.id)}"]`
+    listRef.current?.querySelector<HTMLElement>(selector)?.focus()
   }, [zoomed])
+
+  if (zoomed?.kind === 'reference' && reference !== null) {
+    return (
+      <ZoomedReference
+        card={reference}
+        onClose={() => {
+          returnTo.current = { kind: 'reference' }
+          setZoomed(null)
+        }}
+      />
+    )
+  }
 
   if (zoomedCard !== undefined) {
     return (
       <ZoomedCard
         card={zoomedCard}
         onClose={() => {
-          returnTo.current = zoomedCard.playerId
+          returnTo.current = { kind: 'player', id: zoomedCard.playerId }
           setZoomed(null)
         }}
       />
@@ -60,6 +92,21 @@ export function RevealView({ cards, label }: { cards: readonly RevealCard[]; lab
         aria-label={label}
         className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-[16px] p-1 max-md:grid-cols-2"
       >
+        {reference !== null && (
+          <li className="min-w-0 rounded-[2px] p-2">
+            <ReferenceTitle card={reference} />
+            <button
+              type="button"
+              data-reveal-reference=""
+              aria-label={`${reference.label}（放大）`}
+              {...tip(reference.label, 'top')}
+              onClick={() => setZoomed({ kind: 'reference' })}
+              className="block aspect-video w-full cursor-zoom-in overflow-hidden bg-editor shadow-slide outline-1 outline-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus"
+            >
+              <Thumb image={reference.image} nickname={reference.title} alt={reference.title} />
+            </button>
+          </li>
+        )}
         {cards.map((card) => (
           <li key={card.playerId} className={`min-w-0 rounded-[2px] p-2 ${card.isMe ? 'bg-active' : ''}`}>
             <CardTitle card={card} />
@@ -68,7 +115,7 @@ export function RevealView({ cards, label }: { cards: readonly RevealCard[]; lab
               data-reveal={card.playerId}
               aria-label={`${card.label}（放大）`}
               {...tip(card.summary, 'top')}
-              onClick={() => setZoomed(card.playerId)}
+              onClick={() => setZoomed({ kind: 'player', id: card.playerId })}
               className={`block aspect-video w-full cursor-zoom-in overflow-hidden bg-slide shadow-slide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus ${
                 card.podium ? 'outline-2 outline-accent' : 'outline-1 outline-border'
               }`}
@@ -110,9 +157,18 @@ function CardComment({ comment }: { comment: RevealComment }) {
   )
 }
 
-/** 縮圖內容：圖片／灰底「載入中」／空白 */
-function Thumb({ image, nickname }: { image: RevealImage; nickname: string }) {
-  if (image.kind === 'image') return <img src={image.url} alt={`${nickname} 的畫`} draggable={false} className="block h-full w-full object-contain" />
+/** 參考圖卡的標題列：只有「參考圖」（沒有名次記號、分數；高度同名次卡的標題列，同一列縮圖上緣對齊） */
+function ReferenceTitle({ card }: { card: ReferenceRevealCard }) {
+  return (
+    <div aria-hidden="true" className="mb-1 flex min-w-0 items-baseline text-[12px] leading-[18px] text-fg">
+      <span className="truncate font-bold">{card.title}</span>
+    </div>
+  )
+}
+
+/** 縮圖內容：圖片／灰底「載入中」／空白；alt 省略時為「<暱稱> 的畫」 */
+function Thumb({ image, nickname, alt }: { image: RevealImage; nickname: string; alt?: string }) {
+  if (image.kind === 'image') return <img src={image.url} alt={alt ?? `${nickname} 的畫`} draggable={false} className="block h-full w-full object-contain" />
   if (image.kind === 'loading') {
     return <span className="flex h-full w-full items-center justify-center bg-hover text-[12px] text-fg-muted">載入中</span>
   }
@@ -157,6 +213,36 @@ export function ZoomedCard({ card, onClose }: { card: RevealCard; onClose: () =>
           <Thumb image={card.image} nickname={card.nickname} />
         </button>
         {card.comment !== null && <CardComment comment={card.comment} />}
+      </div>
+    </div>
+  )
+}
+
+/** 參考圖的放大檢視（同 ZoomedCard：標題列 → 圖片；沒有評語）；再點或 Esc 回網格 */
+export function ZoomedReference({ card, onClose }: { card: ReferenceRevealCard; onClose: () => void }) {
+  function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+    }
+  }
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2">
+      <div className={ZOOM_WIDTH}>
+        <ReferenceTitle card={card} />
+      </div>
+      <div className={ZOOM_WIDTH}>
+        <button
+          type="button"
+          autoFocus
+          data-reveal-reference=""
+          aria-label={`${card.label}（回到全部）`}
+          onClick={onClose}
+          onKeyDown={handleKeyDown}
+          className="block aspect-video w-full cursor-zoom-out overflow-hidden bg-editor shadow-slide outline-1 outline-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus"
+        >
+          <Thumb image={card.image} nickname={card.title} alt={card.title} />
+        </button>
       </div>
     </div>
   )

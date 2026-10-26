@@ -4,40 +4,57 @@
 // API 格式（2026-10-12 以 Ollama 0.40.3、gemma4:26b-mlx-bf16 實測）：
 //   請求 { model, stream: false, think: false, keep_alive: '30m',
 //          messages: [{ role: 'system', content }, { role: 'user', content, images: [base64] }],
-//          options: { temperature: 0.9, num_predict: 80 } }
+//          options: { temperature: 0.9, num_predict: 120 } }（2026-10-21 Phase 7 由 80 改 120）
 //   回應 200 { model, message: { role: 'assistant', content }, done: true,
 //              total_duration, load_duration, prompt_eval_count, eval_count, ...（duration 皆奈秒） }
 //   錯誤 4xx { error: '…' }（例：model 不存在 404）
-// think: false 必帶：gemma4 預設思考，num_predict 80 會全被思考吃掉、content 空白（plan/contest-commentary.md 踩雷紀錄）。
-// 提示詞只有人設一句＋兩條規則（Rex 2026-10-12：讓 gemma4 自由發揮）：**不加禁詞、不加範例句、不給暱稱與名次**。
+// think: false 必帶：gemma4 預設思考，num_predict（當時 80，2026-10-21 起 120）會全被思考吃掉、content 空白（plan/contest-commentary.md 踩雷紀錄）。
+// 提示詞只有人設一句＋兩條規則（Rex 2026-10-12：讓 gemma4 自由發揮）：**不加禁詞、不加範例句、不給名次**。
+// 參賽者暱稱 2026-10-21 起放進 user 文案（Phase 7，Rex：嘗試看看模型會不會利用名稱），但不教模型怎麼用；
+// 暱稱已過 validateNickname（1～12 字、無控制字元），不另過濾。
 // 唯一例外是第一名稱讚版（Phase 4，Rex 2026-10-12）：user 文案換成稱讚版，告訴模型「這是第一名、妳不甘心但得承認它畫得好、用雌小鬼的口氣誇它」。
-import { COMMENT_PERSONA_NAME } from '@fishing-work/shared/draw-contest';
+// Epic 20 像不像比賽：mimic 回合 images 為 [參考圖 JPEG, 交卷 PNG]，user 文案（批評版與稱讚版）改說明「第一張是參考圖、第二張是照著畫的」；system 與參數不變。
 import { describeFetchError, joinUrl, type FetchLike } from '../judge/ollama';
 import { abortReason } from '../judge/random';
 import type { CommentInput, Commentator } from './queue';
 
 // ─── 請求（文案逐字照 §6.1）───────────────────────────────────────
 
-/** system 提示詞（§6.1 逐字；評審名稱讀 COMMENT_PERSONA_NAME） */
-export const COMMENT_SYSTEM_PROMPT = `你是${COMMENT_PERSONA_NAME}，繪圖比賽的評審。規則只有兩條：用繁體中文（台灣用語）；一句話，40 字內。`;
+/**
+ * system 提示詞（§6.1 逐字）。人設「メスガキ」寫死在這裡，**不讀** shared 的 COMMENT_PERSONA_NAME：
+ * 2026-10-21 起該常數改為卡片上顯示的評審名「ミオ」（Rex 選定），人格與語氣不變。
+ * 字數規則 2026-10-21 由 40 改 60 字（Phase 7）。
+ */
+export const COMMENT_SYSTEM_PROMPT = `你是メスガキ，繪圖比賽的評審。規則只有兩條：用繁體中文（台灣用語）；一句話，60 字內。`;
 
-/** user 提示詞（§6.1 逐字）：題目原樣放入、分數為該張最終分數 */
-export function commentUserPrompt(topic: string, score: number): string {
-  return `題目「${topic}」，評分 ${score} 分。這是參賽者的畫，給一句評語。`;
+/** user 提示詞（§6.1 逐字）：題目、暱稱原樣放入、分數為該張最終分數（暱稱 2026-10-21 Phase 7 加入） */
+export function commentUserPrompt(topic: string, score: number, nickname: string): string {
+  return `題目「${topic}」，評分 ${score} 分。這是參賽者「${nickname}」的畫，給一句評語。`;
 }
 
 /**
  * 第一名稱讚版的 user 提示詞（§6.1 逐字，Phase 4）：只有 ended 時的第一名重做用它；system 與其餘參數不變。
  * 2026-10-12 定案改版：初稿只要求模型「稱讚」，真模型實測多半仍直說畫得爛；明說「它畫得好、妳得承認」才有正面肯定（spec §6.1 文案由來）。
+ * 2026-10-21 Phase 7 加入「，參賽者「{nickname}」」。
  */
-export function praiseUserPrompt(topic: string, score: number): string {
-  return `題目「${topic}」，評分 ${score} 分，這張是本回合第一名。妳不甘心，但還是得承認它畫得好，用雌小鬼的口氣誇它，一句評語。`;
+export function praiseUserPrompt(topic: string, score: number, nickname: string): string {
+  return `題目「${topic}」，評分 ${score} 分，這張是本回合第一名，參賽者「${nickname}」。妳不甘心，但還是得承認它畫得好，用雌小鬼的口氣誇它，一句評語。`;
+}
+
+/** mimic 回合的 user 提示詞（§6.1 逐字，Epic 20）：images 為 [參考圖, 交卷 PNG] */
+export function mimicUserPrompt(topic: string, score: number, nickname: string): string {
+  return `題目「${topic}」，評分 ${score} 分。第一張是參考圖，第二張是參賽者「${nickname}」照著畫的，給一句評語。`;
+}
+
+/** mimic 回合的第一名稱讚版 user 提示詞（§6.1 逐字，Epic 20） */
+export function mimicPraiseUserPrompt(topic: string, score: number, nickname: string): string {
+  return `題目「${topic}」，評分 ${score} 分，這張是本回合第一名，參賽者「${nickname}」。第一張是參考圖，第二張是它照著畫的。妳不甘心，但還是得承認它畫得像，用雌小鬼的口氣誇它，一句評語。`;
 }
 
 /** 模型在一場遊戲裡常駐（§6.1） */
 export const COMMENT_KEEP_ALIVE = '30m';
-/** 取樣參數（§6.1）：80 token 足夠 40 字 */
-export const COMMENT_OPTIONS = { temperature: 0.9, num_predict: 80 } as const;
+/** 取樣參數（§6.1）：60 字約 60～90 token，120 留餘裕（2026-10-21 Phase 7 由 80 改 120） */
+export const COMMENT_OPTIONS = { temperature: 0.9, num_predict: 120 } as const;
 
 export interface ChatMessage {
   role: 'system' | 'user';
@@ -54,8 +71,27 @@ export interface ChatRequest {
   options: { temperature?: number; num_predict: number };
 }
 
-/** praise = true 時 user 文案用第一名稱讚版，其餘欄位完全相同 */
-export function buildChatRequest(model: string, topic: string, score: number, imageBase64: string, praise = false): ChatRequest {
+/**
+ * praise = true 時 user 文案用第一名稱讚版，其餘欄位完全相同。
+ * referenceBase64 非 null（Epic 20 mimic 回合）：images 為 [參考圖, 交卷 PNG]，user 文案用 mimic 版（批評或稱讚）。
+ */
+export function buildChatRequest(
+  model: string,
+  topic: string,
+  score: number,
+  nickname: string,
+  imageBase64: string,
+  praise = false,
+  referenceBase64: string | null = null,
+): ChatRequest {
+  const mimic = referenceBase64 !== null;
+  const content = mimic
+    ? praise
+      ? mimicPraiseUserPrompt(topic, score, nickname)
+      : mimicUserPrompt(topic, score, nickname)
+    : praise
+      ? praiseUserPrompt(topic, score, nickname)
+      : commentUserPrompt(topic, score, nickname);
   return {
     model,
     stream: false,
@@ -63,7 +99,7 @@ export function buildChatRequest(model: string, topic: string, score: number, im
     keep_alive: COMMENT_KEEP_ALIVE,
     messages: [
       { role: 'system', content: COMMENT_SYSTEM_PROMPT },
-      { role: 'user', content: praise ? praiseUserPrompt(topic, score) : commentUserPrompt(topic, score), images: [imageBase64] },
+      { role: 'user', content, images: mimic ? [referenceBase64, imageBase64] : [imageBase64] },
     ],
     options: { ...COMMENT_OPTIONS },
   };
@@ -95,7 +131,7 @@ export function parseChatResponse(json: unknown): string {
 
 /**
  * 後處理（§6.1）：去頭尾空白、取第一行；結果可能是空字串（佇列視為失敗）。
- * **不截斷**：40 字是給模型的規則，畫面以 line-clamp 處理。
+ * **不截斷**：60 字是給模型的規則；畫面也完整顯示（2026-10-12 起揭曉卡片已移除 line-clamp）。
  */
 export function cleanComment(content: string): string {
   return content.trim().split(/\r?\n/, 1)[0].trim();
@@ -109,6 +145,8 @@ export interface CommentedInfo {
   score: number;
   /** true = 第一名稱讚版 */
   praise: boolean;
+  /** true = 像不像比賽（帶參考圖，Epic 20） */
+  mimic: boolean;
   comment: string;
   chars: number;
   ms: number;
@@ -181,7 +219,8 @@ export function createOllamaCommentator(options: OllamaCommentatorOptions): Comm
       const started = Date.now();
       // 交卷原圖（1280×720）直送，不縮圖（§6.1）
       const praise = input.praise === true;
-      const body = buildChatRequest(options.model, input.topic, input.score, input.png.toString('base64'), praise);
+      const reference = input.reference === undefined ? null : input.reference.toString('base64');
+      const body = buildChatRequest(options.model, input.topic, input.score, input.nickname, input.png.toString('base64'), praise, reference);
       const json = await postChat(fetchImpl, endpoint, body, signal);
       const comment = cleanComment(parseChatResponse(json));
       const promptTokens = readCount(json, 'prompt_eval_count');
@@ -190,6 +229,7 @@ export function createOllamaCommentator(options: OllamaCommentatorOptions): Comm
         topic: input.topic,
         score: input.score,
         praise,
+        mimic: reference !== null,
         comment,
         chars: [...comment].length,
         ms: Date.now() - started,

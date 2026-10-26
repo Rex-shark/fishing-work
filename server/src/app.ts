@@ -97,7 +97,8 @@ export function createApp(options: AppOptions = {}): App {
     pendingBytesOf: options.pendingBytesOf,
   });
 
-  // 繪圖比賽（Epic 14）：交卷 PNG 上限 MAX_SUBMISSION_BYTES（2 MiB）+ 64 KiB 小於上方 maxHttpBufferSize，不需調整
+  // 繪圖比賽（Epic 14）：交卷 PNG 上限 MAX_SUBMISSION_BYTES（2 MiB）+ 64 KiB 小於上方 maxHttpBufferSize，不需調整；
+  // Epic 20 的 round:setTopic（題目 ＋ 參考圖 JPEG ≤ MAX_REFERENCE_BYTES 2 MiB）同樣在範圍內
   const drawContestRoom = registerDrawContest(io.of(DRAW_CONTEST_NAMESPACE) as DrawContestNamespace, {
     clock: options.clock,
     durations: options.contestDurations,

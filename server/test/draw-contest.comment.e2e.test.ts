@@ -183,10 +183,22 @@ describe('e2e /draw-contest 評語（假 Ollama /api/chat）', () => {
     const chats = (mock as MockOllama).requests.filter((r) => r.path === '/api/chat').map((r) => r.body);
     expect(chats[0]).toEqual(buildWarmupRequest(MODEL));
     const expected = [
-      buildChatRequest(MODEL, '蘋果', randomScore(pngA, '蘋果').score, Buffer.from(pngA).toString('base64')),
-      buildChatRequest(MODEL, '蘋果', randomScore(pngB, '蘋果').score, Buffer.from(pngB).toString('base64'), true),
+      buildChatRequest(MODEL, '蘋果', randomScore(pngA, '蘋果').score, 'Alice', Buffer.from(pngA).toString('base64')),
+      buildChatRequest(MODEL, '蘋果', randomScore(pngB, '蘋果').score, 'Bob', Buffer.from(pngB).toString('base64'), true),
     ];
     expect(chats.slice(1)).toEqual(expected);
+    // 2026-10-21 Phase 7：線上請求逐字——system 60 字、num_predict 120、user 文案帶各自的暱稱（第一名稱讚版帶第一名 Bob）
+    const scoreA = randomScore(pngA, '蘋果').score;
+    const scoreB = randomScore(pngB, '蘋果').score;
+    const sent = chats.slice(1) as Array<{ messages: Array<{ role: string; content: string }>; options: { num_predict: number } }>;
+    for (const c of sent) {
+      expect(c.messages[0].content).toBe('你是メスガキ，繪圖比賽的評審。規則只有兩條：用繁體中文（台灣用語）；一句話，60 字內。');
+      expect(c.options.num_predict).toBe(120);
+    }
+    expect(sent[0].messages[1].content).toBe(`題目「蘋果」，評分 ${scoreA} 分。這是參賽者「Alice」的畫，給一句評語。`);
+    expect(sent[1].messages[1].content).toBe(
+      `題目「蘋果」，評分 ${scoreB} 分，這張是本回合第一名，參賽者「Bob」。妳不甘心，但還是得承認它畫得好，用雌小鬼的口氣誇它，一句評語。`,
+    );
 
     // 中途加入：快照的 results 帶已產生的評語，不再 pending
     const C = await connect();
@@ -217,7 +229,8 @@ describe('e2e /draw-contest 評語（假 Ollama /api/chat）', () => {
   const chatKinds = (): string[] =>
     (mock as MockOllama).requests
       .filter((r) => r.path === '/api/chat' && JSON.stringify(r.body).includes('images'))
-      .map((r) => (JSON.stringify(r.body).includes('第一名') ? 'praise' : 'criticism'));
+      // 2026-10-21 Phase 7：比對稱讚版特有片段（同假 Ollama 的 PRAISE_MARKER），暱稱含「第一名」也不誤判
+      .map((r) => (JSON.stringify(r.body).includes('這張是本回合第一名') ? 'praise' : 'criticism'));
 
   // 2026-10-13 Phase 5：原本在途的批評版被中止、模型只為第一名跑一次
   it('第一名的批評版正在產生時揭曉：讓它跑完（不發事件）、稱讚版緊接著跑；兩人最終各一則評語（第一名稱讚句、另一人批評句）', async () => {

@@ -2,6 +2,8 @@
 // 只存在使用者自己的瀏覽器（IndexedDB），不經 server、不同步；同一瀏覽器的所有分頁共用同一個資料庫、不分暱稱。
 //   資料庫 fishing-work:draw-contest（版本 1）、object store history、主鍵 id（＝該回合 round.startedAt），沒有索引（最多 5 筆，讀出後在記憶體排序）。
 // 本檔只有「存取」：HistoryDb 介面、原生 IndexedDB 的小 wrapper（不用任何套件）、記憶體假實作（測試注入用）、修剪到 HISTORY_MAX。
+// Epic 20（像不像比賽）：存檔多一欄 reference（參考圖 JPEG Blob；一般回合為 null）。資料庫版本不變：
+//   舊存檔沒有這一欄，讀出時一律補成 null（withReference），不必升版或搬資料。
 // 何時建檔與更新在 historyStore.ts。任何失敗都以 rejected promise 回給呼叫端（由 historyStore 接住、只 console.warn），本檔不吞錯也不印訊息。
 import type { CommentMode, JudgeMode, ResultEntry } from '@fishing-work/shared/draw-contest'
 
@@ -28,6 +30,8 @@ export interface HistoryRecord {
   results: ResultEntry[]
   /** playerId → 交卷的 PNG（image/png）；沒收到的不在裡面 */
   images: Record<string, Blob>
+  /** 像不像比賽的參考圖（Epic 20；image/jpeg）；一般回合、還沒收到、舊存檔（沒有這一欄）為 null */
+  reference: Blob | null
 }
 
 /**
@@ -67,6 +71,15 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
 }
 
 /**
+ * 舊存檔相容（Epic 20 之前沒有 reference 欄位）：reference 不是 Blob 就當 null。已經是 Blob 或 null 時回傳原物件
+ */
+export function withReference(record: HistoryRecord): HistoryRecord {
+  const value: unknown = (record as { reference?: unknown }).reference
+  if (value === null || value instanceof Blob) return record
+  return { ...record, reference: null }
+}
+
+/**
  * 修剪（決策 5）：超過 max 筆就刪 savedAt 最舊的，直到剩 max 筆；回傳被刪掉的 id。
  * 只用介面的 getAll／delete，兩種實作共用
  */
@@ -80,14 +93,15 @@ export async function trimHistory(db: HistoryDb, max: number = HISTORY_MAX): Pro
 export function createMemoryHistoryDb(initial: readonly HistoryRecord[] = []): HistoryDb {
   const rows = new Map<number, HistoryRecord>(initial.map((r) => [r.id, r]))
   return {
-    getAll: () => Promise.resolve(sortBySavedAtDesc([...rows.values()])),
+    getAll: () => Promise.resolve(sortBySavedAtDesc([...rows.values()].map(withReference))),
     put: (record) => {
       rows.set(record.id, record)
       return Promise.resolve()
     },
     update: (id, change) =>
       new Promise((resolve) => {
-        const next = change(rows.get(id))
+        const existing = rows.get(id)
+        const next = change(existing !== undefined ? withReference(existing) : undefined)
         if (next !== null) rows.set(next.id, next)
         resolve(next !== null)
       }),
@@ -200,7 +214,7 @@ export function createIndexedDbHistory(getFactory: () => IDBFactory | undefined 
     getAll: () =>
       run<HistoryRecord[]>('readonly', (store, done) => {
         const request = store.getAll()
-        request.onsuccess = () => done(sortBySavedAtDesc((request.result as unknown[]).filter(isHistoryRecord)))
+        request.onsuccess = () => done(sortBySavedAtDesc((request.result as unknown[]).filter(isHistoryRecord).map(withReference)))
       }),
 
     put: (record) =>
@@ -216,7 +230,7 @@ export function createIndexedDbHistory(getFactory: () => IDBFactory | undefined 
         request.onsuccess = () => {
           try {
             const existing: unknown = request.result
-            const next = change(isHistoryRecord(existing) ? existing : undefined)
+            const next = change(isHistoryRecord(existing) ? withReference(existing) : undefined)
             if (next !== null) store.put(next)
             done(next !== null)
           } catch (error) {
