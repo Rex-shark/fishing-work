@@ -15,6 +15,32 @@
 | 繪圖比賽 | `http://<IP>/draw-contest/` | 出題後所有人同時畫，評分器逐張打分、投影片揭曉（見「繪圖比賽」） |
 | 猜歌 | `http://<IP>/song-guess/` | 出題者選題庫（指定歌手、台灣熱門、西洋熱門或動漫熱門），所有人同時聽 30 秒試聽、打字猜歌名（見「猜歌」；**要戴耳機**） |
 
+## 畫面
+
+| 遊戲清單 | 我畫你猜首頁（選偽裝風格） |
+|---|---|
+| ![遊戲清單](docs/screenshots/home.png) | ![我畫你猜首頁](docs/screenshots/draw-guess-home.jpg) |
+
+我畫你猜的四套偽裝：程式編輯器、簡報、視訊會議、試算表。
+
+| VS Code | PowerPoint |
+|---|---|
+| ![我畫你猜 VS Code](docs/screenshots/draw-guess-vscode.png) | ![我畫你猜 PowerPoint](docs/screenshots/draw-guess-ppt.png) |
+| **Google Meet** | **Excel** |
+| ![我畫你猜 Meet](docs/screenshots/draw-guess-meet.png) | ![我畫你猜 Excel](docs/screenshots/draw-guess-excel.png) |
+
+繪圖比賽（簡報偽裝）：同時作畫、Clef 打分、投影片瀏覽揭曉並附ミオ的一句評語；附參考圖就是「像不像比賽」。
+
+| 作畫中 | 揭曉畫廊 | 像不像比賽（參考圖面板） |
+|---|---|---|
+| ![繪圖比賽作畫中](docs/screenshots/draw-contest-drawing.png) | ![繪圖比賽揭曉](docs/screenshots/draw-contest-reveal.png) | ![像不像比賽](docs/screenshots/draw-contest-mimic.png) |
+
+猜歌（視訊會議偽裝）：Apple Music 30 秒試聽同步播放、聊天室打字猜歌名。
+
+| 播放中 | 揭曉 |
+|---|---|
+| ![猜歌播放中](docs/screenshots/song-guess-playing.png) | ![猜歌揭曉](docs/screenshots/song-guess-reveal.png) |
+
 ## 玩法（給同事）
 
 1. 瀏覽器開 Rex 分享的網址（例如 `http://192.168.1.23/draw-guess/`），在畫面上方的輸入框打暱稱（1～12 字，不可與房內的人重複）按 Enter。
@@ -129,7 +155,7 @@ npm start            # 單一 Node 程序，預設 HOST=0.0.0.0（所有介面�
 **怎麼玩**（給同事）：
 
 1. 瀏覽器開 `http://<IP>/draw-contest/`（`http://<IP>/` 遊戲清單也有入口），輸入暱稱（規則同我畫你猜），選「簡報」進入。
-2. 沒有回合進行時，任何人可按「我出題」成為出題者（至少 2 人在線），60 秒內輸入題目（1～20 字，例如「蘋果」）。
+2. 沒有回合進行時，任何人可按「我出題」成為出題者（至少 2 人在線），60 秒內輸入題目（1～20 字，例如「蘋果」）。題目下方可**附一張參考圖**（選填）：附了就是「像不像比賽」，大家照著參考圖畫，分數看與參考圖的相似度；不附就是一般回合。
 3. 題目送出時在線的所有人（**含出題者**）同時作畫 2 分鐘；題目對所有人公開，每人只看得到自己的畫布。
 4. 畫完按「完成」交卷（交卷後不能改）；時間到會自動交卷。中途加入的人本回合旁觀。
 5. 評分器逐張打分（0～100），全部評完後以投影片瀏覽揭曉每人的畫、分數與名次，前三名高亮；隨機評分時畫面會標示「隨機評分」。揭曉停到有人按「我出題」開始下一回合。
@@ -146,7 +172,7 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 
 ## Ollama 連線
 
-繪圖比賽的評分器（Clef 打分）與評語器（gemma4 以「メスガキ」評審人設，對每張畫講一句評語，只顯示在揭曉卡片上）以環境變數切換（server 讀取；Docker 由 `docker-compose.yml` 帶入，可寫在 `.env`）：
+繪圖比賽的評分器（Clef 打分；像不像比賽改為同時看參考圖與作品比相似度）與評語器（gemma4 以雌小鬼人設、評審名「ミオ」對每張畫講一句評語，第一名會被稱讚，只顯示在揭曉卡片上）以環境變數切換（server 讀取；Docker 由 `docker-compose.yml` 帶入，可寫在 `.env`）：
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
@@ -155,7 +181,7 @@ npm run dev  # 一次啟動 server（:7180）、我畫你猜的 Vite（:80）、
 | `JUDGE_MODEL` | `clef:27b-nvfp4` | Ollama 裡的模型 tag（27B NVFP4，約 18 GB；`ollama list` 可查）；用其他版本（如 `clef:27b-q4_k_m`、`clef-flash`）時改此值 |
 | `JUDGE_TIMEOUT_MS` | `30000` | 單張評分逾時；逾時或失敗的那張退回隨機，且本回合剩下的一律改用隨機 |
 | `JUDGE_FAKE_DELAY_MS` | `1500` | 隨機評分器每張的假延遲（讓「評分中 n/m」看得到；測試設 0） |
-| `COMMENT` | `ollama` | 評語器：`ollama`（gemma4 產メスガキ評語，**預設**）；`off` 關閉。**沒有 gemma4 或記憶體不足的機器（例如 32 GB）設 `COMMENT=off`** |
+| `COMMENT` | `ollama` | 評語器：`ollama`（gemma4 產「ミオ」評語，**預設**）；`off` 關閉。**沒有 gemma4 或記憶體不足的機器（例如 32 GB）設 `COMMENT=off`** |
 | `COMMENT_MODEL` | `gemma4:26b-mlx-bf16` | 評語用的 Ollama 模型 tag（約 52.5 GB；`ollama list` 可查），位址同樣用 `OLLAMA_URL` |
 | `COMMENT_TIMEOUT_MS` | `30000` | 單張評語逾時（模型被其他模型擠出記憶體後重新載入要 10～27 秒）；逾時或輸出空白只影響那一張（沒有評語），下一張照常嘗試；**同一回合連續兩次失敗**才跳過本回合剩下的各張（下一回合再試）；第一名的稱讚版失敗時退回一般評語 |
 
