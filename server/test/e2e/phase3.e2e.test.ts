@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   CHAT_MAX,
   CHAT_MIN_INTERVAL_MS,
+  SPOILER_COOLDOWN_MS,
   normalizeAnswer,
   type ChatMessage,
   type PlayerPublic,
@@ -45,6 +46,10 @@ class SkewClock implements Clock {
   /** 把時鐘往前撥一個聊天間隔，下一則訊息不會被 RATE_LIMITED */
   gap(): void {
     this.offset += CHAT_MIN_INTERVAL_MS;
+  }
+  /** 把時鐘往前撥一段洩題冷卻（Epic 21，§9.1）：被 SPOILER_BLOCKED 的人下一則訊息不會被 RATE_LIMITED */
+  cool(): void {
+    this.offset += SPOILER_COOLDOWN_MS;
   }
 }
 
@@ -166,6 +171,9 @@ describe('e2e Phase 3：猜題與防洩題（A 畫師、B／C 猜題）', () => 
     expect(await say(a, 'APPLE')).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED' });
     // C（未猜對的猜題者）送含題目但不相符 → SPOILER_BLOCKED「猜答案請只輸入答案本身」
     expect(await say(c, '是 apple 嗎')).toEqual({ ok: false, error: 'SPOILER_BLOCKED', message: GUESS_ONLY });
+    // 被擋的人進洩題冷卻（Epic 21）：冷卻中連一般訊息也 RATE_LIMITED
+    expect(await say(a, '是水果')).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+    clock.cool();
     // A 送不含題目 → 廣播
     expect(await say(a, '是水果')).toEqual({ ok: true });
     await barrier(a, all);

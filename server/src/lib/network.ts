@@ -65,3 +65,25 @@ export function clientAddress(headers: Headers, socketAddress: string | undefine
   if (xff) return xff;
   return socketAddress;
 }
+
+/** 預設埠：公司區網只放行標準埠（spec §3） */
+export const DEFAULT_PORT = 80;
+
+type WarnLogger = (event: string, fields?: Record<string, unknown>) => void;
+
+/**
+ * 讀 PORT 環境變數（spec §9.1，Epic 21 決策 8、12）：未設 → 80；空字串、非純十進位數字（`0x50`、`1e3` 也算）、超出 1–65535 → 80 並 log warn。
+ * 原 `Number(process.env.PORT ?? 80)` 遇 `PORT=` 空字串得 0，listen(0) 會綁隨機埠，同事連不上、healthcheck 失敗。
+ */
+export function readPort(env: NodeJS.ProcessEnv, warn: WarnLogger): number {
+  const raw = env.PORT;
+  if (raw === undefined) return DEFAULT_PORT;
+  const trimmed = raw.trim();
+  // 只接受純十進位數字（決策 12）：Number() 會把 '0x50'、'1e3' 讀成 80、1000，這裡先擋掉
+  const n = /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    warn('server.envInvalid', { name: 'PORT', value: raw, using: DEFAULT_PORT });
+    return DEFAULT_PORT;
+  }
+  return n;
+}

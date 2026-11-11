@@ -9,6 +9,7 @@ import {
   CHAT_HISTORY,
   CHAT_MIN_INTERVAL_MS,
   CHOOSING_SECONDS,
+  JOIN_MIN_INTERVAL_MS,
   MAX_PLAYERS,
   NICKNAME_INVALID_MESSAGE,
   NICKNAME_TAKEN_MESSAGE,
@@ -16,6 +17,7 @@ import {
   RECONNECT_GRACE_SECONDS,
   REVEAL_SECONDS,
   SONGS_PER_GAME,
+  SPOILER_COOLDOWN_MS,
   START_DELAY_MS,
   type ChatMessage,
   type PlayerPublic,
@@ -26,6 +28,7 @@ import { ItunesSearchError, type ItunesTrack, type SongSearcher } from '../src/g
 import { ItunesChartError, type ChartCountry, type ChartFetcher } from '../src/games/song-guess/itunes';
 import {
   CHART_COUNTRY,
+  JOIN_RATE_LIMITED_MESSAGE,
   ROUND_ERROR_MESSAGES,
   Room,
   parseSourcePayload,
@@ -151,6 +154,12 @@ function say(socketId: string, text: string) {
   return room.chat(socketId, text);
 }
 
+/** 洩題冷卻（Epic 21，§5.4）：上一則被 SPOILER_BLOCKED 後，先等滿 SPOILER_COOLDOWN_MS 再發言 */
+function sayAfterCooldown(socketId: string, text: string) {
+  clock.advance(SPOILER_COOLDOWN_MS);
+  return room.chat(socketId, text);
+}
+
 function emits(effects: Effect[]): EmitEffect[] {
   return effects.filter((e): e is EmitEffect => e.kind === 'emit');
 }
@@ -233,10 +242,40 @@ describe('加入', () => {
 
   it('同一 socket 重複 join → 冪等', () => {
     const first = joinOk('s1', 'Alice');
+    clock.advance(JOIN_MIN_INTERVAL_MS);
     const again = joinOk('s1', 'Other');
     expect(again.data.token).toBe(first.data.token);
     expect(again.effects).toEqual([]);
     expect(room.playerList()).toHaveLength(1);
+  });
+
+  it(`重複 join 節流（Epic 21，平台 §9.1）：已綁定 socket 距上次受理 < ${JOIN_MIN_INTERVAL_MS} ms → RATE_LIMITED；未綁定 socket 與接管不受限`, () => {
+    const first = joinOk('s1', 'Alice');
+    clock.advance(JOIN_MIN_INTERVAL_MS - 1);
+    expect(room.join('s1', 'Alice')).toEqual({
+      ack: { ok: false, error: 'RATE_LIMITED', message: JOIN_RATE_LIMITED_MESSAGE },
+      effects: [],
+    });
+    expect(JOIN_RATE_LIMITED_MESSAGE).toBe('操作太頻繁，請稍候再試');
+    clock.advance(1);
+    expect(room.join('s1', 'Alice').ack.ok).toBe(true);
+    expect(room.join('s1', 'Alice').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+    // 未綁定 socket：打錯暱稱可立刻重試
+    expect(room.join('s2', '').ack).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });
+    expect(room.join('s2', 'Bob').ack.ok).toBe(true);
+    // 新 socket 帶 token 接管不受限；接管後同 socket 立刻重送 → RATE_LIMITED
+    expect(room.join('s1b', 'x', first.data.token).ack.ok).toBe(true);
+    expect(room.join('s1b', 'x').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+  });
+
+  it('不可見字元（Epic 21，平台 §9.1）：零寬暱稱被拒、同暱稱加 VS16 → NICKNAME_TAKEN、emoji 暱稱合法', () => {
+    expect(room.join('s1', 'Re\u200Bx').ack).toMatchObject({ ok: false, error: 'NICKNAME_INVALID', message: NICKNAME_INVALID_MESSAGE });
+    expect(room.join('s1', '\u3164').ack).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });
+    joinOk('s1', 'Rex');
+    expect(room.join('s2', 'Rex\uFE0F').ack).toEqual({ ok: false, error: 'NICKNAME_TAKEN', message: NICKNAME_TAKEN_MESSAGE });
+    joinOk('s2', '👨‍👩‍👧');
+    joinOk('s3', '❤️');
+    expect(room.playerList().map((p) => p.nickname)).toEqual(['Rex', '👨‍👩‍👧', '❤️']);
   });
 });
 
@@ -981,9 +1020,41 @@ describe('猜題：猜對', () => {
 
   it('猜對的那則也更新間隔時間戳；被擋下的不更新', async () => {
     await toPlaying();
-    expect(room.chat('s2', '是遇見嗎').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED' });
-    ok(room.chat('s2', '遇見')); // 上一則被擋，不算發言 → 不會 RATE_LIMITED
+    ok(room.chat('s2', '遇見'));
     expect(room.chat('s2', '耶').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+  });
+
+  it(`洩題冷卻（Epic 21，§5.4；code review #4）：SPOILER_BLOCKED 也更新時間戳，之後 ${SPOILER_COOLDOWN_MS} ms 內一律 RATE_LIMITED（含正確歌名）`, async () => {
+    await toPlaying();
+    expect(room.chat('s2', '是遇見嗎').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED' });
+    // 原本可毫秒級連送探測；現在全被限速
+    for (const probe of ['遇見如果可以天黑黑', '如果可以', '天黑黑']) {
+      expect(room.chat('s2', probe).ack).toEqual({ ok: false, error: 'RATE_LIMITED', message: CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER });
+    }
+    clock.advance(SPOILER_COOLDOWN_MS - 1);
+    expect(room.chat('s2', '遇見').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+    expect(player(B).hasGuessed).toBe(false);
+    // 專用文案（決策 11；秒數由常數組字）；一般間隔文案不變
+    expect(CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER).toBe(`剛才的訊息含答案被擋下，請等 ${SPOILER_COOLDOWN_MS / 1000} 秒再發言`);
+    expect(CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER).toBe('剛才的訊息含答案被擋下，請等 3 秒再發言');
+    expect(CHAT_ERROR_MESSAGES.RATE_LIMITED).toBe('發言太快了，請稍候再送（間隔至少 0.3 秒）');
+    clock.advance(1);
+    ok(room.chat('s2', '遇見'));
+    expect(player(B).hasGuessed).toBe(true);
+    // 已猜對者被擋（spoilerGuessed）一樣進冷卻；只影響本人
+    clock.advance(CHAT_MIN_INTERVAL_MS);
+    expect(room.chat('s2', '答案是遇見').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED' });
+    expect(say('s2', '好聽').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+    ok(room.chat('s1', '好聽'));
+  });
+
+  it('不可見字元（Epic 21）：ZWJ 夾歌名仍被擋；零寬空白 → MESSAGE_INVALID；ZWJ 夾的正確歌名算猜對', async () => {
+    await toPlaying();
+    expect(room.chat('s2', '是遇\u200D見嗎').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED' });
+    clock.advance(SPOILER_COOLDOWN_MS);
+    expect(room.chat('s2', '遇\u200B見').ack).toMatchObject({ ok: false, error: 'MESSAGE_INVALID' });
+    ok(room.chat('s2', '遇\u200D見\uFE0F'));
+    expect(player(B).hasGuessed).toBe(true);
   });
 
   it('猜錯照常廣播（可以聊天、討論）', async () => {
@@ -1000,13 +1071,13 @@ describe('猜題：兩種 SPOILER_BLOCKED', () => {
   it('未猜對者：訊息含歌名但不完全相同 → 擋下「猜歌名請只輸入歌名本身」、不廣播、不得分', async () => {
     await toPlaying();
     for (const text of ['是遇見嗎', '遇見吧', '我猜（遇見）', '遇 見 ！！對吧']) {
-      const out = say('s2', text);
+      const out = sayAfterCooldown('s2', text);
       expect(out).toEqual({ ack: { ok: false, error: 'SPOILER_BLOCKED', message: '猜歌名請只輸入歌名本身' }, effects: [] });
     }
     expect(player(B)).toMatchObject({ hasGuessed: false, gameScore: 0 });
     expect(room.snapshot(A).chat.some((m) => m.text.includes('遇見'))).toBe(false);
-    // 之後只打歌名仍可得分
-    ok(say('s2', '遇見'));
+    // 之後只打歌名仍可得分（冷卻過後）
+    ok(sayAfterCooldown('s2', '遇見'));
     expect(player(B).hasGuessed).toBe(true);
   });
 
@@ -1015,10 +1086,10 @@ describe('猜題：兩種 SPOILER_BLOCKED', () => {
     clock.advance(START_DELAY_MS);
     ok(room.chat('s2', '遇見'));
     for (const text of ['遇見', '答案是遇見啦', '遇．見', '遇見 (Live)']) {
-      const out = say('s2', text);
+      const out = sayAfterCooldown('s2', text);
       expect(out).toEqual({ ack: { ok: false, error: 'SPOILER_BLOCKED', message: '你已經猜對了，不要說出歌名' }, effects: [] });
     }
-    const fine = say('s2', '這首我會');
+    const fine = sayAfterCooldown('s2', '這首我會');
     ok(fine);
     expect(chats(fine.effects)[0]).toMatchObject({ kind: 'chat', text: '這首我會' });
     expect(player(B)).toMatchObject({ gameScore: 100, score: 100 });
@@ -1028,7 +1099,7 @@ describe('猜題：兩種 SPOILER_BLOCKED', () => {
   it('出題者一樣受兩種規則限制（他也不知道答案）', async () => {
     await toPlaying();
     expect(room.chat('s1', '是遇見嗎').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED', message: '猜歌名請只輸入歌名本身' });
-    ok(room.chat('s1', '遇見'));
+    ok(sayAfterCooldown('s1', '遇見'));
     expect(say('s1', '遇見啦').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED', message: '你已經猜對了，不要說出歌名' });
   });
 
@@ -1040,7 +1111,7 @@ describe('猜題：兩種 SPOILER_BLOCKED', () => {
     expect(playersOf(lastAsync()).every((p) => !p.hasGuessed)).toBe(true);
     ok(say('s2', '剛剛那首是遇見'));
     expect(say('s2', '這首是如果可以吧').ack).toMatchObject({ ok: false, error: 'SPOILER_BLOCKED', message: '猜歌名請只輸入歌名本身' });
-    ok(say('s2', '如果可以'));
+    ok(sayAfterCooldown('s2', '如果可以'));
     expect(player(B)).toMatchObject({ hasGuessed: true });
   });
 

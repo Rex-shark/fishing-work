@@ -24,6 +24,7 @@
 // 驗收子代理（代架構師海圖）2026-10-12 依 spec 撰寫。
 // 2026-10-16 Epic 18 改寫（水手長派出的子代理）：round:setArtist → round:setSource（payload { source: 'artist', artist, hot: true }）、
 //   ack { artistDisplay } → { topic }、RoundPublic 的 artistDisplay → topic、lastArtist → lastTopic（另驗 lastSource）。規則斷言不變。
+// 2026-11-10 Epic 21（§5.4 洩題冷卻）：未猜對者的洩題探測改由 E 送、加驗冷卻中 RATE_LIMITED；B 被擋後的「再打歌名」改為 RATE_LIMITED、一般聊天改由 D 驗。
 import { io } from 'socket.io-client';
 
 const PORT = process.env.TEST_PORT ?? '3462';
@@ -40,6 +41,8 @@ const TRACK_MS = 2000;
 
 // ── ack.message 文案：§5.3 ──
 const MSG = {
+  RATE_LIMITED: '發言太快了，請稍候再送（間隔至少 0.3 秒）', // §5.3「其餘同繪圖比賽」
+  SPOILER_COOLDOWN: '剛才的訊息含答案被擋下，請等 3 秒再發言', // 洩題冷卻期間專用文案（平台 §9.1，Epic 21 決策 11）
   ARTIST_NOT_FOUND: `找不到這位歌手的歌（至少要 ${SONGS_PER_GAME} 首有試聽的歌），換一位試試`,
   SEARCH_FAILED: '搜尋失敗，請再試一次',
   SPOILER_GUESSED: '你已經猜對了，不要說出歌名',
@@ -166,8 +169,11 @@ check('中途加入者的 gameScore 0、isSetter false', me(A, D.id) === undefin
   // 只數非 system 訊息：D 剛加入的系統訊息「半路D 加入」可能晚一點才到（2026-10-12 驗收子代理首跑時遇到，改為排除 system）
   const nonSystem = () => A.chat.filter((m) => m.kind !== 'system').length;
   const chatBefore = nonSystem();
-  const rg = await say(B, `是${title1}嗎`);
+  // 2026-11-10 Epic 21（§5.4 洩題冷卻）：被擋的人 3 秒內一律 RATE_LIMITED，所以改由之後不猜也不發言的 E 探測（原為 B，B 被擋後就不能在緩衝內猜對）
+  const rg = await say(E, `是${title1}嗎`);
   check('未猜對者訊息含歌名但不完全相同 → SPOILER_BLOCKED「猜歌名請只輸入歌名本身」', isErr(rg, 'SPOILER_BLOCKED', 'SPOILER_GUESS'), j(rg));
+  const rg2 = await say(E, title1);
+  check('洩題冷卻：被擋後立刻送正確歌名 → RATE_LIMITED、不算猜對（Epic 21）', isErr(rg2, 'RATE_LIMITED', 'SPOILER_COOLDOWN'), j(rg2));
   await sleep(120);
   check('被擋的訊息不廣播', nonSystem() === chatBefore, j(A.chat.slice(-3)));
 
@@ -195,11 +201,14 @@ check('中途加入者的 gameScore 0、isSetter false', me(A, D.id) === undefin
   check('已猜對者含歌名 → SPOILER_BLOCKED「你已經猜對了，不要說出歌名」', isErr(rs1, 'SPOILER_BLOCKED', 'SPOILER_GUESSED'), j(rs1));
   await sleep(320);
   const rs2 = await say(B, title1);
-  check('已猜對者再打歌名本身 → 同樣被擋', isErr(rs2, 'SPOILER_BLOCKED', 'SPOILER_GUESSED'), j(rs2));
+  check('已猜對者被擋後（洩題冷卻中）再打歌名本身 → RATE_LIMITED（Epic 21）', isErr(rs2, 'RATE_LIMITED', 'SPOILER_COOLDOWN'), j(rs2));
   await sleep(120);
   check('已猜對者被擋的兩則都不廣播', nonSystem() === n0, j(A.chat.slice(-3)));
+  const rs2b = await say(B, '好聽');
+  check('洩題冷卻中一般聊天也 RATE_LIMITED（Epic 21）', isErr(rs2b, 'RATE_LIMITED', 'SPOILER_COOLDOWN'), j(rs2b));
   await sleep(320);
-  const rs3 = await say(B, '好聽');
+  // 已猜對者的一般聊天改由 D 驗（B 在冷卻中）
+  const rs3 = await say(D, '好聽');
   check('已猜對者的一般聊天照常 → ok 並廣播 chat', rs3?.ok === true && (await until(() => A.chat.at(-1)?.kind === 'chat' && A.chat.at(-1)?.text === '好聽', 1500)), j(rs3));
   const rc = await say(C, '完全不知道');
   check('未猜對者的一般聊天照常 → ok', rc?.ok === true, j(rc));
@@ -218,6 +227,8 @@ check('中途加入者的 gameScore 0、isSetter false', me(A, D.id) === undefin
   check('reveal.scores 依猜對順序 [B, D, A] 各 100', j(rv.reveal?.scores) === j([ids.B, D.id, ids.A].map((playerId) => ({ playerId, score: SCORE_MAX }))), j(rv.reveal?.scores));
   check('reveal：endsAt − serverNow 在 (REVEAL−SKEW, REVEAL]', gapIs(rv.endsAt, rv.serverNow, REVEAL_SECONDS * 1000), `gap=${rv.endsAt - rv.serverNow}`);
   check('reveal 仍帶 song（correctIds 保留）、hasGuessed 保留', rv.song?.index === 1 && rv.song.correctIds.length === 3 && me(A, ids.B)?.hasGuessed === true);
+  // system 訊息可能比 round:update 晚一個封包到（2026-11-10 A 份子代理重跑時遇到的計時競態，非產品問題）→ 先等
+  await until(() => A.chat.some((m) => m.kind === 'system' && m.text.includes('第 1 首') && m.text.includes(title1)), 1500);
   check('系統訊息「第 1 首：《歌名》」', A.chat.some((m) => m.kind === 'system' && m.text.includes('第 1 首') && m.text.includes(title1)), j(A.chat.filter((m) => m.kind === 'system').slice(-2)));
 }
 

@@ -54,6 +54,11 @@ describe('常數值與 spec 表一致', () => {
     expect(sg.RECONNECT_GRACE_SECONDS).toBe(15);
   });
 
+  it('強化（Epic 21）：JOIN_MIN_INTERVAL_MS 1000、SPOILER_COOLDOWN_MS 3000', () => {
+    expect(sg.JOIN_MIN_INTERVAL_MS).toBe(1000);
+    expect(sg.SPOILER_COOLDOWN_MS).toBe(3000);
+  });
+
   it('題庫來源（Epic 18／19）：HOT_POOL 30、CHART_SIZE 100、SOURCE_TITLE 三個非歌手來源的標題', () => {
     expect(sg.HOT_POOL).toBe(30);
     expect(sg.CHART_SIZE).toBe(100);
@@ -81,6 +86,7 @@ describe('常數值與 spec 表一致', () => {
         'ARTIST_MAX', 'MIN_PLAYERS', 'MAX_PLAYERS', 'NICKNAME_MAX', 'CHAT_MAX', 'CHAT_HISTORY',
         'CHAT_MIN_INTERVAL_MS', 'RECONNECT_GRACE_SECONDS', 'SCORE_MAX', 'SCORE_MIN',
         'HOT_POOL', 'CHART_SIZE', 'SOURCE_TITLE', 'ANIME_TERMS', 'ANIME_HOT_POOL',
+        'JOIN_MIN_INTERVAL_MS', 'SPOILER_COOLDOWN_MS',
       ].sort(),
     );
   });
@@ -89,9 +95,9 @@ describe('常數值與 spec 表一致', () => {
 describe('直接讀 spec「常數」表逐列對照', () => {
   const rows = readSpecTable(readFileSync(SPEC, 'utf8'));
 
-  it('表有 20 列，名稱不重複（2026-10-20 Epic 19：加 ANIME_TERMS、ANIME_HOT_POOL）', () => {
-    expect(rows).toHaveLength(20);
-    expect(new Set(rows.map(([name]) => name)).size).toBe(20);
+  it('表有 22 列，名稱不重複（2026-10-20 Epic 19：加 ANIME_TERMS、ANIME_HOT_POOL；2026-11-10 Epic 21：加 JOIN_MIN_INTERVAL_MS、SPOILER_COOLDOWN_MS）', () => {
+    expect(rows).toHaveLength(22);
+    expect(new Set(rows.map(([name]) => name)).size).toBe(22);
   });
 
   it('物件值的列（SOURCE_TITLE）確實解析成物件，不是被略過', () => {

@@ -54,6 +54,12 @@ export const IMAGE_MIN_INTERVAL_MS = 3000;
 export const IMAGE_SKIP_BUFFER_BYTES = 2 * MAX_IMAGE_BYTES + 2_097_152;
 /** 每人聊天最短間隔（毫秒） */
 export const CHAT_MIN_INTERVAL_MS = 300;
+/** 已綁定玩家的 socket 重複 player:join 的最短間隔（毫秒；Epic 21）：不足 → RATE_LIMITED；受理時只回快照、不重送二進位事件 */
+export const JOIN_MIN_INTERVAL_MS = 1000;
+/** chat:send 被 SPOILER_BLOCKED 後的冷卻（毫秒；Epic 21）：期間該玩家的 chat:send 一律 RATE_LIMITED */
+export const SPOILER_COOLDOWN_MS = 3000;
+/** 本回合可用的 strokeId 數上限（Epic 21；undo／clear 不退還）：達上限後新的 begin 靜默丟棄並 log strokeLimit */
+export const MAX_STROKES_PER_ROUND = 2000;
 /** 斷線後保留玩家（分數、畫師身分）的寬限期（秒），逾時才視為離開 */
 export const RECONNECT_GRACE_SECONDS = 15;
 /** 房間人數上限（含寬限期中的玩家）；達上限的新玩家回 ROOM_FULL。tunnel 對外公開時的記憶體保護 */

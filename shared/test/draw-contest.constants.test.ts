@@ -19,6 +19,11 @@ describe('常數值與 spec 表一致', () => {
     expect(dc.RECONNECT_GRACE_SECONDS).toBe(15);
   });
 
+  it('強化（Epic 21）：JOIN_MIN_INTERVAL_MS 1000（與我畫你猜相同）', () => {
+    expect(dc.JOIN_MIN_INTERVAL_MS).toBe(1000);
+    expect(dc.JOIN_MIN_INTERVAL_MS).toBe(dg.JOIN_MIN_INTERVAL_MS);
+  });
+
   it('畫布、交卷、分數', () => {
     expect(dc.CANVAS_LOGICAL).toEqual({ width: 1280, height: 720 });
     expect(dc.CANVAS_BACKGROUND).toBe('#1E1E1E');
@@ -51,7 +56,7 @@ describe('常數值與 spec 表一致', () => {
         'NICKNAME_MAX', 'TOPIC_MAX', 'CHAT_MAX', 'CHAT_HISTORY', 'CHAT_MIN_INTERVAL_MS',
         'RECONNECT_GRACE_SECONDS', 'CANVAS_LOGICAL', 'CANVAS_BACKGROUND', 'MAX_SUBMISSION_BYTES',
         'SCORE_MAX', 'BRUSH_MIN', 'BRUSH_MAX', 'BRUSH_DEFAULT', 'PALETTE', 'COLOR_PATTERN',
-        'COMMENT_PERSONA_NAME', 'MAX_REFERENCE_BYTES',
+        'COMMENT_PERSONA_NAME', 'MAX_REFERENCE_BYTES', 'JOIN_MIN_INTERVAL_MS',
       ].sort(),
     );
   });

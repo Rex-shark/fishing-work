@@ -355,7 +355,7 @@ export const useGameStore = create<GameState & GameActions>()((set) => ({
 
   setResuming: (resuming) => set({ resuming }),
 
-  // 離開遊戲（回首頁）時釋放畫廊並丟掉本機畫布。reset 的呼叫者（自動重加入失敗、被接管、沒有憑證可接管）都已沒有憑證 → resuming false
+  // 離開遊戲（回首頁）時釋放畫廊並丟掉本機畫布。reset 一律回首頁（resuming false）：自動重加入被拒、被接管、沒有憑證可接管時已清憑證；自動重加入逾時用盡（Epic 21 決策 5）則保留憑證，重新整理可再試
   reset: (joinError = null) =>
     set((state) => {
       revokeGallery(state.gallery)

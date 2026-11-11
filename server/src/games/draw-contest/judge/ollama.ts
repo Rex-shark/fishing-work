@@ -15,6 +15,7 @@
 //     noul  → { type: 'noul', noul: 0..1 }
 //   錯誤 4xx { error: '…' }（例：model 不存在 404、questions 為空或 base64 壞掉 400）
 import { SCORE_MAX } from '@fishing-work/shared/draw-contest';
+import { UpstreamHttpError } from './httpError';
 import { abortReason } from './random';
 import type { Judge, JudgeInput, JudgeOutput } from './types';
 
@@ -245,8 +246,8 @@ export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}${path}`;
 }
 
-/** HTTP 錯誤：附狀態碼與 Ollama 回的 error 文字 */
-async function httpError(res: Response): Promise<Error> {
+/** HTTP 錯誤：附狀態碼與 Ollama 回的 error 文字（UpstreamHttpError 帶 status，佇列據此區分輸入被拒與上游不可用，§5.5） */
+async function httpError(res: Response): Promise<UpstreamHttpError> {
   let detail = '';
   try {
     const text = await res.text();
@@ -259,7 +260,7 @@ async function httpError(res: Response): Promise<Error> {
   } catch {
     // 讀不到內文：只報狀態碼
   }
-  return new Error(`systemone HTTP ${res.status}${detail ? `：${detail.slice(0, 200)}` : ''}`);
+  return new UpstreamHttpError(res.status, `systemone HTTP ${res.status}${detail ? `：${detail.slice(0, 200)}` : ''}`);
 }
 
 /** POST /v1/systemone 並回傳解析後的 JSON；連線失敗、非 2xx、壞 JSON 皆 throw；中止（逾時／丟棄）原樣拋出，讓佇列辨認 */

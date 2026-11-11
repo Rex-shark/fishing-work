@@ -14,6 +14,8 @@
 //   GET /lookup?id=<逗號分隔>&country=TW（Epic 18）→ 200 text/javascript { resultCount, results }：依 id 回與 /search 同形的資料
 //       （榜單歌與所有歌手的歌都查得到；查不到的 id 略過，同真 lookup）；previewUrl 指回本服務。
 //   GET /preview/<trackId>.m4a → 200 audio/mp4（2 秒 440 Hz 單音，約 4 KB，支援瀏覽器 <audio> 直接播；CORS *）。協定測試不驗播放。
+//   GET /_mock/requests[?term=<歌手>]（2026-11-10 Epic 21，非 iTunes 端點，給協定測試計數）→ 200 application/json
+//       { count, requests }：本程序收到的 /search 請求（有 term 時只算 term 正規化後相同者，比對方式同 /search）。本端點不計入。
 //
 // 固定的歌手資料（MOCK_ARTISTS；歌名取自真 iTunes 回應，含副標、Live、Remastered、合唱曲，讓去重與答案判定有東西可驗）：
 //   孫燕姿        12 筆（去重後 9 首可抽；含別人 feat. 孫燕姿的一筆，會被濾掉）
@@ -457,6 +459,13 @@ export function startMockItunes(options = {}) {
         }
         sendJson(res, 200, { resultCount: results.length, results });
       });
+      return;
+    }
+    if (path === '/_mock/requests') {
+      // 協定測試計數用（Epic 21 決策 7：歌手 0 筆不快取 → 同鍵再查會再打上游）
+      const term = url.searchParams.get('term');
+      const searches = requests.filter((r) => r.path === '/search' && (term === null || termKey(r.term ?? '') === termKey(term)));
+      sendJson(res, 200, { count: searches.length, requests: searches }, 'application/json');
       return;
     }
     if (/^\/preview\/\d+\.m4a$/.test(path)) {

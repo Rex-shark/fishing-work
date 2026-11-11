@@ -5,6 +5,7 @@ import {
   CHAT_MIN_INTERVAL_MS,
   SCORE_MAX,
   SCORE_MIN,
+  SPOILER_COOLDOWN_MS,
   containsSpoiler,
   isCorrect,
 } from '@fishing-work/shared/song-guess';
@@ -15,6 +16,8 @@ export { validateChatText, type ChatTextCheck } from '@fishing-work/shared/song-
 export const CHAT_ERROR_MESSAGES = {
   MESSAGE_INVALID: `訊息需為 1～${CHAT_MAX} 個字，不可含換行等控制字元，也不能只有空白`,
   RATE_LIMITED: `發言太快了，請稍候再送（間隔至少 ${CHAT_MIN_INTERVAL_MS / 1000} 秒）`,
+  /** 洩題冷卻期間的 RATE_LIMITED（平台 spec §9.1、§5.4，Epic 21 決策 11；秒數由常數組字） */
+  RATE_LIMITED_SPOILER: `剛才的訊息含答案被擋下，請等 ${SPOILER_COOLDOWN_MS / 1000} 秒再發言`,
   /** 已猜對者：訊息含歌名（§5.3） */
   SPOILER_BLOCKED: '你已經猜對了，不要說出歌名',
   /** 未猜對者：訊息含歌名但不完全相同（例如歌名「遇見」打「是遇見嗎」）（§5.3） */

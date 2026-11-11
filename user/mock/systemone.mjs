@@ -31,7 +31,11 @@
 //           MOCK_MODEL（評分模型，預設 clef:27b-nvfp4）、MOCK_COMMENT_MODEL（評語模型，預設 gemma4:26b-mlx-bf16）、
 //           MOCK_CHAT_DELAY_MS（每次 chat 回應前的延遲，預設 0）、MOCK_CHAT_CONTENT（有設就每次 chat 都回這個字串；設成空字串可模擬「輸出空白」。
 //           **固定內容優先、不再區分批評／稱讚**：稱讚版請求也回同一個字串，暖機也是）、
-//           MOCK_PRAISE_CONTENT（有設就只有稱讚版請求回這個字串，優先於 MOCK_CHAT_CONTENT；設成空字串可模擬「其他人的評語成功、只有第一名稱讚版失敗」）。
+//           MOCK_PRAISE_CONTENT（有設就只有稱讚版請求回這個字串，優先於 MOCK_CHAT_CONTENT；設成空字串可模擬「其他人的評語成功、只有第一名稱讚版失敗」）、
+//           MOCK_REJECT_MARKER（Epic 21：有設就讓「任一張圖解 base64 後的 bytes 含這個字串（latin1）」的 /v1/systemone 請求回 MOCK_REJECT_STATUS，
+//           模擬 Ollama 拒收某張圖；測試在 PNG 的 tEXt chunk 或 JPEG 的 COM segment 放這個標記，結構仍合法、其他圖照常回分數）、
+//           MOCK_CHAT_REJECT_MARKER（同上，作用在 /api/chat：最後一則帶圖訊息的任一張圖含標記 → 回 MOCK_REJECT_STATUS）、
+//           MOCK_REJECT_STATUS（上兩者回的 HTTP 狀態碼，預設 400；400／413／415／422 為「輸入被拒」，可設 404／429／500 等測「上游不可用」那一類，spec §5.5）。
 // 也可在程式內 import { startMockOllama } 啟動（測試用，回傳 { url, close, requests }）。
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
@@ -173,6 +177,24 @@ function validate(body, model) {
   return null;
 }
 
+/** 錯誤回應的文字（拒收時）；真 Ollama 解不了圖時回 400 { error }，文案不一，這裡固定一句 */
+export const MOCK_REJECT_ERROR = 'failed to process inputs: image: unknown format';
+
+/** 任一張圖（base64）解碼後含 marker（latin1 bytes）→ true；marker 未設或空字串 → false */
+function imagesContain(images, marker) {
+  if (typeof marker !== 'string' || marker === '' || !Array.isArray(images)) return false;
+  const needle = Buffer.from(marker, 'latin1');
+  return images.some((img) => typeof img === 'string' && Buffer.from(img, 'base64').includes(needle));
+}
+
+/** 最後一則帶圖訊息的 images（沒有則 null） */
+function lastChatImages(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (Array.isArray(messages[i].images) && messages[i].images.length > 0) return messages[i].images;
+  }
+  return null;
+}
+
 function send(res, status, obj) {
   const text = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text) });
@@ -181,9 +203,10 @@ function send(res, status, obj) {
 
 /**
  * 啟動假 Ollama。
- * @param {{ port?: number, host?: string, delayMs?: number, model?: string, commentModel?: string, chatDelayMs?: number, chatContent?: string, praiseContent?: string }} [options]
+ * @param {{ port?: number, host?: string, delayMs?: number, model?: string, commentModel?: string, chatDelayMs?: number, chatContent?: string, praiseContent?: string, rejectMarker?: string, chatRejectMarker?: string, rejectStatus?: number }} [options]
  *   model：評分模型；commentModel：評語模型；chatDelayMs：每次 chat 回應前的延遲；chatContent：有給就每次 chat 都回這個字串（不分批評／稱讚）；
- *   praiseContent：有給就只有第一名稱讚版請求回這個字串（優先於 chatContent）
+ *   praiseContent：有給就只有第一名稱讚版請求回這個字串（優先於 chatContent）；
+ *   rejectMarker／chatRejectMarker：圖片 bytes 含此字串的 systemone／chat 請求回 rejectStatus（預設 400），其餘照常（Epic 21）
  * @returns {Promise<{ url: string, port: number, close: () => Promise<void>, requests: Array<{ method: string, path: string, body?: unknown }> }>}
  */
 export function startMockOllama(options = {}) {
@@ -192,6 +215,7 @@ export function startMockOllama(options = {}) {
   const delayMs = options.delayMs ?? 0;
   const chatDelayMs = options.chatDelayMs ?? 0;
   const host = options.host ?? '127.0.0.1';
+  const rejectStatus = options.rejectStatus ?? 400;
   const requests = [];
   const server = createServer((req, res) => {
     const chunks = [];
@@ -232,6 +256,10 @@ export function startMockOllama(options = {}) {
         const bad = validateChat(body, commentModel);
         if (bad) {
           send(res, bad[0], { error: bad[1] });
+          return;
+        }
+        if (imagesContain(lastChatImages(body.messages), options.chatRejectMarker)) {
+          send(res, rejectStatus, { error: MOCK_REJECT_ERROR });
           return;
         }
         const imageKey = chatImageKey(body.messages);
@@ -286,6 +314,10 @@ export function startMockOllama(options = {}) {
           send(res, bad[0], { error: bad[1] });
           return;
         }
+        if (imagesContain(body.images, options.rejectMarker)) {
+          send(res, rejectStatus, { error: MOCK_REJECT_ERROR });
+          return;
+        }
         const imageKey = imagesKey(body.images) ?? '';
         const answers = {};
         for (const [name, q] of Object.entries(body.questions)) answers[name] = answerFor(name, q, imageKey);
@@ -334,8 +366,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     chatDelayMs,
     ...(process.env.MOCK_CHAT_CONTENT !== undefined ? { chatContent: process.env.MOCK_CHAT_CONTENT } : {}),
     ...(process.env.MOCK_PRAISE_CONTENT !== undefined ? { praiseContent: process.env.MOCK_PRAISE_CONTENT } : {}),
+    ...(process.env.MOCK_REJECT_MARKER ? { rejectMarker: process.env.MOCK_REJECT_MARKER } : {}),
+    ...(process.env.MOCK_CHAT_REJECT_MARKER ? { chatRejectMarker: process.env.MOCK_CHAT_REJECT_MARKER } : {}),
+    ...(process.env.MOCK_REJECT_STATUS ? { rejectStatus: Number(process.env.MOCK_REJECT_STATUS) } : {}),
   });
-  console.log(`假 Ollama 已啟動：${mock.url}（systemone delay ${delayMs} ms、chat delay ${chatDelayMs} ms）`);
+  const rejects = [process.env.MOCK_REJECT_MARKER && `systemone 拒收標記「${process.env.MOCK_REJECT_MARKER}」`, process.env.MOCK_CHAT_REJECT_MARKER && `chat 拒收標記「${process.env.MOCK_CHAT_REJECT_MARKER}」`].filter(Boolean);
+  console.log(`假 Ollama 已啟動：${mock.url}（systemone delay ${delayMs} ms、chat delay ${chatDelayMs} ms${rejects.length ? `；${rejects.join('、')} → HTTP ${process.env.MOCK_REJECT_STATUS || 400}` : ''}）`);
   const stop = () => mock.close().then(() => process.exit(0));
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

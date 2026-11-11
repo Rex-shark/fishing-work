@@ -32,6 +32,7 @@ import {
   CHAT_MIN_INTERVAL_MS,
   CHOOSING_SECONDS,
   DRAW_SECONDS,
+  JOIN_MIN_INTERVAL_MS,
   MAX_PLAYERS,
   MIN_PLAYERS,
   NICKNAME_TAKEN_MESSAGE,
@@ -201,6 +202,9 @@ export const ROUND_ERROR_MESSAGES = {
   ROOM_FULL: `房間已滿（上限 ${MAX_PLAYERS} 人），請稍後再試`,
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
+/** 已綁定玩家的 socket 重複 player:join 太頻繁（Epic 21 §9.1，code review #3）：RATE_LIMITED 的文案 */
+export const JOIN_RATE_LIMITED_MESSAGE = '操作太頻繁，請稍候再試';
+
 /** abort 的觸發原因（choosing → idle） */
 type AbortCause = 'cancel' | 'timeout' | 'setterLeft';
 
@@ -215,6 +219,8 @@ interface PlayerState {
   graceTimer: TimerHandle | null;
   /** 最後一則被接受的聊天訊息時間（間隔限制用；被拒的訊息不更新） */
   lastChatAt: number | null;
+  /** 最後一次受理 player:join 的時間（新加入、接管、重複 join 受理時更新；被 RATE_LIMITED 擋下的不更新；Epic 21） */
+  lastJoinAt: number;
 }
 
 interface Submission {
@@ -357,16 +363,24 @@ export class Room {
 
   /**
    * 加入（三種 join，與我畫你猜相同）：
-   * - 重複：該 socket 已綁定玩家 → 冪等回目前 token 與快照，忽略 payload。
+   * - 重複：該 socket 已綁定玩家 → 冪等回目前 token 與快照，忽略 payload。Epic 21（§5、平台 §9.1）：距上次受理
+   *   < JOIN_MIN_INTERVAL_MS → RATE_LIMITED；受理時**只回快照、不重送** contest:gallery／contest:reference
+   *   （原本每次都重送整個畫廊，連送 join 可把記憶體灌爆，code review #3）。
    * - 接管：token 對到現存玩家 → 綁新 socket、踢舊 socket、取消寬限計時，忽略 nickname。
    * - 新玩家：人數（含寬限期中）< MAX_PLAYERS；暱稱合法且未被占用（不分大小寫，含寬限期中的玩家）。
-   * 三種皆在 round.results 非 null 時，於 ack 之後補送畫廊給本人（contest:gallery，§4）。
+   * 接管與新玩家在 round.results 非 null 時，於 ack 之後補送畫廊給本人（contest:gallery，§4），參考圖同理（§5.1b）。
+   * 未綁定的 socket 不受節流（首頁打錯暱稱可立刻重試）。
    */
   join(socketId: string, nickname: string, token?: string): JoinOutcome {
     const boundId = this.bySocket.get(socketId);
     if (boundId !== undefined) {
       const player = this.mustGet(boundId);
-      return { ack: this.joinAck(player), effects: [...this.referenceEffects({ only: player.id }), ...this.galleryEffects({ only: player.id })] };
+      const now = this.clock.now();
+      if (now - player.lastJoinAt < JOIN_MIN_INTERVAL_MS) {
+        return { ack: { ok: false, error: 'RATE_LIMITED', message: JOIN_RATE_LIMITED_MESSAGE }, effects: [] };
+      }
+      player.lastJoinAt = now;
+      return { ack: this.joinAck(player), effects: [] };
     }
 
     const tokenOwner = token === undefined ? undefined : this.byToken.get(token);
@@ -395,6 +409,7 @@ export class Room {
       socketId,
       graceTimer: null,
       lastChatAt: null,
+      lastJoinAt: this.clock.now(),
     };
     this.players.set(player.id, player);
     this.byToken.set(player.token, player.id);
@@ -991,6 +1006,7 @@ export class Room {
       effects.push({ kind: 'disconnect', socketId: oldSocket });
     }
     player.socketId = socketId;
+    player.lastJoinAt = this.clock.now();
     this.bySocket.set(socketId, player.id);
 
     // 不發 system 訊息：從寬限期回來只更新玩家清單的 connected

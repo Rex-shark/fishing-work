@@ -200,20 +200,25 @@ describe('e2e /song-guess', () => {
       expect(last()?.song?.artist).toContain('孫燕姿');
       expect(last()?.song?.titleLength).toBe([...normalizeTitle(title)].length);
 
-      // 未猜對者含歌名但不完全相同 → 擋下
-      expect(await request(A, 'chat:send', { text: `是${title}嗎` })).toEqual({
-        ok: false,
-        error: 'SPOILER_BLOCKED',
-        message: '猜歌名請只輸入歌名本身',
-      });
+      if (i === 1) {
+        // 未猜對者含歌名但不完全相同 → 擋下
+        expect(await request(A, 'chat:send', { text: `是${title}嗎` })).toEqual({
+          ok: false,
+          error: 'SPOILER_BLOCKED',
+          message: '猜歌名請只輸入歌名本身',
+        });
+        // 洩題冷卻（Epic 21，§5.4）：被擋後 3 秒內連正確歌名也 RATE_LIMITED（冷卻跨好幾首，所以只在第 1 首探測）
+        expect(await request(A, 'chat:send', { text: stripSubtitle(title) })).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+      }
       // B 猜對（奇數首打歌名本身，偶數首打完整歌名）
       const guess = i % 2 === 1 ? stripSubtitle(title) : title;
       expect(await request(B, 'chat:send', { text: guess })).toEqual({ ok: true, data: undefined });
       await waitFor(() => last()?.song?.index === i && (last()?.song?.correctIds.length ?? 0) === 1, 4000, `correct ${i}`);
       expect(last()?.song?.correctIds).toEqual([idB]);
       expect(last()?.phase).toBe('playing');
-      if (i === 1) {
-        // 已猜對者再說歌名 → 擋下（等過發言間隔再送；這首還有約 0.4 秒才播完）
+      if (i === SONGS_PER_GAME) {
+        // 已猜對者再說歌名 → 擋下（等過發言間隔再送；這首還有約 0.4 秒才播完）。
+        // 放最後一首：被擋後 B 進 3 秒洩題冷卻（Epic 21），放前面會讓 B 下一首猜不了
         await sleep(310);
         expect(await request(B, 'chat:send', { text: `${title}啦` })).toEqual({
           ok: false,
@@ -294,7 +299,8 @@ describe('e2e /song-guess', () => {
     expect(await request(A, 'round:setSource', { source: 'artist', artist: '沒有這個人', hot: true })).toEqual(notFound);
     // 退回須過半：本人只有 2 首、結果被兩個團瓜分（最多 5／12）→ 不退回、不會出別人的歌
     expect(await request(A, 'round:setSource', { source: 'artist', artist: '客串歌手', hot: true })).toEqual(notFound);
-    expect(mock?.requests.filter((r) => r.term === '沒有這個人')).toHaveLength(1);
+    // 0 筆不快取（Epic 21 決策 7）：同一歌手查兩次就打兩次上游
+    expect(mock?.requests.filter((r) => r.term === '沒有這個人')).toHaveLength(2);
     expect(roundsB.at(-1)?.phase).toBe('choosing');
     for (const bad of [{ source: 'artist', artist: '   ', hot: true }, { source: 'artist', artist: 123, hot: false }]) {
       expect(await request(A, 'round:setSource', bad)).toMatchObject({ ok: false, error: 'ARTIST_INVALID' });

@@ -3,24 +3,18 @@
 // 假時鐘＋手動評分器＋手動評語器，決定性地跑；不碰任何模型。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  JOIN_MIN_INTERVAL_MS,
   MAX_REFERENCE_BYTES,
   TOPIC_INVALID_MESSAGE,
   type ChatMessage,
   type ReferenceImage,
   type RoundPublic,
 } from '@fishing-work/shared/draw-contest';
-import { JPEG_SIGNATURE, checkReference, isValidReferenceJpeg } from '../src/games/draw-contest/reference';
+import { JPEG_EOI, JPEG_SIGNATURE, checkReference, isValidReferenceJpeg } from '../src/games/draw-contest/reference';
 import { ROUND_ERROR_MESSAGES, Room, type EmitEffect, type Effect, type RoomOptions } from '../src/games/draw-contest/room';
 import { FakeClock } from './helpers/fakeClock';
-import { FnJudge, ManualCommentator, ManualJudge, flush, makePng } from './helpers/drawContest';
-
-/** 合法參考圖 JPEG（server 只驗 magic 與長度）；seed 改變內容，size 為總長度 */
-function makeJpeg(seed = 0, size = 64): Uint8Array {
-  const bytes = new Uint8Array(size);
-  bytes.set([0xff, 0xd8, 0xff, 0xe0].slice(0, size));
-  for (let i = 4; i < size; i++) bytes[i] = (seed * 37 + i * 11) & 0xff;
-  return bytes;
-}
+// 合法參考圖 JPEG（helpers：真 1×1 JPEG 插 COM 變化內容與長度；FF D8 FF 開頭、FF D9 結尾，§5.1b、§5.5）
+import { FnJudge, ManualCommentator, ManualJudge, MIN_JPEG_BYTES, flush, makeJpeg, makePng } from './helpers/drawContest';
 
 const toArrayBuffer = (u: Uint8Array): ArrayBuffer => new Uint8Array(u).buffer;
 const same = (a: ArrayBuffer | Uint8Array, b: ArrayBuffer | Uint8Array): boolean =>
@@ -44,12 +38,13 @@ describe('§5.1b checkReference', () => {
   });
 
   it('frame 切片（byteOffset ≠ 0 的 Buffer）只取自己那段、不帶出其他 bytes', () => {
-    const frame = Buffer.concat([Buffer.from('header-junk'), Buffer.from(makeJpeg(2, 40)), Buffer.from('tail')]);
-    const view = frame.subarray(11, 51);
+    const size = MIN_JPEG_BYTES + 40;
+    const frame = Buffer.concat([Buffer.from('header-junk'), Buffer.from(makeJpeg(2, size)), Buffer.from('tail')]);
+    const view = frame.subarray(11, 11 + size);
     const r = checkReference(view);
     if (!r.ok || r.jpeg === null) throw new Error('應為合法參考圖');
-    expect(r.jpeg.byteLength).toBe(40);
-    expect(same(r.jpeg, makeJpeg(2, 40))).toBe(true);
+    expect(r.jpeg.byteLength).toBe(size);
+    expect(same(r.jpeg, makeJpeg(2, size))).toBe(true);
   });
 
   it('長度邊界：恰好 MAX_REFERENCE_BYTES 合法；多 1 byte、空、短於 magic 不合法', () => {
@@ -57,7 +52,26 @@ describe('§5.1b checkReference', () => {
     expect(checkReference(makeJpeg(0, MAX_REFERENCE_BYTES + 1))).toEqual({ ok: false });
     expect(checkReference(new ArrayBuffer(0))).toEqual({ ok: false });
     expect(checkReference(Uint8Array.from([0xff, 0xd8]))).toEqual({ ok: false });
-    expect(checkReference(Uint8Array.from(JPEG_SIGNATURE)).ok).toBe(true);
+    // 檔頭與結尾不可重疊：最短 5 bytes（FF D8 FF ＋ FF D9）
+    expect(checkReference(Uint8Array.from(JPEG_SIGNATURE))).toEqual({ ok: false });
+    expect(checkReference(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]))).toEqual({ ok: false });
+    expect(checkReference(Uint8Array.from([...JPEG_SIGNATURE, ...JPEG_EOI])).ok).toBe(true);
+  });
+
+  it('§5.5 結尾須為 FF D9：缺 EOI、EOI 後多 bytes、只差一個 byte 都不合法', () => {
+    const good = makeJpeg(3);
+    expect(isValidReferenceJpeg(good)).toBe(true);
+    expect(isValidReferenceJpeg(good.subarray(0, good.byteLength - 2))).toBe(false); // 截掉 EOI
+    expect(isValidReferenceJpeg(good.subarray(0, good.byteLength - 1))).toBe(false); // 只剩 FF
+    expect(isValidReferenceJpeg(Uint8Array.from([...good, 0x00]))).toBe(false); // EOI 後多 1 byte
+    const wrong = Uint8Array.from(good);
+    wrong[wrong.byteLength - 1] = 0xd8;
+    expect(isValidReferenceJpeg(wrong)).toBe(false);
+    // 舊測試用的「magic ＋亂數」假 JPEG（code review 情境）→ 不合法
+    const fake = new Uint8Array(64);
+    fake.set([0xff, 0xd8, 0xff, 0xe0]);
+    for (let i = 4; i < 64; i++) fake[i] = (i * 11) & 0x7f;
+    expect(isValidReferenceJpeg(fake)).toBe(false);
   });
 
   it('非 JPEG（PNG、GIF、magic 差一個 byte）不合法', () => {
@@ -372,7 +386,7 @@ describe('§5.1b join 補送 contest:reference', () => {
     toDrawing('皮卡丘', makeJpeg(1));
     await finishRound();
     ok(room.volunteer('s1'));
-    const second = makeJpeg(2, 80);
+    const second = makeJpeg(2, MIN_JPEG_BYTES + 80);
     const r = room.setTopic('s1', '妙蛙種子', second);
     ok(r);
     const [ref] = references(r.effects);
@@ -391,7 +405,7 @@ describe('§5.1b join 補送 contest:reference', () => {
     expect(joinReference('s2', 'Bob')).toBeUndefined();
   });
 
-  it('接管（token 重連）與同 socket 重複 join 也補送', () => {
+  it('接管（token 重連）補送；同 socket 重複 join 不重送（Epic 21：只回快照）', () => {
     joinPlayers(2);
     const token = joinOk('s3', 'Carol').data.token;
     toDrawing('皮卡丘', makeJpeg(1));
@@ -399,8 +413,16 @@ describe('§5.1b join 補送 contest:reference', () => {
     const takeover = room.join('s9', 'whatever', token);
     expect(takeover.ack.ok).toBe(true);
     expect(references(takeover.effects).map((e) => e.to)).toEqual([{ only: C }]);
+    // 1 秒內 → RATE_LIMITED；之後受理，快照帶 mode 'mimic'，但不重送 contest:reference
+    const tooSoon = room.join('s9', 'x');
+    expect(tooSoon.ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+    expect(tooSoon.effects).toEqual([]);
+    clock.advance(JOIN_MIN_INTERVAL_MS);
     const again = room.join('s9', 'x');
-    expect(references(again.effects).map((e) => e.to)).toEqual([{ only: C }]);
-    expect(references(room.join('s1', 'Alice').effects).map((e) => e.to)).toEqual([{ only: A }]);
+    expect(again.ack.ok && again.ack.data.snapshot.round.mode).toBe('mimic');
+    expect(references(again.effects)).toEqual([]);
+    const alice = room.join('s1', 'Alice');
+    expect(alice.ack.ok && alice.ack.data.snapshot.you).toBe(A);
+    expect(references(alice.effects)).toEqual([]);
   });
 });

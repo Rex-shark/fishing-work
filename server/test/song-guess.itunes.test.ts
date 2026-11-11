@@ -287,7 +287,8 @@ describe('createItunesClient：快取', () => {
   });
 
   it('不同歌手各打一次；寫入時清掉過期項目', async () => {
-    const { fetch, urls } = fakeFetch('{"resultCount":0,"results":[]}');
+    // 2026-11-10 Epic 21：0 筆不再快取，改用有結果的樣本才能觀察快取大小
+    const { fetch, urls } = fakeFetch(fixtureBody('孫燕姿'));
     let now = 0;
     const client = createItunesClient(config, { fetch, now: () => now });
     await client.search('A');
@@ -299,12 +300,35 @@ describe('createItunesClient：快取', () => {
     expect(client.cacheSize()).toBe(1);
   });
 
-  it('查無（0 筆）也快取', async () => {
+  it('查無（0 筆）不快取：同鍵再查會再打上游（Epic 21 決策 7，code review #7）', async () => {
     const { fetch, urls } = fakeFetch('{"resultCount":0,"results":[]}');
     const client = createItunesClient(config, { fetch, now: () => 0 });
     expect(await client.search('沒有這個人')).toEqual([]);
+    expect(client.cacheSize()).toBe(0);
     expect(await client.search('沒有這個人')).toEqual([]);
-    expect(urls).toHaveLength(1);
+    expect(urls).toHaveLength(2);
+  });
+
+  it('漏打空格的「JayChou」0 筆後，同鍵的「Jay Chou」照樣打上游並拿到結果（code review #7 重現）', async () => {
+    let calls = 0;
+    const fetch: FetchLike = (url) => {
+      calls++;
+      const term = new URL(url).searchParams.get('term');
+      const body = term === 'Jay Chou' ? fixtureBody('Jay Chou') : '{"resultCount":0,"results":[]}';
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(body) });
+    };
+    const client = createItunesClient(config, { fetch, now: () => 0 });
+    expect(await client.search('JayChou')).toEqual([]);
+    expect(await client.search('Jay Chou')).toHaveLength(27);
+    expect(calls).toBe(2);
+    // 有結果的才快取：再查兩種寫法都命中
+    expect(await client.search('JayChou')).toHaveLength(27);
+    expect(calls).toBe(2);
+  });
+
+  it('artistKey 先移除不可見字元（Epic 21）：零寬字元、VS16 不影響快取鍵', () => {
+    expect(artistKey('Jay\u200BChou')).toBe(artistKey('Jay Chou'));
+    expect(artistKey('孫\u200D燕姿\uFE0F')).toBe(artistKey('孫燕姿'));
   });
 
   it('失敗不快取：下一次重打', async () => {
@@ -923,7 +947,7 @@ describe('createItunesClient.animePool：快取（鍵 anime）', () => {
     await client.animePool();
     expect(await client.search('anime')).toEqual([]);
     expect(urls).toHaveLength(4);
-    expect(client.cacheSize()).toBe(1);
+    expect(client.cacheSize()).toBe(0); // 歌手搜尋 0 筆不寫快取（Epic 21 決策 7）
     expect(client.animeCacheSize()).toBe(1);
   });
 

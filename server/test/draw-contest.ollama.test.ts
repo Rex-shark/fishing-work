@@ -22,7 +22,8 @@ import {
 import { JudgeQueue, type JudgeFallbackInfo, type JudgeResult } from '../src/games/draw-contest/judge/queue';
 import { createRandomJudge } from '../src/games/draw-contest/judge/random';
 import { silenceLogs } from './e2e/helpers';
-import { makePng } from './helpers/drawContest';
+import { UpstreamHttpError } from '../src/games/draw-contest/judge/httpError';
+import { makeMarkedPng, makePng } from './helpers/drawContest';
 
 interface MockOllama {
   url: string;
@@ -30,7 +31,15 @@ interface MockOllama {
   close(): Promise<void>;
   requests: Array<{ method: string; path: string; body?: unknown }>;
 }
-type StartMock = (options?: { port?: number; host?: string; delayMs?: number; model?: string; commentModel?: string }) => Promise<MockOllama>;
+type StartMock = (options?: {
+  port?: number;
+  host?: string;
+  delayMs?: number;
+  model?: string;
+  commentModel?: string;
+  rejectMarker?: string;
+  rejectStatus?: number;
+}) => Promise<MockOllama>;
 
 const MODEL = 'clef:27b-q4_k_m';
 const mockPath = new URL('../../user/mock/systemone.mjs', import.meta.url).href;
@@ -41,7 +50,7 @@ beforeAll(async () => {
 });
 
 const mocks: MockOllama[] = [];
-async function mock(options: { delayMs?: number; model?: string } = {}): Promise<MockOllama> {
+async function mock(options: { delayMs?: number; model?: string; rejectMarker?: string; rejectStatus?: number } = {}): Promise<MockOllama> {
   const m = await startMockOllama({ model: MODEL, ...options });
   mocks.push(m);
   return m;
@@ -238,6 +247,85 @@ describe('§6 錯誤與中止', () => {
     await vi.waitFor(() => expect(done).toHaveLength(1), { timeout: 2000 });
     expect(done[0].judgedBy).toBe('random');
     expect(fallbacks[0]).toMatchObject({ playerId: 'p1', reason: 'timeout' });
+    expect(queue.mode).toBe('random');
+    queue.dispose();
+  });
+});
+
+describe('§5.5 錯誤分類 × 假 Ollama 拒收某張（Epic 21，code review #5）', () => {
+  const realClock = { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms), clearTimeout: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>) };
+
+  function queueFor(url: string) {
+    const done: [string, JudgeResult][] = [];
+    const fallbacks: JudgeFallbackInfo[] = [];
+    const queue = new JudgeQueue({
+      judge: createOllamaJudge({ url, model: MODEL }),
+      fallback: createRandomJudge({ delayMs: 0 }),
+      timeoutMs: 5000,
+      clock: realClock,
+      onDone: (job, r) => done.push([job.playerId, r]),
+      onFallback: (info) => fallbacks.push(info),
+    });
+    return { queue, done, fallbacks };
+  }
+
+  it('評分器：標記圖 → UpstreamHttpError（status 400、附 error 文字）；未標記照常給分', async () => {
+    const m = await mock({ rejectMarker: 'BADIMG' });
+    const judge = createOllamaJudge({ url: m.url, model: MODEL });
+    const err = await judge.score({ png: Buffer.from(makeMarkedPng('BADIMG')), topic: '蘋果' }, signal()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UpstreamHttpError);
+    expect((err as UpstreamHttpError).status).toBe(400);
+    expect(String(err)).toMatch(/HTTP 400：failed to process inputs/);
+    await expect(judge.score({ png: realPng(1), topic: '蘋果' }, signal())).resolves.toMatchObject({ score: expect.any(Number) });
+  });
+
+  it('佇列：三張中間那張被拒 → 只有它 random，其他兩張仍 ai、模式仍 ai', async () => {
+    const m = await mock({ rejectMarker: 'BADIMG' });
+    const { queue, done, fallbacks } = queueFor(m.url);
+    queue.push({ playerId: 'p1', input: { png: realPng(1), topic: '蘋果' } });
+    queue.push({ playerId: 'p2', input: { png: Buffer.from(makeMarkedPng('BADIMG', 2)), topic: '蘋果' } });
+    queue.push({ playerId: 'p3', input: { png: realPng(3), topic: '蘋果' } });
+    await vi.waitFor(() => expect(done).toHaveLength(3), { timeout: 3000 });
+    expect(done.map(([id, r]) => [id, r.judgedBy])).toEqual([['p1', 'ai'], ['p2', 'random'], ['p3', 'ai']]);
+    expect(fallbacks).toEqual([{ playerId: 'p2', reason: 'rejected', error: expect.stringContaining('HTTP 400') }]);
+    expect(queue.mode).toBe('ai');
+    expect(m.requests.filter((r) => r.path === '/v1/systemone')).toHaveLength(3);
+    queue.dispose();
+  });
+
+  it('HTTP 413（白名單）同樣只影響那一張', async () => {
+    const m = await mock({ rejectMarker: 'BADIMG', rejectStatus: 413 });
+    const { queue, done, fallbacks } = queueFor(m.url);
+    queue.push({ playerId: 'p1', input: { png: Buffer.from(makeMarkedPng('BADIMG')), topic: '蘋果' } });
+    queue.push({ playerId: 'p2', input: { png: realPng(2), topic: '蘋果' } });
+    await vi.waitFor(() => expect(done).toHaveLength(2), { timeout: 3000 });
+    expect(done.map(([id, r]) => [id, r.judgedBy])).toEqual([['p1', 'random'], ['p2', 'ai']]);
+    expect(fallbacks[0]).toMatchObject({ reason: 'rejected' });
+    expect(queue.mode).toBe('ai');
+    queue.dispose();
+  });
+
+  it('模型不存在（假 Ollama 真的回 404）→ 上游不可用：整回合降級', async () => {
+    const m = await mock({ model: 'other:1b' });
+    const { queue, done, fallbacks } = queueFor(m.url);
+    queue.push({ playerId: 'p1', input: { png: realPng(1), topic: '蘋果' } });
+    queue.push({ playerId: 'p2', input: { png: realPng(2), topic: '蘋果' } });
+    await vi.waitFor(() => expect(done).toHaveLength(2), { timeout: 3000 });
+    expect(done.map(([id, r]) => [id, r.judgedBy])).toEqual([['p1', 'random'], ['p2', 'random']]);
+    expect(fallbacks).toEqual([{ playerId: 'p1', reason: 'error', error: expect.stringContaining('HTTP 404') }]);
+    expect(queue.mode).toBe('random');
+    expect(m.requests.filter((r) => r.path === '/v1/systemone')).toHaveLength(1);
+    queue.dispose();
+  });
+
+  it.each([404, 429, 500])('同一張改回 HTTP %i（上游不可用）→ 照原規則整回合降級', async (status) => {
+    const m = await mock({ rejectMarker: 'BADIMG', rejectStatus: status });
+    const { queue, done, fallbacks } = queueFor(m.url);
+    queue.push({ playerId: 'p1', input: { png: Buffer.from(makeMarkedPng('BADIMG')), topic: '蘋果' } });
+    queue.push({ playerId: 'p2', input: { png: realPng(2), topic: '蘋果' } });
+    await vi.waitFor(() => expect(done).toHaveLength(2), { timeout: 3000 });
+    expect(done.map(([id, r]) => [id, r.judgedBy])).toEqual([['p1', 'random'], ['p2', 'random']]);
+    expect(fallbacks).toEqual([{ playerId: 'p1', reason: 'error', error: expect.stringContaining(`HTTP ${status}`) }]);
     expect(queue.mode).toBe('random');
     queue.dispose();
   });

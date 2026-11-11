@@ -15,6 +15,7 @@
 // 唯一例外是第一名稱讚版（Phase 4，Rex 2026-10-12）：user 文案換成稱讚版，告訴模型「這是第一名、妳不甘心但得承認它畫得好、用雌小鬼的口氣誇它」。
 // Epic 20 像不像比賽：mimic 回合 images 為 [參考圖 JPEG, 交卷 PNG]，user 文案（批評版與稱讚版）改說明「第一張是參考圖、第二張是照著畫的」；system 與參數不變。
 import { describeFetchError, joinUrl, type FetchLike } from '../judge/ollama';
+import { UpstreamHttpError } from '../judge/httpError';
 import { abortReason } from '../judge/random';
 import type { CommentInput, Commentator } from './queue';
 
@@ -165,8 +166,8 @@ export interface OllamaCommentatorOptions {
   onCommented?: (info: CommentedInfo) => void;
 }
 
-/** HTTP 錯誤：附狀態碼與 Ollama 回的 error 文字 */
-async function httpError(res: Response): Promise<Error> {
+/** HTTP 錯誤：附狀態碼與 Ollama 回的 error 文字（UpstreamHttpError 帶 status，佇列據此區分輸入被拒與上游不可用，§5.5） */
+async function httpError(res: Response): Promise<UpstreamHttpError> {
   let detail = '';
   try {
     const text = await res.text();
@@ -179,7 +180,7 @@ async function httpError(res: Response): Promise<Error> {
   } catch {
     // 讀不到內文：只報狀態碼
   }
-  return new Error(`chat HTTP ${res.status}${detail ? `：${detail.slice(0, 200)}` : ''}`);
+  return new UpstreamHttpError(res.status, `chat HTTP ${res.status}${detail ? `：${detail.slice(0, 200)}` : ''}`);
 }
 
 function readCount(json: unknown, key: string): number | undefined {

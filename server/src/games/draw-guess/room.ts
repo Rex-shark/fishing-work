@@ -8,12 +8,15 @@ import {
   CHOOSING_SECONDS,
   ENDED_SECONDS,
   IMAGE_MIN_INTERVAL_MS,
+  JOIN_MIN_INTERVAL_MS,
   MAX_OPS_PER_ROUND,
   MAX_PLAYERS,
+  MAX_STROKES_PER_ROUND,
   MIN_PLAYERS,
   NICKNAME_TAKEN_MESSAGE,
   RECONNECT_GRACE_SECONDS,
   ROUND_SECONDS,
+  SPOILER_COOLDOWN_MS,
   containsSpoiler,
   countChars,
   isCorrect,
@@ -134,10 +137,14 @@ export interface ImageOutcome {
   effects: Effect[];
 }
 
-/** draw:op 無 ack：dropped 為丟棄原因（給 register 記 log），合法時為 null */
+/**
+ * draw:op 無 ack：dropped 為丟棄原因（給 register 記 log），合法時為 null。
+ * quiet：丟棄但不必寫 log（strokeLimit 每回合只寫第一次，spec §9.1；灌 10 萬對不會寫 10 萬行）
+ */
 export interface DrawOutcome {
   effects: Effect[];
   dropped: string | null;
+  quiet?: boolean;
 }
 
 /** 回合相關錯誤的繁中訊息（ack.message，客戶端直接顯示） */
@@ -148,6 +155,9 @@ export const ROUND_ERROR_MESSAGES = {
   NOT_DRAWER: '只有本回合的畫師可以這麼做',
   ROOM_FULL: `房間已滿（上限 ${MAX_PLAYERS} 人），請稍後再試`,
 } as const satisfies Partial<Record<ErrorCode, string>>;
+
+/** 已綁定玩家的 socket 重複 player:join 太頻繁（< JOIN_MIN_INTERVAL_MS）→ RATE_LIMITED 的訊息（spec §9.1，Epic 21） */
+export const JOIN_RATE_LIMITED_MESSAGE = '操作太頻繁，請稍候再試';
 
 /** setTopic 時沒有任何猜題者（在房非畫師，含寬限期中）→ NOT_ENOUGH_PLAYERS 的訊息 */
 export const NO_GUESSERS_MESSAGE = '沒有猜題者，無法開始作畫';
@@ -177,8 +187,12 @@ interface PlayerState {
   /** 目前綁定的 socket；null = 斷線中（寬限期） */
   socketId: string | null;
   graceTimer: TimerHandle | null;
-  /** 最後一則被接受的聊天訊息時間（間隔限制用；被拒的訊息不更新，spec §5） */
+  /** 最後一則被接受或被 SPOILER_BLOCKED 擋下的聊天訊息時間（間隔限制用；其他被拒的訊息不更新，spec §5、§9.1） */
   lastChatAt: number | null;
+  /** 最後一次 chat:send 被 SPOILER_BLOCKED 的時間：之後 SPOILER_COOLDOWN_MS 內 chat:send 一律 RATE_LIMITED（§9.1，Epic 21） */
+  lastSpoilerAt: number | null;
+  /** 最後一次受理 player:join 的時間（新玩家、接管、重複皆算）：已綁定 socket 的重複 join 節流用（§9.1，Epic 21） */
+  lastJoinAt: number;
   /** 最後一張被接受的圖片時間（與文字訊息各自計時；被拒不更新，spec §5「圖片訊息」） */
   lastImageAt: number | null;
 }
@@ -250,6 +264,8 @@ export class Room {
   private strokeOrder: string[] = [];
   /** 本回合用過的 strokeId（含已 undo／clear 的），不得重用 */
   private readonly usedStrokeIds = new Set<string>();
+  /** 本回合是否已回報過 strokeLimit（之後的同類丟棄 quiet，不再逐則寫 log；換回合重置） */
+  private strokeLimitReported = false;
 
   /** 環狀緩衝：最多 CHAT_HISTORY 則 */
   private readonly chatLog: ChatMessage[] = [];
@@ -266,7 +282,8 @@ export class Room {
 
   /**
    * 加入（§5 三種 join）：
-   * - 重複：該 socket 已綁定玩家 → 冪等回目前 token 與快照，忽略 payload。
+   * - 重複：該 socket 已綁定玩家 → 冪等回目前 token 與快照，忽略 payload；距上次受理 < JOIN_MIN_INTERVAL_MS → RATE_LIMITED
+   *   （§9.1，Epic 21：快照含整份 ops 複本，連送可灌爆記憶體）。本款沒有要補送的二進位事件。
    * - 接管：token 對到現存玩家 → 綁新 socket、踢舊 socket、取消寬限計時，忽略 nickname。
    * - 新玩家：人數（含寬限期中）< MAX_PLAYERS；暱稱合法且未被占用（不分大小寫，含寬限期中的玩家）。
    */
@@ -274,6 +291,11 @@ export class Room {
     const boundId = this.bySocket.get(socketId);
     if (boundId !== undefined) {
       const player = this.mustGet(boundId);
+      const now = this.clock.now();
+      if (now - player.lastJoinAt < JOIN_MIN_INTERVAL_MS) {
+        return { ack: { ok: false, error: 'RATE_LIMITED', message: JOIN_RATE_LIMITED_MESSAGE }, effects: [] };
+      }
+      player.lastJoinAt = now;
       return { ack: this.joinAck(player), effects: [] };
     }
 
@@ -305,6 +327,8 @@ export class Room {
       socketId,
       graceTimer: null,
       lastChatAt: null,
+      lastSpoilerAt: null,
+      lastJoinAt: this.clock.now(),
       lastImageAt: null,
     };
     this.players.set(player.id, player);
@@ -425,7 +449,8 @@ export class Room {
    * 未加入 → NOT_IN_ROOM；文字不合法 → MESSAGE_INVALID；距上一則被接受的訊息 < CHAT_MIN_INTERVAL_MS → RATE_LIMITED。
    * phase = drawing 時依判定表：未猜對的猜題者猜中 → 猜對（原文不廣播）；含題目但不相符 → SPOILER_BLOCKED；
    * 畫師或已猜對者含題目 → SPOILER_BLOCKED；其餘廣播一般聊天。phase ≠ drawing 一律一般聊天。
-   * 只有被接受（廣播出去）的訊息才更新間隔時間戳。
+   * 被接受（廣播出去）與被 SPOILER_BLOCKED 擋下的訊息更新間隔時間戳；被擋後 SPOILER_COOLDOWN_MS 內一律 RATE_LIMITED
+   * （§9.1，Epic 21：「被擋」本身洩漏「這串字含答案」，不限速可毫秒級二分探測）。
    */
   chat(socketId: string, rawText: string): ActionOutcome {
     const player = this.playerBySocket(socketId);
@@ -433,6 +458,10 @@ export class Room {
     const check = validateChatText(rawText);
     if (!check.ok) return chatFail('MESSAGE_INVALID', CHAT_ERROR_MESSAGES.MESSAGE_INVALID);
     const now = this.clock.now();
+    // 洩題冷卻先判：冷卻期間一律回專用文案（spec §9.1，決策 11），即使同時也未滿一般間隔
+    if (player.lastSpoilerAt !== null && now - player.lastSpoilerAt < SPOILER_COOLDOWN_MS) {
+      return chatFail('RATE_LIMITED', CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER);
+    }
     if (player.lastChatAt !== null && now - player.lastChatAt < CHAT_MIN_INTERVAL_MS) {
       return chatFail('RATE_LIMITED', CHAT_ERROR_MESSAGES.RATE_LIMITED);
     }
@@ -443,6 +472,8 @@ export class Room {
       const guessing = drawerId !== player.id && !player.hasGuessed;
       if (guessing && isCorrect(text, topic)) return this.correctGuess(player, now);
       if (containsSpoiler(text, topic)) {
+        player.lastChatAt = now;
+        player.lastSpoilerAt = now;
         return chatFail(
           'SPOILER_BLOCKED',
           guessing ? CHAT_ERROR_MESSAGES.SPOILER_BLOCKED_GUESS : CHAT_ERROR_MESSAGES.SPOILER_BLOCKED,
@@ -503,6 +534,12 @@ export class Room {
     switch (op.type) {
       case 'begin':
         if (this.usedStrokeIds.has(op.strokeId)) return drop('strokeUsed');
+        // 本回合 strokeId 名額（§9.1，Epic 21；undo／clear 不退還）：begin＋undo 迴圈不再能讓 usedStrokeIds 無限成長
+        if (this.usedStrokeIds.size >= MAX_STROKES_PER_ROUND) {
+          if (this.strokeLimitReported) return { effects: [], dropped: 'strokeLimit', quiet: true };
+          this.strokeLimitReported = true;
+          return drop('strokeLimit');
+        }
         if (full) return drop('opsLimit');
         // 新的 begin 自動關閉舊的 open stroke（指標離開視窗會漏掉 pointerup）
         this.openStroke = op.strokeId;
@@ -704,6 +741,7 @@ export class Room {
     this.openStroke = null;
     this.strokeOrder = [];
     this.usedStrokeIds.clear();
+    this.strokeLimitReported = false;
   }
 
   private setRoundTimer(ms: number, transition: () => Effect[]): void {
@@ -741,6 +779,7 @@ export class Room {
       effects.push({ kind: 'disconnect', socketId: oldSocket });
     }
     player.socketId = socketId;
+    player.lastJoinAt = this.clock.now();
     this.bySocket.set(socketId, player.id);
 
     // 不發 system 訊息（§5）：從寬限期回來只更新玩家清單的 connected

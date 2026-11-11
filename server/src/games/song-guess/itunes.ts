@@ -13,7 +13,7 @@
 // - 環境變數在本檔讀取（比照 draw-contest/judge/index.ts）：ITUNES_URL、ITUNES_COUNTRY、ITUNES_RSS_URL、ITUNES_TIMEOUT_MS、ITUNES_RSS_TIMEOUT_MS、
 //   ITUNES_CACHE_MS、SONG_PREVIEW_CAP_MS。
 // 啟動時**不**探測 iTunes（省限流額度；連不上時出題者會收到 SEARCH_FAILED 並可重試）。
-import { ANIME_TERMS, CHART_SIZE, PREVIEW_CAP_MS } from '@fishing-work/shared/song-guess';
+import { ANIME_TERMS, CHART_SIZE, PREVIEW_CAP_MS, stripInvisible } from '@fishing-work/shared/song-guess';
 import { log } from '../../lib/log';
 
 /** 測試可注入的 fetch（只用到這個形狀） */
@@ -75,9 +75,9 @@ export interface SearchOptions {
 /** 一次搜尋要求的上限（iTunes 的最大值） */
 export const SEARCH_LIMIT = 200;
 
-/** 歌手名的正規化鍵：NFKC（全形→半形）→ 小寫 → 去掉所有空白。快取鍵與 picker 的歌手名比對共用 */
+/** 歌手名的正規化鍵：移除不可見字元（Epic 21）→ NFKC（全形→半形）→ 小寫 → 去掉所有空白。快取鍵與 picker 的歌手名比對共用 */
 export function artistKey(name: string): string {
-  return name.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
+  return stripInvisible(name).normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
 }
 
 /** 組搜尋網址：`${url}/search?term=…&attribute=artistTerm&country=…&media=music&entity=song&limit=200`（參數順序照 §3） */
@@ -422,12 +422,13 @@ function createCache<T>(cacheMs: number, now: () => number) {
       return hit !== undefined && now() - hit.at < cacheMs ? { value: hit.value } : undefined;
     },
     pending: (key: string) => pending.get(key),
-    track(key: string, run: Promise<T>): Promise<T> {
+    /** shouldCache 回 false 的成功結果也不寫快取（歌手搜尋 0 筆，Epic 21 決策 7） */
+    track(key: string, run: Promise<T>, shouldCache: (value: T) => boolean = () => true): Promise<T> {
       const shared = run
         .then((value) => {
           const t = now();
           for (const [k, entry] of cache) if (t - entry.at >= cacheMs) cache.delete(k);
-          if (cacheMs > 0) cache.set(key, { at: t, value });
+          if (cacheMs > 0 && shouldCache(value)) cache.set(key, { at: t, value });
           return value;
         })
         .finally(() => {
@@ -441,7 +442,8 @@ function createCache<T>(cacheMs: number, now: () => number) {
 
 /**
  * 建立帶快取的 iTunes 客戶端。
- * - 快取鍵＝artistKey(歌手名)；命中且未過期直接回（不打 iTunes）。只快取成功的結果（含 0 筆）。
+ * - 快取鍵＝artistKey(歌手名)；命中且未過期直接回（不打 iTunes）。只快取成功且至少 1 筆的結果（Epic 21 決策 7：0 筆不快取，
+ *   否則漏打空格的「JayChou」0 筆會讓同鍵的「Jay Chou」10 分鐘內都 ARTIST_NOT_FOUND）。
  * - 同一鍵的搜尋進行中又來一次（上一次出題取消後馬上重填同一位）→ 共用同一個 promise，不重打。
  * - 每次寫入時順手清掉過期項目，快取不會無限成長。
  */
@@ -477,7 +479,7 @@ export function createItunesClient(config: ItunesConfig, options: ItunesClientOp
           throw err;
         },
       );
-      return searches.track(key, run);
+      return searches.track(key, run, (tracks) => tracks.length > 0);
     },
     chart: (country) => {
       const hit = charts.get(country);

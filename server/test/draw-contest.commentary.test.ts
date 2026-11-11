@@ -31,7 +31,8 @@ import {
 import type { FetchLike } from '../src/games/draw-contest/judge/ollama';
 import { silenceLogs } from './e2e/helpers';
 import { FakeClock } from './helpers/fakeClock';
-import { FnCommentator, ManualCommentator, flush, makePng } from './helpers/drawContest';
+import { UpstreamHttpError } from '../src/games/draw-contest/judge/httpError';
+import { FnCommentator, ManualCommentator, flush, makeMarkedPng, makePng } from './helpers/drawContest';
 
 interface MockOllama {
   url: string;
@@ -46,6 +47,8 @@ type StartMock = (options?: {
   chatDelayMs?: number;
   chatContent?: string;
   praiseContent?: string;
+  chatRejectMarker?: string;
+  rejectStatus?: number;
 }) => Promise<MockOllama>;
 
 const MODEL = 'gemma4:26b-mlx-bf16';
@@ -808,6 +811,128 @@ describe('§6.1 評語佇列', () => {
 });
 
 // ─── 設定 ─────────────────────────────────────────────────────────
+
+// ─── 錯誤分類（Epic 21）────────────────────────────────────────────
+
+describe('§5.5 評語器錯誤分類（Epic 21，code review #5、決策 11）：400／413／415／422 只讓該張沒有評語、不計入連續失敗', () => {
+  function setup() {
+    const clock = new FakeClock();
+    const manual = new ManualCommentator();
+    const batches: CommentDone[][] = [];
+    const failures: CommentFailureInfo[] = [];
+    const skips: string[] = [];
+    const queue = new CommentQueue({
+      commentator: manual,
+      timeoutMs: 1000,
+      clock,
+      onDone: (batch) => batches.push(batch),
+      onFailure: (info) => failures.push(info),
+      onSkip: (info) => skips.push(info.playerId),
+    });
+    const job = (playerId: string): CommentJob => ({ playerId, input: { png: png(), topic: 't', score: 50, nickname: playerId } });
+    const flat = () => batches.flat().map(({ job: j, result }) => [j.playerId, result.status, result.status === 'failed' ? result.reason : null]);
+    return { clock, manual, batches, failures, skips, queue, job, flat };
+  }
+  const http = (status: number) => new UpstreamHttpError(status, `chat HTTP ${status}`);
+
+  it('連續四張都 400：每張各自 failed（rejected）、從不跳過、模式一直是 ai', async () => {
+    const { manual, failures, skips, queue, job, flat } = setup();
+    for (const id of ['a', 'b', 'c', 'd']) queue.push(job(id));
+    for (let i = 0; i < 4; i++) {
+      manual.rejectCall(i, http(400));
+      await flush();
+    }
+    expect(flat()).toEqual([
+      ['a', 'failed', 'rejected'],
+      ['b', 'failed', 'rejected'],
+      ['c', 'failed', 'rejected'],
+      ['d', 'failed', 'rejected'],
+    ]);
+    expect(failures.map((f) => [f.playerId, f.reason, f.consecutive, f.skipped])).toEqual([
+      ['a', 'rejected', 0, []],
+      ['b', 'rejected', 0, []],
+      ['c', 'rejected', 0, []],
+      ['d', 'rejected', 0, []],
+    ]);
+    expect(skips).toEqual([]);
+    expect(queue.mode).toBe('ai');
+    expect(queue.push(job('e'))).toBe(true);
+  });
+
+  it('不計入也不歸零：error → 422 → error 仍是「連續兩次失敗」→ 跳過剩餘', async () => {
+    const { manual, failures, queue, job, flat } = setup();
+    for (const id of ['a', 'b', 'c', 'd']) queue.push(job(id));
+    manual.rejectCall(0, new Error('連不上 Ollama'));
+    await flush();
+    manual.rejectCall(1, http(422));
+    await flush();
+    expect(queue.mode).toBe('ai');
+    manual.rejectCall(2, http(500));
+    await flush();
+    expect(flat()).toEqual([
+      ['a', 'failed', 'error'],
+      ['b', 'failed', 'rejected'],
+      ['c', 'failed', 'error'],
+      ['d', 'skipped', null],
+    ]);
+    expect(failures.map((f) => [f.playerId, f.reason, f.consecutive])).toEqual([
+      ['a', 'error', 1],
+      ['b', 'rejected', 1],
+      ['c', 'error', 2],
+    ]);
+    expect(queue.mode).toBe('off');
+  });
+
+  it.each([400, 413, 415, 422])('HTTP %i ＝ 輸入被拒：連兩張都不計、第三張照常', async (status) => {
+    const { manual, queue, job, flat } = setup();
+    for (const id of ['a', 'b', 'c']) queue.push(job(id));
+    manual.rejectCall(0, http(status));
+    await flush();
+    manual.rejectCall(1, http(status));
+    await flush();
+    manual.resolveCall(2, '照常');
+    await flush();
+    expect(flat()).toEqual([
+      ['a', 'failed', 'rejected'],
+      ['b', 'failed', 'rejected'],
+      ['c', 'ok', null],
+    ]);
+    expect(queue.mode).toBe('ai');
+  });
+
+  it.each([404, 401, 403, 408, 429, 418, 500, 503])('HTTP %i ＝ 上游不可用：照原規則計入（兩次即跳過剩餘）', async (status) => {
+    const { manual, queue, job, flat } = setup();
+    for (const id of ['a', 'b', 'c']) queue.push(job(id));
+    manual.rejectCall(0, http(status));
+    await flush();
+    manual.rejectCall(1, http(status));
+    await flush();
+    expect(flat()).toEqual([
+      ['a', 'failed', 'error'],
+      ['b', 'failed', 'error'],
+      ['c', 'skipped', null],
+    ]);
+    expect(queue.mode).toBe('off');
+  });
+
+  it('稱讚版被拒也不計入：praise 失敗資訊帶 praise: true、reason rejected', async () => {
+    const { manual, failures, queue } = setup();
+    queue.pushFront({ playerId: 'w', input: { png: png(), topic: 't', score: 99, nickname: 'w', praise: true } });
+    manual.rejectCall(0, http(400));
+    await flush();
+    expect(failures).toEqual([{ playerId: 'w', reason: 'rejected', error: 'UpstreamHttpError: chat HTTP 400', consecutive: 0, skipped: [], praise: true }]);
+    expect(queue.mode).toBe('ai');
+  });
+
+  it('評語器 × 假 Ollama：標記圖 → UpstreamHttpError 400；未標記照常回句子', async () => {
+    const m = await mock({ chatRejectMarker: 'BADIMG' });
+    const commentator = createOllamaCommentator({ url: m.url, model: MODEL });
+    const err = await commentator.comment({ png: Buffer.from(makeMarkedPng('BADIMG')), topic: '蘋果', score: 50, nickname: '小明' }, signal()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UpstreamHttpError);
+    expect((err as UpstreamHttpError).status).toBe(400);
+    expect(MOCK_COMMENTS).toContain(await commentator.comment({ png: png(1), topic: '蘋果', score: 50, nickname: '小明' }, signal()));
+  });
+});
 
 describe('§3 評語器環境變數', () => {
   // 2026-10-13 Phase 5：COMMENT_TIMEOUT_MS 預設 20000 → 30000

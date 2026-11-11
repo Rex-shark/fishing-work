@@ -7,6 +7,7 @@ import {
   ENDED_SECONDS,
   MAX_OPS_PER_ROUND,
   MAX_POINTS_PER_MOVE,
+  MAX_STROKES_PER_ROUND,
   MIN_PLAYERS,
   PALETTE,
   ROUND_SECONDS,
@@ -330,6 +331,12 @@ describe('§5 setTopic', () => {
     ['含 tab', '蘋\t果'],
     ['含 NUL', '蘋\u0000果'],
     ['超長字串', 'x'.repeat(100_000)],
+    // Epic 21（§9.1；code review #2）：不可見字元
+    ['只有零寬空白', '\u200B'],
+    ['夾零寬空白', '蘋\u200B果'],
+    ['只有隱形填充 U+3164', '\u3164'],
+    ['只有 ZWJ＋VS16（移除後為空）', '\u200D\uFE0F'],
+    ['夾 BOM（開頭的會被 trim 去掉）', '蘋\uFEFF果'],
   ])('不合法（%s）→ TOPIC_INVALID，無效果、仍在 choosing', (_label, topic) => {
     toChoosing(2);
     expect(room.setTopic('s1', topic)).toEqual({
@@ -626,6 +633,58 @@ describe('§5 draw:op 驗證（open stroke、strokeId、undo）與筆跡歷史�
     expect(drawDropped(end('k1'))).toBe('opsLimit');
     drawOk(CLEAR);
     expect(ops()).toEqual([]);
+  });
+
+  it(`筆畫上限 ${MAX_STROKES_PER_ROUND}（Epic 21，§9.1；code review #3）：begin＋undo 迴圈達上限後新 begin 丟棄 strokeLimit；undo／clear 不退還；新回合重置`, () => {
+    toDrawing(2);
+    for (let i = 0; i < MAX_STROKES_PER_ROUND; i++) {
+      const r = room.draw('s1', begin(`k${i}`));
+      if (r.dropped !== null) throw new Error(`第 ${i} 個 begin 被丟棄：${r.dropped}`);
+      drawOk(undo(`k${i}`));
+    }
+    expect(ops()).toEqual([]);
+    expect(drawDropped(begin('over'))).toBe('strokeLimit');
+    // 已用過的 id 仍回 strokeUsed（先判斷）
+    expect(drawDropped(begin('k0'))).toBe('strokeUsed');
+    // clear 不退還名額
+    drawOk(CLEAR);
+    expect(drawDropped(begin('over2'))).toBe('strokeLimit');
+    // undo、clear、background 照常可用（沒有筆可撤時 undo 依原規則丟棄）
+    expect(drawDropped(undo('k1999'))).toBe('undoNotLast');
+    drawOk({ type: 'background', color: '#000000' });
+    // 下一回合（重新出題）名額重置
+    ok(room.cancel('s1'));
+    clock.advance(ENDED_MS);
+    ok(room.volunteer('s1'));
+    ok(room.setTopic('s1', '香蕉'));
+    drawOk(begin('fresh'));
+  });
+
+  it('strokeLimit 的 log 每回合只寫第一次（spec §9.1，決策 11）：其後同類丟棄 quiet；其他丟棄原因不受影響；換回合重置', () => {
+    const fillToLimit = (prefix: string) => {
+      for (let i = 0; i < MAX_STROKES_PER_ROUND; i++) {
+        room.draw('s1', begin(`${prefix}${i}`));
+        room.draw('s1', undo(`${prefix}${i}`));
+      }
+    };
+    toDrawing(2);
+    fillToLimit('a');
+    const first = room.draw('s1', begin('over1'));
+    expect(first).toEqual({ effects: [], dropped: 'strokeLimit' }); // 第一次：要寫 log（無 quiet）
+    for (let i = 2; i < 6; i++) {
+      expect(room.draw('s1', begin(`over${i}`))).toEqual({ effects: [], dropped: 'strokeLimit', quiet: true });
+    }
+    // 其他原因的丟棄照舊逐則回報（不 quiet）
+    expect(room.draw('s1', begin('a0'))).toEqual({ effects: [], dropped: 'strokeUsed' });
+    expect(room.draw('s1', undo('a1'))).toEqual({ effects: [], dropped: 'undoNotLast' });
+    // 換回合：重新出題後第一次 strokeLimit 再寫一次
+    ok(room.cancel('s1'));
+    clock.advance(ENDED_MS);
+    ok(room.volunteer('s1'));
+    ok(room.setTopic('s1', '香蕉'));
+    fillToLimit('b');
+    expect(room.draw('s1', begin('over-b1'))).toEqual({ effects: [], dropped: 'strokeLimit' });
+    expect(room.draw('s1', begin('over-b2'))).toMatchObject({ dropped: 'strokeLimit', quiet: true });
   });
 
   it('中途加入者的快照：ops 已正規化可直接重播、round.topic = null、有 topicLength', () => {

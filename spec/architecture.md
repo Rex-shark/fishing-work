@@ -243,6 +243,9 @@ export interface ServerToClientEvents {
 | `MAX_POINTS_PER_MOVE` | 64 | 一則 `move` 最多帶的點數；超過整則丟棄 |
 | `MAX_OPS_PER_ROUND` | 10000 | 本回合筆跡歷史（正規化後的 begin/move/end，加上至多一個 background）上限；超過丟棄新的 begin/move/end 並 log，`undo`／`clear`／`background` 仍可用 |
 | `STROKE_ID_MAX` | 64 | strokeId 長度上限（客戶端用 `crypto.randomUUID()`） |
+| `MAX_STROKES_PER_ROUND` | 2000 | 本回合可用的 strokeId 數上限（Epic 21；`undo`／`clear` 不退還）；達上限後新的 `begin` 靜默丟棄並 log `strokeLimit` |
+| `SPOILER_COOLDOWN_MS` | 3000 | `chat:send` 被 `SPOILER_BLOCKED` 後的冷卻：期間該玩家的 `chat:send` 一律 `RATE_LIMITED`（Epic 21） |
+| `JOIN_MIN_INTERVAL_MS` | 1000 | 已綁定玩家的 socket 重複 `player:join` 的最短間隔（Epic 21） |
 
 ### 答案判定（`shared/src/draw-guess/answer.ts`）
 
@@ -515,6 +518,18 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 ---
 
+### 9.1 強化（Epic 21，2026-11-10；與前文牴觸處以本節為準）
+
+來源：全專案 code review（`plan/code-review-2026-11.md`）；決策見 `plan/hardening.md`。前三條三款遊戲共用，猜歌與繪圖比賽的專屬項目見各自 spec。
+
+- **不可見字元**（三款 `text.ts`，規則相同）：`stripInvisible(s)` 移除 `\p{Cf}`、變體選擇符（U+FE00–FE0F、U+E0100–E01EF、U+180B–180F、U+034F）、隱形填充（U+115F、U+1160、U+3164、U+FFA0、U+2800）；`hasForbiddenInvisible(s)`＝含上述集合扣掉 U+200D（ZWJ）與 U+FE0F（VS16）的任一字元。**驗證**（暱稱、題目、歌手名、聊天）：`hasForbiddenInvisible` 為真或 `stripInvisible(trim 後)` 為空 → 既有 INVALID 錯誤碼。**比對**（`normalizeAnswer`、`normalizeTitle`／`normalizeFull`、`nicknameKey`、`artistKey`）第一步先 `stripInvisible`。
+- **重複 join 節流**：已綁定玩家的 socket 再送 `player:join`，距上次受理 < `JOIN_MIN_INTERVAL_MS`（1000）→ `RATE_LIMITED`「操作太頻繁，請稍候再試」；受理時回快照但不重送任何二進位事件（只在首次加入與 token 接管補送）。未綁定的 socket 不受限。
+- **客戶端自動重加入**：只有 server 明確回 `ok: false` 才清憑證回首頁；ack 沒回來（逾時或途中斷線）保留憑證：已斷線等下次 `connect`，仍連線則 2 秒後重試、最多重試 3 次（連同第一次共送 4 次，約 26 秒），仍失敗回首頁顯示「自動重新加入失敗：連線逾時」但不清憑證；重試次數在 `connect` 或成功時歸零，放棄後若又重連會用保留的憑證再自動加入一次。節流從上次**受理**起算（被擋下的那次不重設），token 接管不受節流。
+- **地區旗**：英格蘭、蘇格蘭等以 tag 字元（U+E0020–E007F，屬 `\p{Cf}`）組成的旗幟會被當成禁用字元而拒絕；🇹🇼 這類國旗、膚色、keycap 不受影響（2026-11-10 定案：不為此放寬）。「剝除後為空」含 trim（只剩空白加 ZWJ 也不合法）。
+- **筆畫上限**（我畫你猜）：`usedStrokeIds` 數量達 `MAX_STROKES_PER_ROUND` 後新的 `begin` 丟棄（原本只增不減，begin＋undo 迴圈可把記憶體打爆、三款一起掛）；`strokeLimit` 的 log **每回合只寫第一次**（否則灌 10 萬對會寫 20 萬行）。
+- **洩題冷卻**（我畫你猜、猜歌）：被 `SPOILER_BLOCKED` 擋下的訊息也更新 `lastChatAt`，且之後 `SPOILER_COOLDOWN_MS` 內該玩家的 `chat:send` 一律 `RATE_LIMITED`（取代「只有被接受的訊息才更新間隔時間戳」）；冷卻期間的 `RATE_LIMITED` 文案為「剛才的訊息含答案被擋下，請等 {n} 秒再發言」（n＝`SPOILER_COOLDOWN_MS / 1000`，由常數組字；一般間隔的文案不變）。
+- **`PORT`**：未設、空字串、非整數或超出 1–65535 → 退回 80 並 log warn（未設不 warn；只接受純十進位數字 `^\d+$`，`0x50`、`1e3` 也算不合法；原 `Number(process.env.PORT ?? 80)` 遇空字串會綁隨機埠）。
+
 ## 10. 驗證方式（派工與驗收共用）
 
 每條指令**分開跑、各自檢查 exit code**，不可用 `cmd | tail && echo 通過`。
@@ -543,6 +558,7 @@ test/                         # Vitest：room、room.round、scoring、network�
 
 | 日期 | 變更 | 原因 |
 |------|------|------|
+| 2026-11-10 | **Epic 21 強化**：§4 常數 `MAX_STROKES_PER_ROUND`／`SPOILER_COOLDOWN_MS`／`JOIN_MIN_INTERVAL_MS`；新增 §9.1（不可見字元規則、重複 join 節流、客戶端自動重加入不清憑證、筆畫上限、洩題冷卻、`PORT` 讀取）；契約 `events.ts` 不變 | 全專案 code review（2026-11-10）高 6 項＋中 2 項，Rex「好開工」（`plan/hardening.md`） |
 | 2026-10-14 | §3 開發拓樸：`draw-contest`／`song-guess` 的 vite.config 補 `server.allowedHosts: ['.trycloudflare.com', '.local']`（與 draw-guess 一致；Vite 偵測設定檔改動會自動重啟，不需重開 dev） | Rex 2026-10-14 以 `npm run dev` ＋ tunnel 開 `/song-guess/` 回「Blocked request. This host is not allowed」：:80 proxy 保留原 Host，被 :7182 的 Vite 擋下；海圖補齊 |
 | 2026-10-12 | §3 開發拓樸內部埠再改：server **7180**、draw-contest Vite **7181**、song-guess Vite **7182**（原 5173／5174／5175）；80 仍是入口 | Rex 2026-10-12：5173 系列是 Vite 預設埠，`ai-chatroom` 等其他專案會搶（實測 5174 被占）；3000／3001 Rex 固定他用 |
 | 2026-10-12 | **Epic 16 猜歌的共用層定案**（海圖）：§1 加 `song-guess/`；§3 dev 五個程序、song-guess Vite :7182、三個 Vite 互 proxy、分享網址 `games` 三鍵、容器提示加「猜歌 /song-guess/」、Docker 多一份 dist 與 `ITUNES_*`、對外網域需求 | Rex 2026-10-12 新遊戲「猜歌」（iTunes 題庫） |

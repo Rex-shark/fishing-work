@@ -1,6 +1,7 @@
 // 評分器：spec/draw-contest/architecture.md §3「評分器環境變數」、§6（random、佇列、index）
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_JUDGE_CONFIG, createJudgeSetup, readJudgeConfig } from '../src/games/draw-contest/judge/index';
+import { UpstreamHttpError, isInputRejected } from '../src/games/draw-contest/judge/httpError';
 import { JudgeQueue, type JudgeFallbackInfo, type JudgeJob, type JudgeResult } from '../src/games/draw-contest/judge/queue';
 import { createRandomJudge, fnv1a, randomScore } from '../src/games/draw-contest/judge/random';
 import { FakeClock } from './helpers/fakeClock';
@@ -188,6 +189,117 @@ describe('§6 評分佇列', () => {
     queue.push(job('e'));
     expect(judge.calls).toHaveLength(2);
     expect(done.map(([j]) => j.playerId)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('§5.5 評分器錯誤分類（Epic 21，code review #5）', () => {
+  function setup(timeoutMs = 1000) {
+    const clock = new FakeClock();
+    const judge = new ManualJudge('ai');
+    const fallback = new FnJudge(() => ({ score: 33, confidence: 0.3 }), 'random');
+    const done: [string, JudgeResult][] = [];
+    const fallbacks: JudgeFallbackInfo[] = [];
+    const queue = new JudgeQueue({
+      judge,
+      fallback,
+      timeoutMs,
+      clock,
+      onDone: (job, result) => done.push([job.playerId, result]),
+      onFallback: (info) => fallbacks.push(info),
+    });
+    const job = (playerId: string): JudgeJob => ({ playerId, input: { png: Buffer.from(makePng()), topic: 't' } });
+    return { clock, judge, fallback, done, fallbacks, queue, job };
+  }
+
+  it('isInputRejected 白名單（決策 11）：400／413／415／422 為真；404／401／403／408／429／418／其他 4xx／5xx、一般 Error、非錯誤值為假', () => {
+    for (const status of [400, 413, 415, 422]) expect(isInputRejected(new UpstreamHttpError(status, 'x'))).toBe(true);
+    for (const status of [404, 401, 403, 408, 429, 418, 405, 409, 410, 499, 500, 502, 503, 504, 399, 600]) {
+      expect(isInputRejected(new UpstreamHttpError(status, 'x'))).toBe(false);
+    }
+    expect(isInputRejected(new Error('systemone HTTP 400：假的'))).toBe(false); // 只認類別，不看訊息字串
+    expect(isInputRejected({ status: 400 })).toBe(false);
+    expect(isInputRejected(undefined)).toBe(false);
+  });
+
+  it('某張回 4xx：只有這張退 random（reason rejected）、不降級、下一張照常呼叫主評分器', async () => {
+    const { judge, fallback, done, fallbacks, queue, job } = setup();
+    queue.push(job('a'));
+    queue.push(job('b'));
+    queue.push(job('c'));
+    judge.calls[0].reject(new UpstreamHttpError(400, 'systemone HTTP 400：failed to process inputs'));
+    await flush();
+    expect(queue.mode).toBe('ai');
+    expect(fallbacks).toEqual([{ playerId: 'a', reason: 'rejected', error: expect.stringContaining('HTTP 400') }]);
+    expect(judge.calls).toHaveLength(2);
+    judge.resolveCall(1, 70);
+    await flush();
+    judge.calls[2].reject(new UpstreamHttpError(422, 'x'));
+    await flush();
+    expect(done.map(([id, r]) => [id, r.score, r.judgedBy])).toEqual([
+      ['a', 33, 'random'],
+      ['b', 70, 'ai'],
+      ['c', 33, 'random'],
+    ]);
+    expect(fallback.inputs).toHaveLength(2);
+    expect(queue.mode).toBe('ai');
+  });
+
+  it.each([413, 415])('HTTP %i 也是輸入被拒：只有這張退 random、不降級', async (status) => {
+    const { judge, done, fallbacks, queue, job } = setup();
+    queue.push(job('a'));
+    queue.push(job('b'));
+    judge.calls[0].reject(new UpstreamHttpError(status, `systemone HTTP ${status}`));
+    await flush();
+    expect(queue.mode).toBe('ai');
+    expect(fallbacks).toEqual([{ playerId: 'a', reason: 'rejected', error: expect.stringContaining(String(status)) }]);
+    judge.resolveCall(1, 70);
+    await flush();
+    expect(done.map(([id, r]) => [id, r.judgedBy])).toEqual([['a', 'random'], ['b', 'ai']]);
+  });
+
+  it.each([404, 401, 403, 408, 429, 418, 500, 503])('HTTP %i ＝ 上游不可用：整回合降級（照原規則）', async (status) => {
+    const { judge, done, fallbacks, queue, job } = setup();
+    queue.push(job('a'));
+    queue.push(job('b'));
+    judge.calls[0].reject(new UpstreamHttpError(status, `systemone HTTP ${status}`));
+    await flush();
+    expect(queue.mode).toBe('random');
+    expect(fallbacks).toEqual([{ playerId: 'a', reason: 'error', error: expect.stringContaining(String(status)) }]);
+    expect(judge.calls).toHaveLength(1);
+    expect(done.map(([id, r]) => [id, r.judgedBy])).toEqual([['a', 'random'], ['b', 'random']]);
+  });
+
+  it('連線失敗（一般 Error）、解析失敗、逾時 → 整回合降級', async () => {
+    const conn = setup();
+    conn.queue.push(conn.job('a'));
+    conn.judge.calls[0].reject(new Error('連不上 Ollama：fetch failed（ECONNREFUSED）'));
+    await flush();
+    expect(conn.queue.mode).toBe('random');
+
+    const parse = setup();
+    parse.queue.push(parse.job('a'));
+    parse.judge.calls[0].reject(new Error('systemone 回應缺 answers'));
+    await flush();
+    expect(parse.queue.mode).toBe('random');
+
+    const slow = setup(1000);
+    slow.queue.push(slow.job('a'));
+    slow.clock.advance(1000);
+    await flush();
+    expect(slow.queue.mode).toBe('random');
+    expect(slow.fallbacks).toEqual([{ playerId: 'a', reason: 'timeout' }]);
+  });
+
+  it('逾時後才收到 4xx（abort 之後 reject 帶 HTTP 錯誤）仍算逾時、照樣降級', async () => {
+    const { clock, judge, fallbacks, queue, job } = setup(1000);
+    // ManualJudge 收到 abort 就以 signal.reason reject；這裡改寫成以 4xx reject，確認逾時優先
+    queue.push(job('a'));
+    const call = judge.calls[0];
+    clock.advance(1000);
+    call.reject(new UpstreamHttpError(400, 'late'));
+    await flush();
+    expect(fallbacks[0]).toMatchObject({ reason: 'timeout' });
+    expect(queue.mode).toBe('random');
   });
 });
 

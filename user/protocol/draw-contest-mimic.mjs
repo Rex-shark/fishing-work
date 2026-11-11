@@ -86,13 +86,26 @@ const makePng = (seed) => {
   }
   return Buffer.concat([PNG_MAGIC, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 };
-/** 「JPEG」：server 只驗 magic FF D8 FF 與長度（§5.1b，不解碼），其餘 bytes 以 seed 填 */
+/**
+ * 合法 JPEG（Epic 21 起 server 另驗結尾 FF D9，§5.5）：libjpeg 產生的 1×1 JPEG（288 bytes）在 APP0 之後插 COM segment，
+ * 以 seed 填內容、補到剛好 size bytes；FF D8 FF 開頭、FF D9 結尾、segment 結構正確（真解碼器讀得了）。
+ */
+const BASE_JPEG = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABwn/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdAAYqm//Z', 'base64');
 const makeJpeg = (seed, size) => {
-  const b = Buffer.alloc(size);
-  b.set([0xff, 0xd8, 0xff, 0xe0]);
-  let x = seed * 2654435761 >>> 0;
-  for (let i = 4; i < size; i++) { x = (x * 1103515245 + 12345) >>> 0; b[i] = x >>> 24; }
-  return b;
+  let extra = size - BASE_JPEG.length;
+  if (extra < 0 || (extra > 0 && extra < 4)) throw new Error(`makeJpeg：size ${size} 無法組成`);
+  const segs = [];
+  let x = (seed * 2654435761) >>> 0;
+  while (extra > 0) {
+    let n = Math.min(extra, 65537);
+    if (extra - n > 0 && extra - n < 4) n -= 4;
+    const seg = Buffer.alloc(n);
+    seg[0] = 0xff; seg[1] = 0xfe; seg.writeUInt16BE(n - 2, 2);
+    for (let i = 4; i < n; i++) { x = (x * 1103515245 + 12345) >>> 0; seg[i] = 0x21 + ((x >>> 24) % 90); }
+    segs.push(seg);
+    extra -= n;
+  }
+  return Buffer.concat([BASE_JPEG.subarray(0, 20), ...segs, BASE_JPEG.subarray(20)]);
 };
 
 /** 假 Ollama 收到的請求（排除暖機：topic 'warmup'、沒有圖的 chat） */

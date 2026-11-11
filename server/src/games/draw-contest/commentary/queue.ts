@@ -6,6 +6,8 @@
 //   同一批回報，之後 push 的直接回 false，模式變 'off'。有界：最壞多等兩次逾時。
 //   連續失敗的計數：成功歸零；失敗 +1（第一名稱讚版失敗也算）；被取消的（discard、排隊中被 pushFront 取代、reset）不加也不歸零；
 //   reset（換回合）歸零。
+// - 輸入被拒（Epic 21 §5.5，code review #5）：評語器回 HTTP 400／413／415／422（白名單，決策 11）→ 該張沒有評語（照常回報 failed，reason 'rejected'），
+//   但**不計入連續失敗**（計數不加也不歸零，與取消相同），所以不會因為一兩張壞圖就跳過整回合。
 // - discard(playerId)：丟棄該玩家的所有工作（排隊中直接移除；產生中則中止並忽略結果），**不算失敗**。
 // - reset()：換回合時整批清空（中止在途的那張，不算失敗）、連續失敗計數歸零、模式回到 'ai'。
 // - pushFront(job)：第一名重做稱讚版（§5 評語，Phase 4）用。插到佇列最前面：同一玩家**排隊中**的工作直接換掉；
@@ -16,6 +18,7 @@
 // 讓 Room 把「第二次失敗那張＋被跳過的各張」併成同一組效果（§6.1 事件規則 (b)）。
 // 佇列只回報「失敗／跳過」，不決定該張最後顯示什麼：第一名稱讚版失敗或被跳過時退回批評版是 Room 的事（room.ts onCommented）。
 import type { CommentMode } from '@fishing-work/shared/draw-contest';
+import { isInputRejected } from '../judge/httpError';
 import type { Clock, TimerHandle } from '../room';
 
 /**
@@ -45,7 +48,8 @@ export interface CommentJob {
   input: CommentInput;
 }
 
-export type CommentFailureReason = 'timeout' | 'error' | 'empty';
+/** rejected = 這張輸入被上游拒絕（HTTP 400／413／415／422，白名單）：不計入連續失敗（§5.5） */
+export type CommentFailureReason = 'timeout' | 'error' | 'empty' | 'rejected';
 
 /** 同一回合連續失敗達此次數（中間沒有成功）才跳過剩餘各張（§6.1 佇列，Phase 5 由 1 放寬為 2） */
 export const COMMENT_MAX_CONSECUTIVE_FAILURES = 2;
@@ -63,7 +67,8 @@ export interface CommentDone {
 
 /**
  * 一張評語失敗的資訊（給 register 記 log）。
- * consecutive：含這張在內，本回合連續失敗的次數（1 = 單次失敗，只影響這張；達 COMMENT_MAX_CONSECUTIVE_FAILURES = 本回合到此為止）。
+ * consecutive：含這張在內，本回合連續失敗的次數（1 = 單次失敗，只影響這張；達 COMMENT_MAX_CONSECUTIVE_FAILURES = 本回合到此為止）；
+ * reason 'rejected' 不計入，consecutive 為當下的次數（不含這張，可為 0）。
  * skipped：因此被跳過的排隊中玩家——單次失敗時一律為空陣列，連續第二次失敗時才可能有。
  * praise 只在失敗的是第一名稱讚版時出現。
  */
@@ -225,7 +230,8 @@ export class CommentQueue {
       this.failures = 0;
       batch.push({ job: entry.job, result: { status: 'ok', comment: attempt.comment } });
     } else {
-      this.failures += 1;
+      // 輸入被拒（4xx）只讓這張沒有評語，不計入連續失敗（§5.5）
+      if (attempt.reason !== 'rejected') this.failures += 1;
       // 單次失敗只影響這張，排隊中的照常跑；連續第二次失敗：本回合到此為止，排隊中的各張不再呼叫模型
       let skipped: Entry[] = [];
       if (this.tripped) {
@@ -272,7 +278,8 @@ export class CommentQueue {
       return { kind: 'ok', comment: out };
     } catch (err) {
       if (entry.cancelled) return { kind: 'cancelled' };
-      return timedOut ? { kind: 'failed', reason: 'timeout' } : { kind: 'failed', reason: 'error', error: String(err) };
+      if (timedOut) return { kind: 'failed', reason: 'timeout' };
+      return { kind: 'failed', reason: isInputRejected(err) ? 'rejected' : 'error', error: String(err) };
     } finally {
       this.opts.clock.clearTimeout(timer);
       entry.controller = null;

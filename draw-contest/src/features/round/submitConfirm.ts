@@ -2,7 +2,7 @@
 // 狀態：openRound＝開著的確認框屬於哪一回合（null＝關閉）。以 roundNo 記，新回合不會殘留上一回合開著的框；
 //   可不可以顯示另由 SubmitConfirmDialog 以「此刻能作畫」把關（時間到自動交卷、交卷中，框自動消失）。
 // error：確認後交卷失敗的訊息（顯示在「完成」旁，4 秒或再按一次時清除）。
-// 自動交卷（autoSubmit）直接呼叫 submitMyCanvas，不經本檔（時間到不問）。
+// 自動交卷（autoSubmit）直接呼叫 exportMyCanvas／submitPreparedPng，不經本檔（時間到不問）。
 // 獨立成 .ts：元件檔只匯出元件（react-refresh 規則）；相依可注入，測試不必連線。
 import { create } from 'zustand'
 import type { ActionOutcome } from '../../socket/client'

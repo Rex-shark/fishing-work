@@ -218,7 +218,16 @@ const join = async (c) => {
   if (r.ok) { c.id = r.data.snapshot.you; c.snap = r.data.snapshot; } else { s.disconnect(); c.disc = null; }
   return r;
 };
-const freshSnapshot = async (c) => { const r = await call(c.s, 'player:join', { nickname: c.nick }); return r.ok ? r.data.snapshot : null; };
+// 2026-11-10 Epic 21（spec §9.1）：已綁定 socket 的重複 join 有 1 秒節流 → RATE_LIMITED 時等滿 1 秒重試（最多 3 次）
+const freshSnapshot = async (c) => {
+  for (let i = 0; i < 3; i++) {
+    const r = await call(c.s, 'player:join', { nickname: c.nick });
+    if (r.ok) return r.data.snapshot;
+    if (r.error !== 'RATE_LIMITED') return null;
+    await sleep(1050);
+  }
+  return null;
+};
 
 // 慢客戶端：ws 的 pause()/resume() 令牌桶節流（見檔頭說明）
 const throttle = (c, kbps) => {

@@ -12,6 +12,7 @@ import {
 } from '@fishing-work/shared/draw-contest'
 import { recordGalleryImage, recordReferenceImage } from '../features/history/historyStore'
 import { useGameStore } from '../store/game'
+import { AUTO_JOIN_TIMEOUT_MESSAGE, createAutoJoiner, type AutoJoinAttempt } from './autoJoin'
 
 export type DrawContestSocket = Socket<ServerToClientEvents, ClientToServerEvents>
 
@@ -156,32 +157,50 @@ export async function join(nickname: string): Promise<JoinOutcome> {
   return r
 }
 
-/** 連線（含重連）後以憑證自動重加入；失敗不重試：清憑證、回首頁顯示錯誤（spec §9） */
-async function autoJoin(session: SavedSession): Promise<void> {
-  store().setAutoJoining(true)
-  const r = await sendJoin({ nickname: session.nickname, token: session.token })
-  store().setAutoJoining(false)
-  if (r.ok) return
-  // 途中又斷線：交給下一次 connect 重試
-  if (r.error === 'DISCONNECTED') return
-  clearSession()
-  store().reset(`自動重新加入失敗：${r.message}`)
-}
+/**
+ * 連線（含重連）後以憑證自動重加入（spec/architecture.md §9.1；plan/hardening.md 決策 5，狀態機在 ./autoJoin）：
+ * server 明確回 ok: false → 清憑證、回首頁顯示錯誤；沒收到 ack → 保留憑證，已斷線等下次 connect、仍連線則 2 秒後重試（最多 3 次），
+ * 仍失敗回首頁顯示「自動重新加入失敗：連線逾時」但不清憑證（重新整理可再試）
+ */
+const autoJoiner = createAutoJoiner({
+  isConnected: () => socket.connected,
+  attempt: () => {
+    const session = loadSession()
+    if (session === null) return null
+    return sendJoin({ nickname: session.nickname, token: session.token }).then((r): AutoJoinAttempt => {
+      if (r.ok) return { kind: 'ok' }
+      if (r.error === 'TIMEOUT' || r.error === 'DISCONNECTED') return { kind: 'noAck' }
+      return { kind: 'rejected', message: r.message }
+    })
+  },
+  setBusy: (busy) => store().setAutoJoining(busy),
+  onRejected: (message) => {
+    clearSession()
+    store().reset(`自動重新加入失敗：${message}`)
+  },
+  // 不清憑證：reset 只回首頁（resuming → false）；憑證留在 sessionStorage，重新整理或下次 connect 會再自動加入
+  onGiveUp: () => store().reset(AUTO_JOIN_TIMEOUT_MESSAGE),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+})
 
 // ─── 連線生命週期 ─────────────────────────────────────────────────
 
 socket.on('connect', () => {
+  // 先開始自動加入（autoJoining → true）再標記已連線：訂閱 connection 的邏輯（如繪圖比賽的自動交卷）
+  // 看到「已連線」時就知道還在重新加入，不會搶在 player:join 之前送出
+  const hasSession = loadSession() !== null
+  if (hasSession) autoJoiner.onConnect()
   store().setConnection('connected')
-  const session = loadSession()
-  if (session) {
-    void autoJoin(session)
-  } else if (store().me !== null) {
+  if (!hasSession && store().me !== null) {
     // 沒有憑證可接管（理論上不會發生）：回首頁，避免停在過期的遊戲畫面
     store().reset('連線已中斷，請重新加入')
   }
 })
 
 socket.on('disconnect', (reason) => {
+  // 取消待重試的自動加入並作廢在途的那一次（ack 會以錯誤回呼）；下一次 connect 重新開始
+  autoJoiner.onDisconnect()
   if (reason === 'io server disconnect') {
     // server 主動斷開 = 同一玩家已在其他分頁／連線接手（token 接管）。
     // 清掉本分頁憑證再重連，否則兩個分頁會互相搶回同一玩家。

@@ -21,6 +21,8 @@
 // 2026-10-16 Epic 18 改寫：事件 round:setArtist → round:setSource（payload { source: 'artist', artist, hot: true }，舊名不保留）、
 //   ack { artistDisplay } → { topic }、RoundPublic 的 artistDisplay → topic、lastArtist → lastTopic（另驗 source／artistHot／lastSource／song.artist）。
 //   題庫來源（台灣熱門、西洋熱門、只抽熱門歌）另見 song-guess-sources.mjs。
+// 2026-11-10 Epic 21（§5.4 洩題冷卻）：被 SPOILER_BLOCKED 後 3 秒內 RATE_LIMITED；「未猜對者含歌名被擋」改到沒人猜的第 3 首驗，
+//   第 1 首改驗「已猜對者被擋後冷卻中 RATE_LIMITED」、「已猜對者一般訊息照常廣播」改由 A 驗。
 import { io } from 'socket.io-client';
 
 const PORT = process.env.TEST_PORT ?? '3411';
@@ -36,6 +38,8 @@ const ARTIST_MAX = 30;
 const NICKNAME_MAX = 12;
 const CHAT_MAX = 200;
 const CHAT_MIN_INTERVAL_MS = 300;
+/** 洩題冷卻（Epic 21，spec §4 常數表、§5.4） */
+const SPOILER_COOLDOWN_MS = 3000;
 const SCORE_MAX = 100;
 const SCORE_MIN = 50;
 /** 假 iTunes 預設的 trackTimeMillis（＝本測試每首的 durationMs） */
@@ -56,6 +60,8 @@ const MSG = {
   NICKNAME_TAKEN: '這個暱稱已經有人使用',
   MESSAGE_INVALID: `訊息需為 1～${CHAT_MAX} 個字，不可含換行等控制字元，也不能只有空白`,
   RATE_LIMITED: `發言太快了，請稍候再送（間隔至少 ${CHAT_MIN_INTERVAL_MS / 1000} 秒）`,
+  /** 洩題冷卻期間的 RATE_LIMITED 專用文案（平台 §9.1，Epic 21 決策 11；秒數由常數組字） */
+  SPOILER_COOLDOWN: `剛才的訊息含答案被擋下，請等 ${SPOILER_COOLDOWN_MS / 1000} 秒再發言`,
   NOT_IN_ROOM: '請先加入房間',
 };
 
@@ -270,13 +276,12 @@ try {
   const rWrong = await say(A, '不知道耶');
   await until(() => B.chat.length > chatBefore);
   check('猜錯的訊息照常廣播（kind chat）', rWrong?.ok === true && B.chat.at(-1)?.kind === 'chat' && B.chat.at(-1).text === '不知道耶' && B.chat.at(-1).fromId === A.id, j(B.chat.at(-1)));
-  const rSp1 = await say(B, `是${main1}嗎`);
-  check('未猜對者訊息含歌名但不完全相同 → SPOILER_BLOCKED「猜歌名請只輸入歌名本身」', isErr(rSp1, 'SPOILER_BLOCKED', 'SPOILER_GUESS'), j(rSp1));
+  // （「未猜對者含歌名 → SPOILER_BLOCKED」改到第 3 首驗：2026-11-10 Epic 21 洩題冷卻後，被擋的人 3 秒內不能再猜，第 1 首只有 2 秒）
   // B 在起播緩衝內（startedAt 之前）只打歌名本身 → 滿分
   const rG1 = await say(B, main1);
   await until(() => lastRound(A)?.song?.correctIds?.length === 1);
   const cB1 = A.chat.find((m) => m.kind === 'correct' && m.fromId === B.id);
-  check('B 猜對（被擋的那則不算發言，不會 RATE_LIMITED）：ack ok、廣播 correct「Bob 猜對了」不含原文', rG1?.ok === true && cB1?.nickname === 'Bob' && cB1.text.includes('Bob') && cB1.text.includes('猜對') && !cB1.text.includes(main1), j([rG1, cB1]));
+  check('B 猜對：ack ok、廣播 correct「Bob 猜對了」不含原文', rG1?.ok === true && cB1?.nickname === 'Bob' && cB1.text.includes('Bob') && cB1.text.includes('猜對') && !cB1.text.includes(main1), j([rG1, cB1]));
   // 正常情況這則在起播緩衝（1.5 秒）內送到 → 滿分；機器太忙而晚於 startedAt 時改以計分式驗（測試步調的問題，不是 server 的錯）
   const scoreB1 = me(A, B.id)?.gameScore;
   check('startedAt 之前猜對 → 滿分 100（已用時間以 0 計）', me(A, B.id)?.score === scoreB1 && (cB1?.at <= s1.startedAt ? scoreB1 === SCORE_MAX : scoreOk(scoreB1, cB1?.at, s1)), j([cB1?.at, s1.startedAt, me(A, B.id)]));
@@ -287,12 +292,12 @@ try {
   await sleep(CHAT_MIN_INTERVAL_MS + 30);
   const rSp2 = await say(B, `${main1}啦`);
   check('已猜對者之後的訊息含歌名 → SPOILER_BLOCKED「你已經猜對了，不要說出歌名」', isErr(rSp2, 'SPOILER_BLOCKED', 'SPOILER_GUESSED'), j(rSp2));
+  const blockedB1At = Date.now();
   const rSp3 = await say(B, main1);
-  check('已猜對者再打一次歌名 → 同樣擋下、不再得分', isErr(rSp3, 'SPOILER_BLOCKED', 'SPOILER_GUESSED') && me(A, B.id)?.gameScore === scoreB1, j(rSp3));
-  const nB = A.chat.length;
-  const rFine = await say(B, '這首我會');
-  await until(() => A.chat.length > nB);
-  check('已猜對者不含歌名的訊息照常廣播', rFine?.ok === true && A.chat.at(-1)?.text === '這首我會', j(A.chat.at(-1)));
+  // 2026-11-10 Epic 21（spec/song-guess §5.4 洩題冷卻）：被擋後 SPOILER_COOLDOWN_MS 內一律 RATE_LIMITED
+  check('洩題冷卻：已猜對者被擋後立刻再打歌名 → RATE_LIMITED、不再得分', isErr(rSp3, 'RATE_LIMITED', 'SPOILER_COOLDOWN') && me(A, B.id)?.gameScore === scoreB1, j(rSp3));
+  const rCool = await say(B, '這首我會');
+  check('洩題冷卻：冷卻中不含歌名的訊息也 RATE_LIMITED、不廣播', isErr(rCool, 'RATE_LIMITED', 'SPOILER_COOLDOWN') && !A.chat.some((m) => m.text === '這首我會'), j(rCool));
 
   // A（出題者）等歌開始播之後才猜，打完整歌名（含副標）→ 依已用時間計分
   await until(() => Date.now() >= s1.startedAt + 700, 4000);
@@ -304,6 +309,11 @@ try {
   check('計分式：100 − floor(50 × (now − startedAt) / durationMs)（以 correct 訊息的 at 驗算，容許取樣落差），且 < 100', cA1 !== undefined && scoreOk(scoreA1, cA1.at, s1) && scoreA1 < SCORE_MAX && scoreA1 >= SCORE_MIN, j([scoreA1, cA1?.at, s1]));
   credit(A.id, scoreA1, cA1.at);
   check('全員猜對後歌照播，不提早結束（仍 playing）', lastRound(B)?.phase === 'playing' && Date.now() < s1.endsAt, j(lastRound(B)));
+  await sleep(CHAT_MIN_INTERVAL_MS + 30);
+  const nA = B.chat.length;
+  const rFine = await say(A, '這首我會');
+  await until(() => B.chat.length > nA);
+  check('已猜對者不含歌名的訊息照常廣播', rFine?.ok === true && B.chat.at(-1)?.text === '這首我會' && B.chat.at(-1).fromId === A.id, j(B.chat.at(-1)));
 
   // ════════ 7. 第 1 首揭曉 ════════
   await waitSong(B, 'reveal', 1);
@@ -317,6 +327,7 @@ try {
   check('每首揭曉的 system 訊息「第 1 首：《歌名》」', B.chat.some((m) => m.kind === 'system' && m.text === `第 1 首：《${title1}》`), j(B.chat.at(-1)));
   const [vv, vs, vc] = [await call(B.s, 'round:volunteer'), await call(A.s, 'round:setSource', { source: 'artist', artist: '孫燕姿', hot: true }), await call(A.s, 'round:cancel')];
   check('reveal 時 volunteer／setSource／cancel → ROUND_BUSY', isErr(vv, 'ROUND_BUSY') && isErr(vs, 'ROUND_BUSY') && isErr(vc, 'ROUND_BUSY'), j([vv, vs, vc]));
+  await until(() => Date.now() >= blockedB1At + SPOILER_COOLDOWN_MS + 50, SPOILER_COOLDOWN_MS + 500); // B 的洩題冷卻（Epic 21）
   const nV = A.chat.length;
   const rAfter = await say(B, `原來是${main1}`);
   await until(() => A.chat.length > nV);
@@ -370,6 +381,11 @@ try {
   // ════════ 9. 第 3 首沒人猜；第 4 首全形＋空白＋大寫；第 5 首 ════════
   await waitSong(A, 'playing', 3);
   titles.push(trackOf(lastRound(A)).trackName);
+  const main3 = stripSubtitle(titles[2]);
+  const rSp1 = await say(B, `是${main3}嗎`);
+  check('未猜對者訊息含歌名但不完全相同 → SPOILER_BLOCKED「猜歌名請只輸入歌名本身」', isErr(rSp1, 'SPOILER_BLOCKED', 'SPOILER_GUESS'), j(rSp1));
+  const rSp1b = await say(B, main3);
+  check('洩題冷卻（Epic 21）：被擋後立刻送正確歌名 → RATE_LIMITED、不算猜對', isErr(rSp1b, 'RATE_LIMITED', 'SPOILER_COOLDOWN') && (lastRound(A)?.song?.correctIds ?? []).length === 0, j(rSp1b));
   await waitSong(A, 'reveal', 3);
   check('第 3 首沒人猜對：直接揭曉、scores []', lastRound(A).reveal?.index === 3 && lastRound(A).reveal.title === titles[2] && lastRound(A).reveal.scores.length === 0, j(lastRound(A).reveal));
 

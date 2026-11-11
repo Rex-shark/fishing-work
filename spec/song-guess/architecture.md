@@ -225,6 +225,8 @@ export interface ServerToClientEvents {
 | `CHAT_HISTORY` | 100 | 快照帶的聊天則數 |
 | `CHAT_MIN_INTERVAL_MS` | 300 | 每人聊天最短間隔 |
 | `RECONNECT_GRACE_SECONDS` | 15 | 斷線寬限 |
+| `JOIN_MIN_INTERVAL_MS` | 1000 | 已綁定玩家的 socket 重複 `player:join` 的最短間隔（Epic 21） |
+| `SPOILER_COOLDOWN_MS` | 3000 | `chat:send` 被 `SPOILER_BLOCKED` 後的冷卻（Epic 21） |
 | `SCORE_MAX` | 100 | 單首滿分 |
 | `SCORE_MIN` | 50 | 單首最低得分（試聽最後一刻猜對） |
 
@@ -277,6 +279,14 @@ export interface ServerToClientEvents {
 | `SPOILER_BLOCKED` | 已猜對者：「你已經猜對了，不要說出歌名」；未猜對者訊息含歌名但不完全相同：「猜歌名請只輸入歌名本身」 |
 | 其餘 | 同繪圖比賽 §5.4 |
 
+### 5.4 強化（Epic 21，2026-11-10；與前文牴觸處以本節為準）
+
+共用規則（不可見字元、重複 join 節流、客戶端自動重加入）見平台 spec `../architecture.md` §9.1。猜歌專屬：
+
+- **洩題冷卻**：`chat:send` 被 `SPOILER_BLOCKED`（已猜對者或未猜對者皆然）→ 更新 `lastChatAt`，且 `SPOILER_COOLDOWN_MS` 內該玩家的 `chat:send` 一律 `RATE_LIMITED`（含正確歌名）。原因：被擋等於告知「這串字含歌名」，候選歌名有限（歌手熱門 30 首）可二分探測。
+- **歌手搜尋 0 筆不寫快取**（§6 補充）：原本 0 筆也快取 10 分鐘，漏打空格的寫法會讓正確寫法也 `ARTIST_NOT_FOUND`（兩者快取鍵相同）。
+- 歌手名驗證與 `artistKey`、`normalizeTitle`／`normalizeFull` 套用不可見字元規則。
+
 ## 6. iTunes 客戶端與假 iTunes
 
 - `itunes.ts`：`search(artist, { url, country, timeoutMs, fetch })` → 組 `${ITUNES_URL}/search?term=…&attribute=artistTerm&country=…&media=music&entity=song&limit=200`，`AbortSignal.timeout`，非 2xx 或 JSON 解析失敗拋 `SEARCH_FAILED`；結果快取 `ITUNES_CACHE_MS`（鍵＝NFKC 小寫去空白的歌手名）。
@@ -313,6 +323,7 @@ export interface ServerToClientEvents {
 
 | 日期 | 內容 |
 |------|------|
+| 2026-11-10 | **Epic 21 強化**：常數 `JOIN_MIN_INTERVAL_MS`／`SPOILER_COOLDOWN_MS`；新增 §5.4（洩題冷卻、歌手 0 筆不快取、不可見字元）；契約不變 | 全專案 code review（2026-11-10）#2、#4、#7（`plan/hardening.md`） |
 | 2026-10-20 | **Epic 19 動漫熱門**：§4 `SongSource` 加 `'anime-hot'`、payload、`SOURCE_TITLE['anime-hot']`、常數 `ANIME_TERMS`／`ANIME_HOT_POOL` 60；§3 關鍵字聯集探測；§5 第四分支；§5.3 `CHART_FAILED` 文案改通用；§6 `animePool`／`isSoundtrackOrCover`／`pickAnime`、假 iTunes 三關鍵字與 `MOCK_ITUNES_FAIL_TERM`；§7 四選一；§8 `song-guess-anime.mjs`；§9 作品名不做 | Rex 2026-10-20「猜歌想做動漫主題」→ 海圖探測：曲風榜偏門、作品名命中差，關鍵字聯集最佳；Rex「好開始」（`plan/song-guess-anime.md`） |
 | 2026-10-16 | **Epic 18 題庫來源**：§4 `round:setArtist` → `round:setSource`（payload `SongSourcePayload`：歌手＋`hot`／台灣熱門／西洋熱門，ack `{ topic }`）、`RoundPublic` 的 `artistDisplay`／`lastArtist` → `topic`／`lastTopic`，新增 `source`、`artistHot`、`lastSource`；`SongPublic.artist`；錯誤碼 `SOURCE_INVALID`、`CHART_FAILED`；常數 `HOT_POOL` 30、`CHART_SIZE` 100、`SOURCE_TITLE`；§3 排行榜 RSS ＋ lookup、`ITUNES_RSS_URL`；§5 choosing 三分支；§6 `chart`／`pickChart`、假 iTunes 擴充；§7 對話框與顯示；§8 `song-guess-sources.mjs`；§9 年代改寫 | Rex 2026-10-16：歌手搜尋加「熱門」預設勾、台灣熱門直接抓當日、問西洋熱門；海圖實測 Search 順序即熱門度、RSS 無 previewUrl 需 lookup、美國榜在台灣商店 25/25 有試聽（`plan/song-guess-sources.md`） |
 | 2026-10-12 | Phase 1–3 驗收通過（acceptance-reviewer）：§8 補 `song-guess-rules.mjs`；design §2 idle 列改「灰化不可按」。實測：起播位置誤差 60～84 ms；真 iTunes 兩局（孫燕姿、Jay Chou→周杰倫）；Cmd+A 為測試工具限制非產品問題 |

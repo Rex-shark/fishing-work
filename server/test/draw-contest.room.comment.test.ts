@@ -11,6 +11,7 @@ import {
   type RoundPublic,
 } from '@fishing-work/shared/draw-contest';
 import { Room, type EmitEffect, type Effect, type RoomCommentFailureInfo, type RoomOptions } from '../src/games/draw-contest/room';
+import { UpstreamHttpError } from '../src/games/draw-contest/judge/httpError';
 import { FakeClock } from './helpers/fakeClock';
 import { FnJudge, ManualCommentator, ManualJudge, flush, makePng } from './helpers/drawContest';
 
@@ -1120,6 +1121,59 @@ describe('§5 評語：稱讚版失敗或被跳過 → 退回批評版（Epic 15
 });
 
 // ─── 丟棄 ─────────────────────────────────────────────────────────
+
+describe('§5.5 評語輸入被拒（Epic 21：4xx 只讓該張沒有評語、不計入連續失敗）', () => {
+  it('批評版 400 → 該張 null、不計；之後一般失敗一次仍是單次；第一名稱讚版 413 → 退回批評版，commentMode 始終 ai', async () => {
+    toDrawing(3);
+    submitOk('s1', 1);
+    await judgeCall(0, 90);
+    await commentCall(0, '批評 A');
+    submitOk('s2', 2);
+    await judgeCall(1, 60);
+    await commentFail(1, new UpstreamHttpError(400, 'chat HTTP 400：bad image'));
+    submitOk('s3', 3);
+    await judgeCall(2, 50); // 揭曉；C 的批評版產生中，A 的稱讚版排在後面
+    expect(round()).toMatchObject({ phase: 'ended', commentMode: 'ai' });
+    expect(commentsOf()).toEqual([[A, null, true], [B, null, false], [C, null, true]]);
+    await commentFail(2, new Error('連不上 Ollama')); // 連續第 1 次（B 的 400 不算）
+    expect(round().commentMode).toBe('ai');
+    asyncEffects = [];
+    await commentFail(3, new UpstreamHttpError(413, 'chat HTTP 413')); // 稱讚版被拒：不算第 2 次
+    expect(commentUpdates(allAsync())).toEqual([{ roundNo: 1, playerId: A, comment: '批評 A' }]);
+    expect(rounds(allAsync())).toEqual([]);
+    expect(round().commentMode).toBe('ai');
+    expect(commentsOf()).toEqual([[A, '批評 A', false], [B, null, false], [C, null, false]]);
+    expect(failures.map((f) => [f.playerId, f.reason, f.consecutive, f.fallback])).toEqual([
+      [B, 'rejected', 0, undefined],
+      [C, 'error', 1, undefined],
+      [A, 'rejected', 1, 'criticism'],
+    ]);
+    expect(skips).toEqual([]);
+  });
+});
+
+describe('§5.5 評語 404（模型不存在）＝上游不可用（決策 11）：計入連續失敗', () => {
+  it('judging 中連續兩張 404：第二張即連續第二次 → 跳過剩餘、commentMode 改 off', async () => {
+    toDrawing(3);
+    submitOk('s1', 1);
+    submitOk('s2', 2);
+    submitOk('s3', 3);
+    expect(round().phase).toBe('judging');
+    await judgeCall(0, 30);
+    await judgeCall(1, 40);
+    await commentFail(0, new UpstreamHttpError(404, 'chat HTTP 404：model not found'));
+    expect(round().commentMode).toBe('ai');
+    await commentFail(1, new UpstreamHttpError(404, 'chat HTTP 404：model not found'));
+    expect(round().commentMode).toBe('off');
+    expect(failures.map((f) => [f.playerId, f.reason, f.consecutive])).toEqual([
+      [A, 'error', 1],
+      [B, 'error', 2],
+    ]);
+    await judgeCall(2, 50); // 第三張評完時評語器本回合已關：直接沒有評語、不呼叫模型
+    expect(skips).toEqual([C]);
+    expect(commentator.calls).toHaveLength(2);
+  });
+});
 
 describe('§5 評語：丟棄只發生在 drawing／judging 與換回合', () => {
   it('ended 之後離開的人：評語工作照常跑完並發 contest:comment（不留下永遠 pending 的卡片）', async () => {

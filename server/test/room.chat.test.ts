@@ -5,7 +5,9 @@ import {
   CHAT_MAX,
   CHAT_MIN_INTERVAL_MS,
   ENDED_SECONDS,
+  JOIN_MIN_INTERVAL_MS,
   ROUND_SECONDS,
+  SPOILER_COOLDOWN_MS,
   type ChatMessage,
   type PlayerPublic,
   type RoundPublic,
@@ -19,6 +21,8 @@ const ENDED_MS = ENDED_SECONDS * 1000;
 /** 猜對者得分（spec §5）：100 − floor(50 × 已用 ms / ROUND_MS)；由常數推導，不寫死 */
 const guessScore = (elapsedMs: number) => 100 - Math.floor((50 * elapsedMs) / ROUND_MS);
 const GAP = CHAT_MIN_INTERVAL_MS;
+/** 洩題冷卻（Epic 21，§9.1）：被 SPOILER_BLOCKED 後這段時間內 chat:send 一律 RATE_LIMITED */
+const COOL = SPOILER_COOLDOWN_MS;
 
 let clock: FakeClock;
 let asyncEffects: Effect[][];
@@ -153,6 +157,8 @@ describe('§5 chat 前置條件：驗證與間隔', () => {
     ok(room.chat('s1', '一'));
     clock.advance(GAP - 1);
     blocked(room.chat('s1', '二'), 'RATE_LIMITED', CHAT_ERROR_MESSAGES.RATE_LIMITED);
+    // 一般間隔的文案不變（Epic 21 只換洩題冷卻的文案）
+    expect(CHAT_ERROR_MESSAGES.RATE_LIMITED).toBe('發言太快了，請稍候再送（間隔至少 0.3 秒）');
     clock.advance(1);
     ok(room.chat('s1', '三'));
     expect(bufferTexts().slice(-2)).toEqual(['一', '三']);
@@ -167,21 +173,65 @@ describe('§5 chat 前置條件：驗證與間隔', () => {
     ok(room.chat('s1', '三'));
   });
 
-  it('被擋的洩題訊息（SPOILER_BLOCKED）與不合法訊息也不更新時間戳', () => {
+  it('不合法訊息不更新時間戳（MESSAGE_INVALID）', () => {
     toDrawing(3);
     ok(room.chat('s1', '畫好了'));
     clock.advance(GAP);
-    expect(room.chat('s1', '是蘋果').ack).toMatchObject({ error: 'SPOILER_BLOCKED' });
     expect(room.chat('s1', '\n').ack).toMatchObject({ error: 'MESSAGE_INVALID' });
-    ok(room.chat('s1', '快猜')); // 同一時刻，若被擋的訊息有更新時間戳就會 RATE_LIMITED
+    ok(room.chat('s1', '快猜')); // 同一時刻，若不合法的訊息有更新時間戳就會 RATE_LIMITED
+  });
+
+  it(`洩題冷卻（Epic 21，§9.1；code review #4）：SPOILER_BLOCKED 後 ${SPOILER_COOLDOWN_MS} ms 內一律 RATE_LIMITED（含正確答案），滿了才恢復`, () => {
+    toDrawing(3);
+    expect(room.chat('s2', '是蘋果嗎').ack).toMatchObject({ error: 'SPOILER_BLOCKED' });
+    // 原本 7 ms 內可連送 20 則探測；現在第二則起就被限速
+    for (let i = 0; i < 20; i++) expect(room.chat('s2', `蘋果${i}`).ack).toMatchObject({ error: 'RATE_LIMITED' });
+    clock.advance(GAP);
+    // 冷卻期間用專用文案（決策 11；秒數由常數組字）
+    expect(room.chat('s2', '香蕉').ack).toMatchObject({ error: 'RATE_LIMITED', message: CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER });
+    expect(CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER).toBe(`剛才的訊息含答案被擋下，請等 ${COOL / 1000} 秒再發言`);
+    expect(CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER).toBe('剛才的訊息含答案被擋下，請等 3 秒再發言');
+    clock.advance(COOL - GAP - 1);
+    expect(room.chat('s2', '蘋果').ack).toMatchObject({ error: 'RATE_LIMITED' }); // 正確答案也一樣
+    expect(player(B).hasGuessed).toBe(false);
+    clock.advance(1);
+    ok(room.chat('s2', '蘋果'));
+    expect(player(B).hasGuessed).toBe(true);
+  });
+
+  it('洩題冷卻：畫師、已猜對者被擋也一樣；被擋的訊息也更新間隔時間戳；只影響該玩家', () => {
+    toDrawing(3);
+    expect(room.chat('s1', '提示：蘋果').ack).toMatchObject({ error: 'SPOILER_BLOCKED' });
+    expect(room.chat('s1', '畫好了').ack).toMatchObject({ error: 'RATE_LIMITED', message: CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER });
+    ok(room.chat('s3', '香蕉')); // 別的玩家不受影響
+    clock.advance(COOL);
+    ok(room.chat('s1', '畫好了'));
+    ok(room.chat('s2', '蘋果'));
+    clock.advance(GAP);
+    expect(room.chat('s2', '答案是蘋果喔').ack).toMatchObject({ error: 'SPOILER_BLOCKED' });
+    expect(room.chat('s2', '好難喔').ack).toMatchObject({ error: 'RATE_LIMITED' });
+  });
+
+  it('洩題防護不被不可見字元繞過（Epic 21，§9.1；code review #2）：ZWJ 夾答案仍被擋、零寬空白直接 MESSAGE_INVALID', () => {
+    toDrawing(3);
+    expect(room.chat('s1', '蘋\u200D果').ack).toMatchObject({ error: 'SPOILER_BLOCKED' });
+    clock.advance(COOL);
+    expect(room.chat('s1', '蘋\u200B果').ack).toMatchObject({ error: 'MESSAGE_INVALID', message: CHAT_ERROR_MESSAGES.MESSAGE_INVALID });
+    expect(room.chat('s1', '\u200D\uFE0F').ack).toMatchObject({ error: 'MESSAGE_INVALID' });
+    ok(room.chat('s1', '❤️ 加油 👨‍👩‍👧'));
+    clock.advance(GAP);
+    // 猜題者打「蘋＋ZWJ＋果」也算猜對（比對先移除不可見字元）
+    ok(room.chat('s2', '蘋\u200D果'));
+    expect(player(B).hasGuessed).toBe(true);
   });
 
   it('間隔以玩家計算：不同玩家同一時刻各自可送；接管（換 socket）後仍沿用同一玩家的時間戳', () => {
     joinPlayers(2);
-    ok(room.chat('s1', 'A1'));
-    ok(room.chat('s2', 'B1'));
+    clock.advance(JOIN_MIN_INTERVAL_MS); // 已綁定 socket 的重複 join 有節流（Epic 21）
     const token = room.join('s1', 'Alice').ack;
     if (!token.ok) throw new Error('join');
+    ok(room.chat('s1', 'A1'));
+    ok(room.chat('s2', 'B1'));
     expect(room.join('s1b', 'Alice', token.data.token).ack.ok).toBe(true);
     expect(room.chat('s1b', 'A2').ack).toMatchObject({ error: 'RATE_LIMITED' });
     clock.advance(GAP);
@@ -252,6 +302,7 @@ describe('§5 聊天訊息判定：未猜對的猜題者', () => {
     const before = bufferTexts();
     blocked(room.chat('s2', '是蘋果嗎'), 'SPOILER_BLOCKED', '猜答案請只輸入答案本身');
     expect(CHAT_ERROR_MESSAGES.SPOILER_BLOCKED_GUESS).toBe('猜答案請只輸入答案本身');
+    clock.advance(COOL);
     blocked(room.chat('s2', '不是蘋 果'), 'SPOILER_BLOCKED', '猜答案請只輸入答案本身'); // 正規化後含題目
     expect(bufferTexts()).toEqual(before);
     expect(player(B)).toMatchObject({ hasGuessed: false, score: 0 });
@@ -279,7 +330,7 @@ describe('§5 聊天訊息判定：畫師或已猜對者', () => {
     toDrawing(3);
     const before = bufferTexts();
     blocked(room.chat('s1', '提示：蘋果'), 'SPOILER_BLOCKED', CHAT_ERROR_MESSAGES.SPOILER_BLOCKED);
-    clock.advance(GAP);
+    clock.advance(COOL);
     blocked(room.chat('s1', '蘋果'), 'SPOILER_BLOCKED', CHAT_ERROR_MESSAGES.SPOILER_BLOCKED); // 畫師打題目本身也不算猜對
     expect(bufferTexts()).toEqual(before);
     expect(player(A)).toMatchObject({ hasGuessed: false, score: 0 });
@@ -298,6 +349,7 @@ describe('§5 聊天訊息判定：畫師或已猜對者', () => {
     const score = player(B).score;
     clock.advance(GAP);
     blocked(room.chat('s2', '蘋果'), 'SPOILER_BLOCKED', CHAT_ERROR_MESSAGES.SPOILER_BLOCKED);
+    clock.advance(COOL);
     blocked(room.chat('s2', '答案是蘋果喔'), 'SPOILER_BLOCKED', CHAT_ERROR_MESSAGES.SPOILER_BLOCKED);
     expect(player(B).score).toBe(score);
     expect(room.projectRound(B).correctIds).toEqual([B]);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CHAT_HISTORY,
+  JOIN_MIN_INTERVAL_MS,
   MAX_PLAYERS,
   NICKNAME_INVALID_MESSAGE,
   NICKNAME_MAX,
@@ -10,7 +11,7 @@ import {
   type JoinResult,
   type PlayerPublic,
 } from '@fishing-work/shared';
-import { GRACE_MS, ROUND_ERROR_MESSAGES, Room, type EmitEffect, type Effect } from '../src/games/draw-guess/room';
+import { GRACE_MS, JOIN_RATE_LIMITED_MESSAGE, ROUND_ERROR_MESSAGES, Room, type EmitEffect, type Effect } from '../src/games/draw-guess/room';
 import { FakeClock } from './helpers/fakeClock';
 
 // ─── 測試工具 ─────────────────────────────────────────────────────
@@ -116,6 +117,12 @@ describe('join（新玩家）', () => {
     ['中間含 tab', 'Al\tice'],
     ['含 BEL 控制字元', 'Al\u0007ice'],
     [`${NICKNAME_MAX + 1} 個 emoji`, '👍'.repeat(NICKNAME_MAX + 1)],
+    // Epic 21（§9.1；code review #2）：不可見字元
+    ['夾零寬空白（冒充）', 'Al\u200Bice'],
+    ['只有隱形填充 U+3164（空白暱稱）', '\u3164'],
+    ['只有點字空白 U+2800', '\u2800'],
+    ['只有 ZWJ', '\u200D'],
+    ['含 VS15', 'Rex\uFE0E'],
   ])('不合法（%s）→ NICKNAME_INVALID，無效果、不建立玩家', (_label, nickname) => {
     const r = room.join('s1', nickname);
     expect(r.ack).toEqual({ ok: false, error: 'NICKNAME_INVALID', message: NICKNAME_INVALID_MESSAGE });
@@ -160,13 +167,23 @@ describe('join（新玩家）', () => {
     const full = room.join('late', 'late');
     expect(full).toEqual({ ack: { ok: false, error: 'ROOM_FULL', message: ROUND_ERROR_MESSAGES.ROOM_FULL }, effects: [] });
     expect(room.playerList()).toHaveLength(MAX_PLAYERS);
-    // 滿房時：寬限期中接管、已加入 socket 重複 join 都照常
+    // 滿房時：寬限期中接管、已加入 socket 重複 join 都照常（重複 join 需距上次受理 ≥ JOIN_MIN_INTERVAL_MS，Epic 21）
     expect(room.join('s0b', 'x', tokens[0]).ack.ok).toBe(true);
+    clock.advance(JOIN_MIN_INTERVAL_MS);
     expect(room.join('s1', 'x').ack.ok).toBe(true);
     // 帶著對不到的 token 也視為新玩家 → 仍受上限
     expect(room.join('late', 'late', 'bogus').ack).toMatchObject({ ok: false, error: 'ROOM_FULL' });
     room.leave(room.playerIdOf('s2') as string);
     expect(room.join('late', 'late').ack.ok).toBe(true);
+  });
+
+  it('不可見字元（Epic 21）：同暱稱加 VS16 → NICKNAME_TAKEN；emoji 暱稱 👨‍👩‍👧、❤️ 合法且原樣保存', () => {
+    joinOk('s1', 'Rex');
+    expect(room.join('s2', 'Rex\uFE0F').ack).toEqual({ ok: false, error: 'NICKNAME_TAKEN', message: NICKNAME_TAKEN_MESSAGE });
+    expect(room.join('s2', 'R\u200Dex').ack).toMatchObject({ ok: false, error: 'NICKNAME_TAKEN' });
+    joinOk('s2', '👨‍👩‍👧');
+    joinOk('s3', '❤️');
+    expect(nicknames()).toEqual(['Rex', '👨‍👩‍👧', '❤️']);
   });
 
   it('對不到的 token 視為新玩家（照暱稱規則）', () => {
@@ -183,6 +200,7 @@ describe('join（同一 socket 重複）', () => {
   it('不論暱稱或 token，回同一 token 與目前快照，不改名、不廣播', () => {
     const first = joinOk('s1', 'Alice');
     joinOk('s2', 'Bob');
+    clock.advance(JOIN_MIN_INTERVAL_MS);
     const again = joinOk('s1', 'Zed', 'whatever');
     expect(again.effects).toEqual([]);
     expect(again.data.token).toBe(first.data.token);
@@ -193,7 +211,33 @@ describe('join（同一 socket 重複）', () => {
 
   it('重複 join 時暱稱不合法也回成功（忽略 payload）', () => {
     joinOk('s1', 'Alice');
+    clock.advance(JOIN_MIN_INTERVAL_MS);
     expect(room.join('s1', '').ack.ok).toBe(true);
+  });
+
+  it(`節流（Epic 21，§9.1）：距上次受理 < ${JOIN_MIN_INTERVAL_MS} ms → RATE_LIMITED；被拒不更新時間；滿 1 秒後再受理`, () => {
+    joinOk('s1', 'Alice');
+    clock.advance(JOIN_MIN_INTERVAL_MS - 1);
+    const limited = room.join('s1', 'Alice');
+    expect(limited).toEqual({ ack: { ok: false, error: 'RATE_LIMITED', message: JOIN_RATE_LIMITED_MESSAGE }, effects: [] });
+    expect(JOIN_RATE_LIMITED_MESSAGE).toBe('操作太頻繁，請稍候再試');
+    clock.advance(1); // 從首次加入起算剛好 1 秒（被拒的那次不重設）
+    expect(room.join('s1', 'Alice').ack.ok).toBe(true);
+    // 受理後重新計時
+    expect(room.join('s1', 'Alice').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
+  });
+
+  it('節流只限已綁定的 socket：未綁定 socket 打錯暱稱可立刻重試；接管也從接管時起算', () => {
+    joinOk('s1', 'Alice');
+    expect(room.join('s2', '').ack).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });
+    expect(room.join('s2', 'alice').ack).toMatchObject({ ok: false, error: 'NICKNAME_TAKEN' });
+    expect(room.join('s2', 'Bob').ack.ok).toBe(true);
+    const token = room.join('s3', 'Carol').ack;
+    if (!token.ok) throw new Error('join 失敗');
+    // 新 socket 帶 token 接管：不受節流（立刻）
+    expect(room.join('s3b', 'x', token.data.token).ack.ok).toBe(true);
+    // 接管後同一 socket 立刻重送 → RATE_LIMITED
+    expect(room.join('s3b', 'x').ack).toMatchObject({ ok: false, error: 'RATE_LIMITED' });
   });
 });
 

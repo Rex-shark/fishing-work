@@ -4,6 +4,7 @@
 //   TEST_PORT=3178 node --input-type=module < user/protocol/draw-guess-phase1.mjs
 // 會等真實的 15 秒寬限期，總時長約 20 秒；全部 PASS 時 exit 0。
 // 舵手（Helm）2026-09-24 Phase 1 驗收用；Phase 2 起可擴充回合／畫布／聊天案例，或改寫成 server/test/e2e 的 Vitest。
+// 2026-11-10 Epic 21（spec §9.1 重複 join 節流）：已綁定 socket 重複 join 前先等滿 JOIN_MIN_INTERVAL_MS，並驗太快 → RATE_LIMITED。
 import { io } from 'socket.io-client';
 const PORT = process.env.TEST_PORT ?? '3178';
 const URL = `http://127.0.0.1:${PORT}/draw-guess`;
@@ -24,6 +25,10 @@ check('player id 不是 socket.id', aliceId !== A.id);
 check('暱稱去頭尾空白', me?.nickname === 'Alice', me?.nickname);
 check('connected=true 且欄位齊全', me?.connected === true && typeof me.score === 'number' && me.isDrawer === false && me.hasGuessed === false && typeof me.joinedAt === 'number');
 check('快照含自己的「加入」system 訊息', rA.data.snapshot.chat.some((m) => m.kind === 'system' && m.text.includes('Alice')));
+const JOIN_MIN_INTERVAL_MS = 1000; // spec §4 常數表（Epic 21）
+const rA2fast = await join(A, { nickname: 'Other' });
+check('同 socket 1 秒內重複 join → RATE_LIMITED「操作太頻繁，請稍候再試」（§9.1）', rA2fast.ok === false && rA2fast.error === 'RATE_LIMITED' && rA2fast.message === '操作太頻繁，請稍候再試', JSON.stringify(rA2fast));
+await sleep(JOIN_MIN_INTERVAL_MS + 50);
 const rA2 = await join(A, { nickname: 'Other' });
 check('同 socket 重複 join 冪等（同 token、不改名、不重建）', rA2.ok && rA2.data.token === tokenA && rA2.data.snapshot.players.length === 1 && rA2.data.snapshot.players[0].nickname === 'Alice');
 
@@ -86,7 +91,7 @@ A2.emit('player:join', { nickname: 123, token: 'x'.repeat(100) }, (r) => check('
 const F = connect(); await once(F, 'connect');
 F.emit('player:join', { nickname: 123, token: 'x'.repeat(100) }, (r) => check('新 socket 暱稱非字串、token 過長 → NICKNAME_INVALID', r?.ok === false && r.error === 'NICKNAME_INVALID', JSON.stringify(r)));
 A2.emit('player:join', { nickname: 'NoAck' });
-await sleep(400);
+await sleep(JOIN_MIN_INTERVAL_MS + 50); // D 的重複 join 受節流（§9.1），等滿再送
 check('伺服器仍存活', A2.connected && (await join(D, { nickname: 'again' })).ok === true);
 for (const s of [A, A2, B, C, C2, D, F]) s.disconnect();
 console.log(R.map((r) => r.join('  ')).join('\n'));

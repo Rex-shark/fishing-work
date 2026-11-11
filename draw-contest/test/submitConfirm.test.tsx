@@ -163,18 +163,21 @@ describe('接線：「完成」開確認框、自動交卷不經確認框', () =
     expect(src).not.toMatch(/submitMyCanvas/)
   })
 
-  it('autoSubmit 不 import 確認框，預設直接呼叫 submitMyCanvas', () => {
+  it('autoSubmit 不 import 確認框，預設直接匯出並送出（決策 12：匯出與送出分開）', () => {
     const src = sourceOf('/autoSubmit.ts')
     expect(src).not.toMatch(/submitConfirm/)
-    expect(src).toContain('submit: () => submitMyCanvas()')
+    expect(src).toContain('exportPng: () => exportMyCanvas()')
+    expect(src).toContain('submit: (png) => submitPreparedPng(png)')
   })
 
-  it('時間到自動交卷：直接送出、確認框不會打開', () => {
+  it('時間到自動交卷：直接送出、確認框不會打開', async () => {
     const view: AutoSubmitView = {
       me: 'a',
       round: { roundNo: 1, phase: 'drawing', endsAt: 1000, participantIds: ['a'] },
       submitted: false,
       submitting: false,
+      connection: 'connected',
+      autoJoining: false,
     }
     const submit = vi.fn(async () => OK)
     const deps: AutoSubmitDeps = {
@@ -183,10 +186,11 @@ describe('接線：「完成」開確認框、自動交卷不經確認框', () =
       now: () => 1000,
       setTimer: () => null,
       clearTimer: () => {},
+      exportPng: async () => new ArrayBuffer(8),
       submit,
     }
     const stop = startAutoSubmit(deps)
-    expect(submit).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
     expect(useSubmitConfirmStore.getState().openRound).toBeNull()
     stop()
   })

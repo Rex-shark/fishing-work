@@ -221,6 +221,7 @@ export interface ServerToClientEvents {
 | `CHAT_HISTORY` | 100 | 快照帶的聊天則數 |
 | `CHAT_MIN_INTERVAL_MS` | 300 | 聊天最短間隔 |
 | `RECONNECT_GRACE_SECONDS` | 15 | 斷線寬限 |
+| `JOIN_MIN_INTERVAL_MS` | 1000 | 已綁定玩家的 socket 重複 `player:join` 的最短間隔（Epic 21） |
 | `CANVAS_LOGICAL` | `{ width: 1280, height: 720 }` | 邏輯畫布；交卷 PNG 即此尺寸 |
 | `CANVAS_BACKGROUND` | `'#1E1E1E'` | 畫布預設底色（與我畫你猜一致） |
 | `MAX_SUBMISSION_BYTES` | 2_097_152 | 交卷 PNG 上限（2 MiB；線條畫通常 < 100 KB）；Socket.IO `maxHttpBufferSize` 以此 + 64 KiB |
@@ -251,7 +252,7 @@ idle ──volunteer（在線≥2）──▶ choosing ──setTopic──▶ d
 - **計數**：參賽者離開時 `submittedCount`、`judgedCount` 依當下 `participantIds` 重算（已評分者離開兩數都減，n/m 不會卡住）。`ended` 之後離開的人，`results`、`lastTopic` 與畫廊都保留（已揭曉的紀錄）。
 - **欄位生命週期**：`participating`／`submitted` 在 `idle`／`choosing` 一律 false；`isSetter` 在 `ended` 仍為 true、`setterId` 保留到下一次 `volunteer`；`topic` 在 `drawing` 起有值、下一回合 `choosing` 時回 null，`lastTopic` 與 `results` 同進退（`ended` 時設為本回合題目、下一回合 `drawing` 開始時清空）。
 - **system 訊息**：加入／離開、「X 取消出題」「X 出題逾時」「出題者 X 離開」、回合開始（含題目；Epic 20 mimic 回合為「X 出題「{topic}」（像不像比賽：照著參考圖畫）」）、揭曉（第一名；沒人交卷時「揭曉：沒有人交卷」）。
-- **重複 join**：同一 socket 再送 `player:join` 時照「results 非 null 則補送畫廊」的字面再補送一次（無害，不特別擋）。
+- **重複 join**（Epic 21 改）：已綁定玩家的 socket 再送 `player:join` 受 `JOIN_MIN_INTERVAL_MS` 節流（`RATE_LIMITED`），受理時只回快照、**不重送 `contest:gallery`／`contest:reference`**（原「再補送一次」會被用來灌爆記憶體）。
 - **交卷檢查順序**：phase（含寬限）→ `NOT_DRAWING`；參賽者 → `NOT_PARTICIPANT`；已交卷 → `ALREADY_SUBMITTED`；PNG → `SUBMISSION_INVALID`。
 - **廣播**：每次狀態轉移各廣播一則 `round:update`，不合併（全員交卷且佇列已清空時，`judging` 與 `ended` 各一則）。題目去頭尾空白後存。`contest:gallery` 廣播給所有在線者（含旁觀者），每位交卷者各一則。
 - **人數不足**：drawing 中參賽者剩 1 人以下不中止（單人也能評分）。`participantIds` 變空（全員寬限期滿離開）時「全員交卷」空真成立：直接進 `judging` 再到 `ended`，`results = []`。
@@ -293,6 +294,14 @@ idle ──volunteer（在線≥2）──▶ choosing ──setTopic──▶ d
 | `SUBMISSION_INVALID` | 圖片格式不正確或太大 |
 | `REFERENCE_INVALID` | 參考圖格式不正確或太大（請選圖片檔） |
 | 其餘 | 與我畫你猜同文案 |
+
+### 5.5 強化（Epic 21，2026-11-10；與前文牴觸處以本節為準）
+
+共用規則（不可見字元、重複 join 節流、客戶端自動重加入）見平台 spec `../architecture.md` §9.1。繪圖比賽專屬：
+
+- **交卷 PNG 結構檢查**（§5.1 補充；不解碼、不算 CRC）：簽章後逐 chunk 走訪且長度不得越界；第一個 chunk 為 `IHDR`（長度 13、寬高＝`CANVAS_LOGICAL`）；至少一個 `IDAT`；最後一個為長度 0 的 `IEND` 且檔案恰好結束。不合 → `SUBMISSION_INVALID`。參考圖 JPEG（§5.1b）另須以 `FF D9` 結尾。
+- **評分器錯誤分類**（§6 補充）：**輸入被拒**＝Ollama 回 HTTP **400／413／415／422**（只跟這張輸入有關）→ 只有該張退回 random、log `judge.rejected`，不降級整回合、`judgeMode` 不變；**上游不可用**＝其餘一切（連線失敗、逾時、5xx、**404 模型不存在、401／403**、408／429、回應解析失敗；逾時之後才回來的 4xx 仍算逾時）→ 照原規則整回合降級（2026-11-10 水手長指出 404 若算被拒會每張都退 random 卻顯示 `judgeMode 'ai'`，改為白名單）。評語器（§6.1）同理：上述四個狀態碼只讓該張 `comment: null`、`comment.failed` log 帶 `reason: 'rejected'`、不計入連續失敗次數。
+- **自動交卷重試**（§7 補充）：送出成功（ack ok 或 `ALREADY_SUBMITTED`）才記該回合已自動交卷；失敗不記，之後每次狀態變動與每 1 秒重新判斷，直到成功、收到 `NOT_DRAWING`／`NOT_PARTICIPANT`／`SUBMISSION_INVALID`，或離開可交卷期間。本機期限只限制重試，`judging` 時第一次補交照舊立即送；未連線或自動重新加入中不送，等狀態變動再判斷。**匯出與送出分開**（驗收 2026-11-11）：到時（`endsAt`）若未交卷，不論連線與否都**先把 PNG 匯出並留在記憶體**（每回合一次），之後的重試直接送這份，不再重新匯出；原因：實測重連後才 `canvas.toBlob` 要 1 秒，加上 socket.io 重連退避 1.5～2.9 秒，網路在 `endsAt` 後 2 秒恢復時兩次試驗一成一敗（+4.46 s 成功、+5.92 s `NOT_DRAWING`）。預先匯出後仍不保證趕上（重連退避不可控），屬已知限制。細節（水手長 2026-11-11）：匯出不看連線狀態、匯出中不重複匯出、完成時已換回合就丟棄、交到或放棄後釋放；匯出失敗視同一次送出失敗（1 秒後且仍在本機期限內才再匯出）；自動交卷的內容是到時那一刻的筆跡；匯出期間不鎖畫布（同手動交卷）。
 
 ## 6. 評分器（`judge/`）
 
@@ -367,6 +376,7 @@ export interface Judge {
 
 | 日期 | 內容 |
 |------|------|
+| 2026-11-10 | **Epic 21 強化**：常數 `JOIN_MIN_INTERVAL_MS`；§5 重複 join 改為節流且不重送二進位；新增 §5.5（PNG 結構檢查與 JPEG 結尾、評分器／評語器錯誤分類、自動交卷重試）；契約不變 | 全專案 code review（2026-11-10）#3、#5、#6（`plan/hardening.md`） |
 | 2026-10-26 | **Epic 20 像不像比賽**：§4 `ContestMode`、`RoundPublic.mode`／`lastMode`、`ReferenceImage`、`contest:reference`、`round:setTopic` payload 加選填 `reference`、`REFERENCE_INVALID`、常數 `MAX_REFERENCE_BYTES`；§5 drawing／ended、§5.1b 參考圖驗證與 join 補送、§5.4 文案；§6 `JudgeInput.reference`、mimic 版 systemone（similarity＋effort，0.9／0.1）、random 種子；§6.1 mimic 評語雙圖文案；§7 `features/reference/` | Rex 2026-10-26 選做「像不像比賽」、評分用 Clef、形式為繪圖比賽的出題模式（`plan/contest-mimic.md`）；海圖真 Clef 雙圖探測可行 |
 | 2026-10-21 | §6.1 評語提示詞：字數規則 40 → **60 字內**、`num_predict` 80 → **120**、user 文案加入**參賽者暱稱**（批評版與稱讚版都加，不另加指示） | Rex 2026-10-21：「改 60 個字」「token 跟著改高」「傳使用者的名稱給模型，不需要多打什麼 prompt，嘗試看看模型會不會利用名稱」（plan/contest-commentary.md Phase 7） |
 | 2026-10-21 | §4 `COMMENT_PERSONA_NAME` 值 `'メスガキ'` → `'ミオ'`（只影響客戶端顯示：卡片前綴、pending、aria-label、說明）；§6.1 提示詞人設寫死 `メスガキ` 不再讀常數；契約不變 | Rex 2026-10-21：不要「メスガキ」這個詞，改成一個日文名字、只做字串替換，選定「ミオ」（plan/contest-commentary.md Phase 6；人格與語氣不變） |

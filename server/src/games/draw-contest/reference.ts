@@ -1,11 +1,13 @@
 // 參考圖驗證（Epic 20 像不像比賽）：spec/draw-contest/architecture.md §5.1b
 // round:setTopic 的 reference：省略或 undefined → topic 模式（現況）；有值須為 ArrayBuffer／Buffer／Uint8Array、
-// 長度 1..MAX_REFERENCE_BYTES、前 3 bytes 為 JPEG magic FF D8 FF；不合法 → REFERENCE_INVALID。
+// 長度 1..MAX_REFERENCE_BYTES、前 3 bytes 為 JPEG magic FF D8 FF、最後 2 bytes 為 EOI FF D9（Epic 21 §5.5）；不合法 → REFERENCE_INVALID。
 // 客戶端已把參考圖正規化成 JPEG（長邊 ≤ 1280、品質 0.9）；server 不解碼，只存 bytes。
 import { MAX_REFERENCE_BYTES } from '@fishing-work/shared/draw-contest';
 
 /** JPEG 檔頭（SOI ＋ 下一個 marker 的 FF） */
 export const JPEG_SIGNATURE = [0xff, 0xd8, 0xff] as const;
+/** JPEG 結尾（EOI marker；Epic 21 §5.5） */
+export const JPEG_EOI = [0xff, 0xd9] as const;
 
 /** reference 的值轉成 bytes：ArrayBuffer 或 Uint8Array（含 Node 端 socket.io 還原的 Buffer）；其他型別 → null */
 function readReferenceBytes(value: unknown): Uint8Array | null {
@@ -14,12 +16,12 @@ function readReferenceBytes(value: unknown): Uint8Array | null {
   return null;
 }
 
-/** JPEG bytes 是否合法（§5.1b 長度、magic） */
+/** JPEG bytes 是否合法（§5.1b 長度、magic；§5.5 結尾 FF D9）。檔頭與結尾不可重疊（至少 5 bytes） */
 export function isValidReferenceJpeg(bytes: Uint8Array): boolean {
   const size = bytes.byteLength;
-  if (size < 1 || size > MAX_REFERENCE_BYTES || size < JPEG_SIGNATURE.length) return false;
+  if (size < 1 || size > MAX_REFERENCE_BYTES || size < JPEG_SIGNATURE.length + JPEG_EOI.length) return false;
   for (let i = 0; i < JPEG_SIGNATURE.length; i++) if (bytes[i] !== JPEG_SIGNATURE[i]) return false;
-  return true;
+  return bytes[size - 2] === JPEG_EOI[0] && bytes[size - 1] === JPEG_EOI[1];
 }
 
 export type ReferenceCheck =

@@ -96,7 +96,8 @@ export function registerDrawContest(nsp: DrawContestNamespace, options: Register
     clock: options.clock,
     durations: options.durations,
     judge: options.judge ?? judgeSetupFromEnv(),
-    onJudgeFallback: (info) => log.warn('draw-contest.judge.fallback', { ...info }),
+    // reason 'rejected'（Ollama 回 400／413／415／422）只有這張退回 random、本回合不降級（§5.5）：另記 judge.rejected
+    onJudgeFallback: (info) => log.warn(info.reason === 'rejected' ? 'draw-contest.judge.rejected' : 'draw-contest.judge.fallback', { ...info }),
     comment: options.comment ?? commentSetupFromEnv(),
     // 評語成功的 log（題目、分數、字數、耗時）由評語器回報：commentary/index.ts 的 draw-contest.comment.done
     // failed：consecutive 為本回合連續失敗次數（達 2 才跳過剩餘，skipped 列出被跳過者）；
@@ -133,7 +134,7 @@ export function registerDrawContest(nsp: DrawContestNamespace, options: Register
         }
         const { nickname, token } = parsed;
         const { ack: result, effects } = room.join(socket.id, nickname, token);
-        // 先 ack 再送效果：中途加入者在 join ack 之後補收畫廊（§4）
+        // 先 ack 再送效果：中途加入者在 join ack 之後補收畫廊（§4）；已綁定 socket 的重複 join 不補送（Epic 21）
         reply(result);
         applyEffects(nsp, room, effects);
         if (result.ok) {

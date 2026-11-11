@@ -1,6 +1,7 @@
 // 交卷（spec/draw-contest/architecture.md §4 contest:submit、§7；plan/draw-contest-mvp.md 決策 6）：
 // 匯出自己的本機畫布為 1280×720 PNG → contest:submit → 成功即鎖定畫布（交卷後不能改）。
 // 手動（工具列「完成」）與自動交卷（autoSubmit）共用；submitting 期間不重複送出。相依可注入，測試不必連線。
+// 自動交卷把匯出與送出分開（決策 12）：exportMyCanvas 到時留存、submitPreparedPng 送留存的那份。
 import type { DrawOp } from '../canvas/ops'
 import { exportPng } from '../canvas/exportPng'
 import { submit, type ActionOutcome } from '../../socket/client'
@@ -34,17 +35,38 @@ const EXPORT_FAILED: ActionOutcome = { ok: false, error: 'EXPORT_FAILED', messag
  * 交卷自己的畫：已交卷或交卷中直接回失敗（不送）；server 回 ALREADY_SUBMITTED 也視同已交卷（逾時後重送的情況）。
  * 失敗時解除 submitting，畫布恢復可畫（時間內可再按「完成」）
  */
-export async function submitMyCanvas(deps: SubmitDeps = defaultDeps): Promise<ActionOutcome> {
+export function submitMyCanvas(deps: SubmitDeps = defaultDeps): Promise<ActionOutcome> {
+  return submitWith(deps, null)
+}
+
+/**
+ * 送出已匯出的 PNG（自動交卷用；plan/hardening.md 決策 12）：到時先匯出留存，之後的送出與重試都送這份、不再重新匯出。
+ * 其餘流程（已交卷／交卷中不送、submitting 包住送出、ok 或 ALREADY_SUBMITTED 標記已交卷）同 submitMyCanvas
+ */
+export function submitPreparedPng(png: ArrayBuffer, deps: SubmitDeps = defaultDeps): Promise<ActionOutcome> {
+  return submitWith(deps, png)
+}
+
+/** 匯出自己目前的本機畫布為 PNG bytes（自動交卷到時留存用）；失敗時 reject */
+export function exportMyCanvas(deps: Pick<SubmitDeps, 'read' | 'exportPng'> = defaultDeps): Promise<ArrayBuffer> {
+  return deps.exportPng(deps.read().ops)
+}
+
+async function submitWith(deps: SubmitDeps, prepared: ArrayBuffer | null): Promise<ActionOutcome> {
   const { submitted, submitting, ops } = deps.read()
   if (submitted) return ALREADY
   if (submitting) return BUSY
   deps.setSubmitting(true)
   try {
     let png: ArrayBuffer
-    try {
-      png = await deps.exportPng(ops)
-    } catch {
-      return EXPORT_FAILED
+    if (prepared !== null) {
+      png = prepared
+    } else {
+      try {
+        png = await deps.exportPng(ops)
+      } catch {
+        return EXPORT_FAILED
+      }
     }
     const r = await deps.send(png)
     if (r.ok || r.error === 'ALREADY_SUBMITTED') deps.markSubmitted()

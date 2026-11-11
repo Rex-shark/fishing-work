@@ -5,6 +5,7 @@
 //   TEST_PORT=3180 node --input-type=module < user/protocol/draw-guess-phase3.mjs
 // 會等真實的 5 秒揭曉停留，總時長約 8 秒；全部 PASS 時 exit 0。
 // 舵手（Helm）2026-09-24 Phase 3 驗收用。
+// 2026-11-10 Epic 21（spec §9.1 洩題冷卻）：被 SPOILER_BLOCKED 後 SPOILER_COOLDOWN_MS 內一律 RATE_LIMITED，同一人下一則前先等滿冷卻（總時長多約 6 秒）。
 import { io } from 'socket.io-client';
 const PORT = process.env.TEST_PORT ?? '3180';
 const URL = `http://127.0.0.1:${PORT}/draw-guess`;
@@ -30,7 +31,7 @@ const r0 = await chat(B, '  hello  ');
 await sleep(200);
 check('idle 聊天 ok，廣播給所有人（含本人），文字去頭尾空白', r0.ok === true && [aChat, bChat, cChat].every((c) => c.some((m) => m.kind === 'chat' && m.text === 'hello' && m.fromId === B.id && m.nickname === 'Bob')), JSON.stringify(texts(bChat)));
 const rr = await chat(B, 'again');
-check('300ms 內連發 → RATE_LIMITED', rr.ok === false && rr.error === 'RATE_LIMITED', JSON.stringify(rr));
+check('300ms 內連發 → RATE_LIMITED（一般間隔文案不變）', rr.ok === false && rr.error === 'RATE_LIMITED' && rr.message === '發言太快了，請稍候再送（間隔至少 0.3 秒）', JSON.stringify(rr));
 await sleep(350);
 const re1 = await chat(B, '   ');
 check('全空白 → MESSAGE_INVALID', re1.ok === false && re1.error === 'MESSAGE_INVALID');
@@ -61,7 +62,10 @@ check('猜題者部分命中 → SPOILER_BLOCKED，無人收到', g2.ok === fals
 const g3 = await chat(A, 'apple pie');
 await sleep(200);
 check('畫師含題目 → SPOILER_BLOCKED，無人收到', g3.ok === false && g3.error === 'SPOILER_BLOCKED' && !bChat.some((m) => m.text.includes('apple')), JSON.stringify(g3));
-await sleep(350);
+const SPOILER_COOLDOWN_MS = 3000; // spec §4 常數表（Epic 21）
+const g3b = await chat(A, 'hint: fruit');
+check('洩題冷卻：畫師被擋後立刻送一般訊息 → RATE_LIMITED，專用文案（§9.1、決策 11）', g3b.ok === false && g3b.error === 'RATE_LIMITED' && g3b.message === `剛才的訊息含答案被擋下，請等 ${SPOILER_COOLDOWN_MS / 1000} 秒再發言`, JSON.stringify(g3b));
+await sleep(SPOILER_COOLDOWN_MS + 50);
 const g4 = await chat(A, 'hint: fruit');
 await sleep(200);
 check('畫師不含題目 → 一般廣播', g4.ok === true && bChat.some((m) => m.kind === 'chat' && m.text === 'hint: fruit'));
@@ -81,7 +85,7 @@ await sleep(350);
 const g6 = await chat(C, 'Apple');
 await sleep(200);
 check('已猜對者再打題目 → SPOILER_BLOCKED', g6.ok === false && g6.error === 'SPOILER_BLOCKED');
-await sleep(350);
+await sleep(SPOILER_COOLDOWN_MS + 50); // C 剛被擋，等滿洩題冷卻（§9.1）
 const g7 = await chat(C, 'gg');
 await sleep(200);
 check('已猜對者一般訊息 → 廣播', g7.ok === true && bChat.some((m) => m.kind === 'chat' && m.text === 'gg' && m.fromId === C.id));

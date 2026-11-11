@@ -25,7 +25,7 @@ import {
 import { JudgeQueue, type JudgeResult } from '../src/games/draw-contest/judge/queue';
 import { createRandomJudge, randomScore } from '../src/games/draw-contest/judge/random';
 import { FakeClock } from './helpers/fakeClock';
-import { flush, makePng } from './helpers/drawContest';
+import { flush, makeJpeg, makePng } from './helpers/drawContest';
 
 interface MockOllama {
   url: string;
@@ -61,12 +61,7 @@ afterEach(async () => {
 });
 
 const signal = () => new AbortController().signal;
-const jpeg = (seed = 0, size = 64): Buffer => {
-  const b = Buffer.alloc(size);
-  b.set([0xff, 0xd8, 0xff, 0xe0]);
-  for (let i = 4; i < size; i++) b[i] = (seed * 37 + i * 11) & 0xff;
-  return b;
-};
+const jpeg = (seed = 0): Buffer => Buffer.from(makeJpeg(seed));
 const png = (seed = 0): Buffer => Buffer.from(makePng(seed));
 const jsonResponse = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

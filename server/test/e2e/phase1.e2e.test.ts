@@ -1,7 +1,7 @@
 // Phase 1 協定測試（改寫自 user/protocol/draw-guess-phase1.mjs）：只依 spec §4/§5/§9 打 Socket
 // 寬限期注入為 GRACE_MS（取代真實 15 秒，以免測試過慢）；其餘行為與正式環境相同。
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { ChatMessage, PlayerPublic } from '@fishing-work/shared';
+import { JOIN_MIN_INTERVAL_MS, type ChatMessage, type PlayerPublic } from '@fishing-work/shared';
 import { collect, join, joinOk, once, rawEmit, silenceLogs, sleep, startServer, waitFor, type TestServer } from './helpers';
 
 const GRACE_MS = 600;
@@ -36,6 +36,9 @@ describe('e2e Phase 1：加入', () => {
   it('同 socket 重複 join 冪等（同 token、不改名、不重建）', async () => {
     const A = await srv.connect();
     const first = await joinOk(A, 'Alice');
+    // 已綁定 socket 的重複 join 有 1 秒節流（Epic 21，§9.1）：太快 → RATE_LIMITED，等滿再送才冪等
+    expect(await join(A, { nickname: 'Other' })).toMatchObject({ ok: false, error: 'RATE_LIMITED', message: '操作太頻繁，請稍候再試' });
+    await sleep(JOIN_MIN_INTERVAL_MS + 50);
     const again = await join(A, { nickname: 'Other' });
     expect(again.ok && again.data.token === first.token).toBe(true);
     expect(again.ok && again.data.snapshot.players.map((p) => p.nickname)).toEqual(['Alice']);
@@ -140,6 +143,7 @@ describe('e2e Phase 1：防禦性限制', () => {
     const a = await joinOk(A, 'Alice');
     const F = await srv.connect();
     expect((await join(F, null)).ok).toBe(false);
+    await sleep(JOIN_MIN_INTERVAL_MS + 50); // 重複 join 節流（Epic 21）
     const again = await join(A, { nickname: 123, token: 'x'.repeat(100) });
     expect(again.ok && again.data.snapshot.you).toBe(a.snapshot.you);
     expect(await join(F, { nickname: 123, token: 'x'.repeat(100) })).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });

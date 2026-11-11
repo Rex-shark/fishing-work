@@ -20,6 +20,8 @@ export const CHAT_MAX = 200;
 export const CHAT_HISTORY = 100;
 /** 每人聊天最短間隔（毫秒） */
 export const CHAT_MIN_INTERVAL_MS = 300;
+/** 已綁定玩家的 socket 重複 player:join 的最短間隔（毫秒；Epic 21）：不足 → RATE_LIMITED；受理時只回快照、不重送二進位事件 */
+export const JOIN_MIN_INTERVAL_MS = 1000;
 /** 斷線後保留玩家（總分、出題者／參賽者身分）的寬限期（秒），逾時才視為離開 */
 export const RECONNECT_GRACE_SECONDS = 15;
 /** 邏輯畫布尺寸（16:9）；交卷 PNG 即此尺寸 */

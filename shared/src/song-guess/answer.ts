@@ -1,6 +1,7 @@
 // 答案判定（純函式）：spec/song-guess/architecture.md §4「答案判定」
 // iTunes 的歌名常帶副標（電影主題曲、Live、feat.、Taylor's Version…），玩家只會打歌名本身，所以先去副標再比對；
 // 打完整歌名（含副標）也算對。
+import { stripInvisible } from './text';
 
 /** 副標起點之一：第一個全形或半形括號（（…）、(…)、【…】、[…]） */
 const BRACKET = /[（(【\[]/u;
@@ -48,14 +49,14 @@ function fold(s: string): string {
     .toLowerCase();
 }
 
-/** 去副標後正規化。例：`I'm gonna TOESA (feat. Kian84)` → `imgonnatoesa` */
+/** 去副標後正規化（第一步先移除不可見字元，Epic 21）。例：`I'm gonna TOESA (feat. Kian84)` → `imgonnatoesa` */
 export function normalizeTitle(s: string): string {
-  return fold(stripSubtitle(s));
+  return fold(stripSubtitle(stripInvisible(s)));
 }
 
-/** 不去副標、其餘與 normalizeTitle 相同。例：`愛 (Live)` → `愛live` */
+/** 不去副標、其餘與 normalizeTitle 相同（第一步先移除不可見字元，Epic 21）。例：`愛 (Live)` → `愛live` */
 export function normalizeFull(s: string): string {
-  return fold(s);
+  return fold(stripInvisible(s));
 }
 
 /**

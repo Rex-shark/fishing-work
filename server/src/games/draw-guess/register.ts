@@ -243,8 +243,10 @@ export function registerDrawGuess(nsp: DrawGuessNamespace, options: RegisterOpti
     // draw:op 無 ack；形狀與權限驗證都在 Room.draw，不合法者丟棄並 log（不回錯誤、不斷線）
     socket.on('draw:op', (op: unknown) => {
       try {
-        const { effects, dropped } = room.draw(socket.id, op);
+        const { effects, dropped, quiet } = room.draw(socket.id, op);
         if (dropped !== null) {
+          // strokeLimit 每回合只記第一次（spec §9.1，Epic 21 決策 11）；其後同類丟棄 quiet，不寫 log
+          if (quiet === true) return;
           // 回合剛結束時畫師仍在途的 op 也會落到這裡，屬正常競態，用 info
           log.info('draw-guess.draw.dropped', { socket: socket.id, player: room.playerIdOf(socket.id) ?? null, reason: dropped });
           return;

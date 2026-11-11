@@ -1,6 +1,6 @@
 import type { NetworkInterfaceInfo } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { clientAddress, httpUrl, isWildcardHost, lanIPv4Addresses, listenErrorHint, shareUrls } from '../src/lib/network';
+import { DEFAULT_PORT, clientAddress, httpUrl, isWildcardHost, lanIPv4Addresses, listenErrorHint, readPort, shareUrls } from '../src/lib/network';
 
 const v4 = (address: string, internal = false): NetworkInterfaceInfo => ({
   address,
@@ -104,5 +104,31 @@ describe('listenErrorHint（spec §3：啟動失敗提示）', () => {
   it('其他錯誤 → null', () => {
     expect(listenErrorHint('ENOTFOUND', 80)).toBeNull();
     expect(listenErrorHint(undefined, 80)).toBeNull();
+  });
+});
+
+describe('readPort（spec §9.1，Epic 21 決策 8；code review #10）', () => {
+  const run = (value: string | undefined) => {
+    const warns: [string, Record<string, unknown> | undefined][] = [];
+    const env: NodeJS.ProcessEnv = value === undefined ? {} : { PORT: value };
+    const port = readPort(env, (event, fields) => warns.push([event, fields]));
+    return { port, warns };
+  };
+
+  it('未設 → 80，不 warn', () => {
+    expect(run(undefined)).toEqual({ port: 80, warns: [] });
+    expect(DEFAULT_PORT).toBe(80);
+  });
+
+  it.each(['3100', '80', '1', '65535', ' 7180 '])('合法 %j → 該整數，不 warn', (v) => {
+    const { port, warns } = run(v);
+    expect(port).toBe(Number(v.trim()));
+    expect(warns).toEqual([]);
+  });
+
+  it.each(['', '   ', 'abc', '80.5', '0', '-1', '65536', '1e9', 'NaN', 'Infinity', '0x50', '1e3', '+80', '８０'])('不合法 %j → 80 並 warn', (v) => {
+    const { port, warns } = run(v);
+    expect(port).toBe(80);
+    expect(warns).toEqual([['server.envInvalid', { name: 'PORT', value: v, using: 80 }]]);
   });
 });

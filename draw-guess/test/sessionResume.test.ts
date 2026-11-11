@@ -148,3 +148,100 @@ describe('resuming 的轉移', () => {
     expect(useGameStore.getState().resuming).toBe(true)
   })
 })
+
+const SNAPSHOT = (round: unknown) => ({
+  you: 'p1',
+  players: [{ id: 'p1', nickname: 'rex', score: 0, isDrawer: false, hasGuessed: false, connected: true, joinedAt: 0 }],
+  round,
+  ops: [],
+  chat: [],
+})
+
+describe('自動重新加入沒收到 ack（Epic 21 決策 5；spec/architecture.md §9.1）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 讓 socket 看起來已連線，並以 handler 決定每次 player:join 的 ack；回傳送出次數 */
+  function stubJoin(client: Awaited<ReturnType<typeof load>>['client'], handler: (n: number, ack: (err: Error | null, res: unknown) => void) => void) {
+    Object.defineProperty(client.socket, 'connected', { value: true, configurable: true, writable: true })
+    let n = 0
+    vi.spyOn(client.socket, 'timeout').mockReturnValue({
+      emit: (_event: string, _payload: unknown, ack: (err: Error | null, res: unknown) => void) => handler(++n, ack),
+    } as never)
+    return () => n
+  }
+
+  it('ack err 且此刻已斷線：保留憑證與 resuming，不排重試（等下次 connect）', async () => {
+    const storage = fakeSessionStorage(SAVED)
+    const { client, useGameStore } = await load(storage)
+    vi.useFakeTimers()
+    const sends = stubJoin(client, (_n, ack) => {
+      Object.defineProperty(client.socket, 'connected', { value: false, configurable: true, writable: true })
+      ack(new Error('socket has been disconnected'), undefined)
+    })
+    fire(client.socket, 'connect')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(sends()).toBe(1)
+    expect(useGameStore.getState().resuming).toBe(true)
+    expect(useGameStore.getState().joinError).toBeNull()
+    expect(useGameStore.getState().autoJoining).toBe(false)
+    expect(storage.map.has(SESSION_KEY)).toBe(true)
+  })
+
+  it('ack err 且仍連線：2 秒後重試，第 3 次重試仍失敗 → 回首頁顯示「自動重新加入失敗：連線逾時」，憑證仍在', async () => {
+    const storage = fakeSessionStorage(SAVED)
+    const { client, useGameStore } = await load(storage)
+    vi.useFakeTimers()
+    const sends = stubJoin(client, (_n, ack) => ack(new Error('operation has timed out'), undefined))
+    fire(client.socket, 'connect')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sends()).toBe(1)
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(sends()).toBe(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(sends()).toBe(2)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(sends()).toBe(3)
+    expect(useGameStore.getState().resuming).toBe(true)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(sends()).toBe(4)
+    expect(useGameStore.getState().resuming).toBe(false)
+    expect(useGameStore.getState().joinError).toBe('自動重新加入失敗：連線逾時')
+    expect(storage.map.has(SESSION_KEY)).toBe(true)
+    expect(client.hasSavedSession()).toBe(true)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(sends()).toBe(4)
+  })
+
+  it('重試途中成功：停止重試、套用快照', async () => {
+    const { client, useGameStore } = await load(fakeSessionStorage(SAVED))
+    vi.useFakeTimers()
+    const snapshot = { ...SNAPSHOT(useGameStore.getState().round) }
+    const sends = stubJoin(client, (n, ack) =>
+      n < 3 ? ack(new Error('operation has timed out'), undefined) : ack(null, { ok: true, data: { token: 't-2', snapshot } }),
+    )
+    fire(client.socket, 'connect')
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(sends()).toBe(3)
+    expect(useGameStore.getState().me).toBe('p1')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(sends()).toBe(3)
+    expect(useGameStore.getState().joinError).toBeNull()
+  })
+
+  it('等待重試時斷線：取消重試，不送也不回首頁', async () => {
+    const storage = fakeSessionStorage(SAVED)
+    const { client, useGameStore } = await load(storage)
+    vi.useFakeTimers()
+    const sends = stubJoin(client, (_n, ack) => ack(new Error('operation has timed out'), undefined))
+    fire(client.socket, 'connect')
+    await vi.advanceTimersByTimeAsync(0)
+    Object.defineProperty(client.socket, 'connected', { value: false, configurable: true, writable: true })
+    fire(client.socket, 'disconnect', 'transport close')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(sends()).toBe(1)
+    expect(useGameStore.getState().resuming).toBe(true)
+    expect(storage.map.has(SESSION_KEY)).toBe(true)
+  })
+})

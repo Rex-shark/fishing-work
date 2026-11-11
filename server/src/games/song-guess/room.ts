@@ -21,6 +21,7 @@ import {
   ARTIST_INVALID_MESSAGE,
   CHAT_HISTORY,
   CHOOSING_SECONDS,
+  JOIN_MIN_INTERVAL_MS,
   MAX_PLAYERS,
   MIN_PLAYERS,
   NICKNAME_TAKEN_MESSAGE,
@@ -29,6 +30,7 @@ import {
   REVEAL_SECONDS,
   SONGS_PER_GAME,
   SOURCE_TITLE,
+  SPOILER_COOLDOWN_MS,
   START_DELAY_MS,
   nicknameKey,
   titleLength,
@@ -194,6 +196,9 @@ export const ROUND_ERROR_MESSAGES = {
   CHART_FAILED: '取得題庫失敗，請再試一次',
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
+/** 已綁定玩家的 socket 重複 player:join 太頻繁（< JOIN_MIN_INTERVAL_MS）→ RATE_LIMITED 的訊息（平台 §9.1，Epic 21） */
+export const JOIN_RATE_LIMITED_MESSAGE = '操作太頻繁，請稍候再試';
+
 type RoundErrorCode = keyof typeof ROUND_ERROR_MESSAGES;
 
 /** abort 的觸發原因（choosing → idle） */
@@ -215,8 +220,12 @@ interface PlayerState {
   /** 目前綁定的 socket；null = 斷線中（寬限期） */
   socketId: string | null;
   graceTimer: TimerHandle | null;
-  /** 最後一則被接受的聊天訊息時間（間隔限制用；被拒的訊息不更新） */
+  /** 最後一則被接受或被 SPOILER_BLOCKED 擋下的聊天訊息時間（間隔限制用；其他被拒的訊息不更新，§5.4） */
   lastChatAt: number | null;
+  /** 最後一次 chat:send 被 SPOILER_BLOCKED 的時間：之後 SPOILER_COOLDOWN_MS 內 chat:send 一律 RATE_LIMITED（§5.4，Epic 21） */
+  lastSpoilerAt: number | null;
+  /** 最後一次受理 player:join 的時間（新玩家、接管、重複皆算）：已綁定 socket 的重複 join 節流用（平台 §9.1，Epic 21） */
+  lastJoinAt: number;
 }
 
 /** 進行中的一局（playing／reveal）：抽到的歌與目前進度。答案只存在這裡 */
@@ -354,14 +363,23 @@ export class Room {
 
   /**
    * 加入（三種 join，與另兩款相同）：
-   * - 重複：該 socket 已綁定玩家 → 冪等回目前 token 與快照，忽略 payload。
+   * - 重複：該 socket 已綁定玩家 → 冪等回目前 token 與快照，忽略 payload；距上次受理 < JOIN_MIN_INTERVAL_MS → RATE_LIMITED
+   *   （平台 §9.1，Epic 21）。本款沒有要補送的二進位事件。
    * - 接管：token 對到現存玩家 → 綁新 socket、踢舊 socket、取消寬限計時，忽略 nickname。
    * - 新玩家：人數（含寬限期中）< MAX_PLAYERS；暱稱合法且未被占用（不分大小寫，含寬限期中的玩家）。
    * 中途加入者不列入 participantIds，但快照帶進行中的那首（previewUrl、startedAt、serverNow），可以接著聽、可以猜。
    */
   join(socketId: string, nickname: string, token?: string): JoinOutcome {
     const boundId = this.bySocket.get(socketId);
-    if (boundId !== undefined) return { ack: this.joinAck(this.mustGet(boundId)), effects: [] };
+    if (boundId !== undefined) {
+      const player = this.mustGet(boundId);
+      const now = this.clock.now();
+      if (now - player.lastJoinAt < JOIN_MIN_INTERVAL_MS) {
+        return { ack: { ok: false, error: 'RATE_LIMITED', message: JOIN_RATE_LIMITED_MESSAGE }, effects: [] };
+      }
+      player.lastJoinAt = now;
+      return { ack: this.joinAck(player), effects: [] };
+    }
 
     const tokenOwner = token === undefined ? undefined : this.byToken.get(token);
     if (tokenOwner !== undefined) return this.takeOver(socketId, this.mustGet(tokenOwner));
@@ -392,6 +410,8 @@ export class Room {
       socketId,
       graceTimer: null,
       lastChatAt: null,
+      lastSpoilerAt: null,
+      lastJoinAt: this.clock.now(),
     };
     this.players.set(player.id, player);
     this.byToken.set(player.token, player.id);
@@ -537,7 +557,8 @@ export class Room {
    * 聊天與猜題（§5「猜題」、§5.2）：未加入 → NOT_IN_ROOM；文字不合法 → MESSAGE_INVALID；
    * 距上一則被接受的訊息 < CHAT_MIN_INTERVAL_MS → RATE_LIMITED。
    * playing 時依 judgeMessage 判定：猜對 → 得分並廣播「X 猜對了」（不含原文）；含歌名 → SPOILER_BLOCKED（不廣播）；其餘照常廣播。
-   * 出題者、中途加入者都可以猜、都得分。只有被接受的訊息（含猜對）才更新間隔時間戳。
+   * 出題者、中途加入者都可以猜、都得分。被接受的訊息（含猜對）與被 SPOILER_BLOCKED 擋下的訊息更新間隔時間戳；
+   * 被擋後 SPOILER_COOLDOWN_MS 內一律 RATE_LIMITED（§5.4，Epic 21：被擋等於告知「這串字含歌名」，可二分探測）。
    */
   chat(socketId: string, rawText: string): ActionOutcome {
     const player = this.playerBySocket(socketId);
@@ -545,6 +566,10 @@ export class Room {
     const check = validateChatText(rawText);
     if (!check.ok) return chatFail('MESSAGE_INVALID', CHAT_ERROR_MESSAGES.MESSAGE_INVALID);
     const now = this.clock.now();
+    // 洩題冷卻先判：冷卻期間一律回專用文案（spec §9.1，決策 11），即使同時也未滿一般間隔
+    if (player.lastSpoilerAt !== null && now - player.lastSpoilerAt < SPOILER_COOLDOWN_MS) {
+      return chatFail('RATE_LIMITED', CHAT_ERROR_MESSAGES.RATE_LIMITED_SPOILER);
+    }
     if (isRateLimited(player.lastChatAt, now)) return chatFail('RATE_LIMITED', CHAT_ERROR_MESSAGES.RATE_LIMITED);
     const { text } = check;
 
@@ -553,8 +578,14 @@ export class Room {
     if (phase === 'playing' && song !== null && current !== null) {
       const verdict = judgeMessage(text, current.title, song.correctIds.includes(player.id));
       if (verdict === 'correct') return this.correctGuess(player, song, now);
-      if (verdict === 'spoilerGuessed') return chatFail('SPOILER_BLOCKED', CHAT_ERROR_MESSAGES.SPOILER_BLOCKED);
-      if (verdict === 'spoilerGuess') return chatFail('SPOILER_BLOCKED', CHAT_ERROR_MESSAGES.SPOILER_BLOCKED_GUESS);
+      if (verdict === 'spoilerGuessed' || verdict === 'spoilerGuess') {
+        player.lastChatAt = now;
+        player.lastSpoilerAt = now;
+        return chatFail(
+          'SPOILER_BLOCKED',
+          verdict === 'spoilerGuessed' ? CHAT_ERROR_MESSAGES.SPOILER_BLOCKED : CHAT_ERROR_MESSAGES.SPOILER_BLOCKED_GUESS,
+        );
+      }
     }
 
     player.lastChatAt = now;
@@ -901,6 +932,7 @@ export class Room {
       effects.push({ kind: 'disconnect', socketId: oldSocket });
     }
     player.socketId = socketId;
+    player.lastJoinAt = this.clock.now();
     this.bySocket.set(socketId, player.id);
 
     // 不發 system 訊息：從寬限期回來只更新玩家清單的 connected

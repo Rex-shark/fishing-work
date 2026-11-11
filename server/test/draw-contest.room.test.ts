@@ -5,6 +5,7 @@ import {
   CHAT_MIN_INTERVAL_MS,
   CHOOSING_SECONDS,
   DRAW_SECONDS,
+  JOIN_MIN_INTERVAL_MS,
   MAX_PLAYERS,
   NICKNAME_TAKEN_MESSAGE,
   RECONNECT_GRACE_SECONDS,
@@ -16,7 +17,8 @@ import {
   type RoundPublic,
 } from '@fishing-work/shared/draw-contest';
 import { CHAT_ERROR_MESSAGES } from '../src/games/draw-contest/chat';
-import { ROUND_ERROR_MESSAGES, Room, type EmitEffect, type Effect, type RoomOptions } from '../src/games/draw-contest/room';
+import { JOIN_RATE_LIMITED_MESSAGE, ROUND_ERROR_MESSAGES, Room, type EmitEffect, type Effect, type RoomOptions } from '../src/games/draw-contest/room';
+import { UpstreamHttpError } from '../src/games/draw-contest/judge/httpError';
 import { FakeClock } from './helpers/fakeClock';
 import { FnJudge, ManualJudge, flush, makePng } from './helpers/drawContest';
 
@@ -180,8 +182,9 @@ describe('join', () => {
     expect(emits(effects)[1].to).toEqual({ except: B });
   });
 
-  it('同 socket 重複 join 冪等；全形＋大小寫同名 → NICKNAME_TAKEN', () => {
+  it('同 socket 重複 join 冪等（間隔 ≥ JOIN_MIN_INTERVAL_MS）；全形＋大小寫同名 → NICKNAME_TAKEN', () => {
     const first = joinOk('s1', 'Alice');
+    clock.advance(JOIN_MIN_INTERVAL_MS);
     const again = joinOk('s1', 'Other');
     expect(again.data.token).toBe(first.data.token);
     expect(room.playerList().map((p) => p.nickname)).toEqual(['Alice']);
@@ -234,6 +237,7 @@ describe('disconnect、寬限、接管', () => {
 
   it('作畫中重連接管：id 不變、仍是參賽者，可繼續交卷', () => {
     toDrawing(2);
+    clock.advance(JOIN_MIN_INTERVAL_MS); // 重複 join 節流（Epic 21）
     const tokenB = joinOk('s2', 'x').data.token; // 同 socket 重複 join 取回 token
     room.disconnect('s2');
     clock.advance(GRACE_MS - 1);
@@ -775,6 +779,7 @@ describe('§4 contest:gallery 補送', () => {
     await playRound();
     ok(room.volunteer('s1'));
     expect(galleries(joinOk('s3', 'Carol').effects)).toHaveLength(2);
+    clock.advance(JOIN_MIN_INTERVAL_MS); // 重複 join 節流（Epic 21）
     const tokenB = joinOk('s2', 'x').data.token;
     room.disconnect('s2');
     expect(galleries(room.join('s9', '', tokenB).effects)).toHaveLength(2);
@@ -783,9 +788,116 @@ describe('§4 contest:gallery 補送', () => {
   });
 });
 
+// ─── 重複 join 節流（Epic 21）──────────────────────────────────────
+
+describe('重複 join 節流（Epic 21：平台 §9.1、§5 重複 join；code review #3）', () => {
+  const limited = { ok: false, error: 'RATE_LIMITED', message: JOIN_RATE_LIMITED_MESSAGE };
+
+  async function playRound(): Promise<void> {
+    toDrawing(2);
+    submitOk('s1', 1);
+    submitOk('s2', 2);
+    await judgeCall(0, 10);
+    await judgeCall(1, 20);
+    expect(round().phase).toBe('ended');
+  }
+
+  it(`已綁定 socket：距上次受理 < ${JOIN_MIN_INTERVAL_MS} ms → RATE_LIMITED「操作太頻繁，請稍候再試」、沒有效果`, () => {
+    joinOk('s1', 'Alice');
+    expect(JOIN_RATE_LIMITED_MESSAGE).toBe('操作太頻繁，請稍候再試');
+    expect(room.join('s1', 'Alice')).toEqual({ ack: limited, effects: [] });
+    clock.advance(JOIN_MIN_INTERVAL_MS - 1);
+    expect(room.join('s1', 'Alice')).toEqual({ ack: limited, effects: [] });
+    // 被擋的不更新時間戳：從首次加入起算滿 1 秒就受理
+    clock.advance(1);
+    expect(room.join('s1', 'Alice').ack.ok).toBe(true);
+    // 受理後重新起算
+    expect(room.join('s1', 'Alice').ack).toEqual(limited);
+    expect(room.playerList()).toHaveLength(1);
+  });
+
+  it('受理的重複 join 只回快照：results 非 null 也不重送 contest:gallery（首次加入與接管才補送）', async () => {
+    await playRound();
+    clock.advance(JOIN_MIN_INTERVAL_MS);
+    const r = room.join('s1', 'whatever');
+    expect(r.ack.ok && r.ack.data.snapshot.round.results).toHaveLength(2);
+    expect(r.effects).toEqual([]);
+    // 連送 50 次：只有間隔夠的那幾次受理，且全部都沒有任何效果（不會灌出畫廊）
+    const outcomes = Array.from({ length: 50 }, () => {
+      clock.advance(100);
+      return room.join('s1', 'x');
+    });
+    expect(outcomes.every((o) => o.effects.length === 0)).toBe(true);
+    expect(outcomes.filter((o) => o.ack.ok)).toHaveLength(5);
+    expect(outcomes.filter((o) => !o.ack.ok).every((o) => o.ack.ok === false && o.ack.error === 'RATE_LIMITED')).toBe(true);
+    // 新玩家仍補送
+    expect(galleries(joinOk('s3', 'Carol').effects)).toHaveLength(2);
+  });
+
+  it('未綁定的 socket 不受限：暱稱被拒後可立刻重試；不同 socket 連續加入不互相影響', () => {
+    joinOk('s1', 'Alice');
+    expect(room.join('s2', 'ａｌｉｃｅ').ack).toMatchObject({ ok: false, error: 'NICKNAME_TAKEN' });
+    expect(room.join('s2', '  ').ack).toMatchObject({ ok: false, error: 'NICKNAME_INVALID' });
+    expect(room.join('s2', 'Bob').ack.ok).toBe(true);
+    expect(room.join('s3', 'Carol').ack.ok).toBe(true);
+  });
+
+  it('token 接管不受節流且照常補送畫廊；接管後新 socket 的重複 join 從接管時起算', async () => {
+    await playRound();
+    const { data } = joinOk('s3', 'Carol');
+    // 剛加入就換 socket 接管（例如重新整理）：不擋
+    const takeover = room.join('s9', '', data.token);
+    expect(takeover.ack.ok).toBe(true);
+    expect(galleries(takeover.effects)).toHaveLength(2);
+    expect(room.join('s9', '').ack).toEqual(limited);
+    clock.advance(JOIN_MIN_INTERVAL_MS);
+    const again = room.join('s9', '');
+    expect(again.ack.ok && again.ack.data.token).toBe(data.token);
+    expect(again.effects).toEqual([]);
+  });
+});
+
 // ─── 評分器退回 ───────────────────────────────────────────────────
 
 describe('§6 評分失敗退回 random', () => {
+  it('Epic 21 決策 11：HTTP 404（模型不存在）＝上游不可用 → 整回合降級，round judgeMode 變 random', async () => {
+    const fallbacks: unknown[] = [];
+    room.dispose();
+    room = makeRoom({ onJudgeFallback: (info) => fallbacks.push(info) });
+    toDrawing(3);
+    submitOk('s1', 1);
+    submitOk('s2', 2);
+    submitOk('s3', 3);
+    judge.calls[0].reject(new UpstreamHttpError(404, 'systemone HTTP 404：model "clef" not found'));
+    await flush();
+    expect(round()).toMatchObject({ phase: 'ended', judgeMode: 'random', judgedCount: 3 });
+    expect(round().results?.every((r) => r.judgedBy === 'random')).toBe(true);
+    expect(judge.calls).toHaveLength(1);
+    expect(fallbacks).toEqual([{ playerId: A, reason: 'error', error: expect.stringContaining('HTTP 404') }]);
+  });
+
+  it('Epic 21 §5.5：某張回 HTTP 400（輸入被拒）→ 只有該張 random，其他張仍 ai、judgeMode 仍 ai', async () => {
+    const fallbacks: unknown[] = [];
+    room.dispose();
+    room = makeRoom({ onJudgeFallback: (info) => fallbacks.push(info) });
+    toDrawing(3);
+    submitOk('s1', 1);
+    submitOk('s2', 2);
+    submitOk('s3', 3);
+    judge.calls[0].reject(new UpstreamHttpError(400, 'systemone HTTP 400：failed to process inputs'));
+    await flush();
+    expect(round().judgeMode).toBe('ai');
+    await judgeCall(1, 70);
+    await judgeCall(2, 80);
+    expect(round()).toMatchObject({ phase: 'ended', judgeMode: 'ai', judgedCount: 3 });
+    expect(round().results?.map((r) => [r.playerId, r.score, r.judgedBy])).toEqual([
+      [C, 80, 'ai'],
+      [B, 70, 'ai'],
+      [A, 10, 'random'],
+    ]);
+    expect(fallbacks).toEqual([{ playerId: A, reason: 'rejected', error: expect.stringContaining('HTTP 400') }]);
+  });
+
   it('主評分器失敗：該張改 random、judgeMode 降為 random、本回合剩餘直接走 random；下一回合恢復', async () => {
     toDrawing(3);
     submitOk('s1');

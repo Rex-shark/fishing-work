@@ -1,6 +1,9 @@
 // 畫具常數（spec/architecture.md §4：BRUSH_MIN / BRUSH_MAX、PALETTE 預設色塊、COLOR_PATTERN、CANVAS_BACKGROUND）
 import { describe, expect, it } from 'vitest';
-import { BRUSH_DEFAULT, BRUSH_MAX, BRUSH_MIN, CANVAS_BACKGROUND, COLOR_PATTERN, PALETTE } from '../src/draw-guess/constants';
+import {
+  BRUSH_DEFAULT, BRUSH_MAX, BRUSH_MIN, CANVAS_BACKGROUND, COLOR_PATTERN, JOIN_MIN_INTERVAL_MS, MAX_OPS_PER_ROUND,
+  MAX_STROKES_PER_ROUND, PALETTE, SPOILER_COOLDOWN_MS,
+} from '../src/draw-guess/constants';
 
 describe('粗細範圍', () => {
   it('1..64 的整數，預設 4 在範圍內', () => {
@@ -45,5 +48,17 @@ describe('畫布統一（Epic 3 決策 6）', () => {
   it('PALETTE 預設色（索引 0）為白色，且與畫布底色不同', () => {
     expect(PALETTE[0]).toBe('#FFFFFF');
     expect(PALETTE).not.toContain(CANVAS_BACKGROUND);
+  });
+});
+
+describe('強化（Epic 21，spec §4 常數表）', () => {
+  it('MAX_STROKES_PER_ROUND 2000、SPOILER_COOLDOWN_MS 3000、JOIN_MIN_INTERVAL_MS 1000', () => {
+    expect(MAX_STROKES_PER_ROUND).toBe(2000);
+    expect(SPOILER_COOLDOWN_MS).toBe(3000);
+    expect(JOIN_MIN_INTERVAL_MS).toBe(1000);
+  });
+
+  it('筆畫上限遠低於筆跡歷史上限（每筆至少 begin＋end 兩則 op 仍裝得下）', () => {
+    expect(MAX_STROKES_PER_ROUND * 2).toBeLessThan(MAX_OPS_PER_ROUND);
   });
 });

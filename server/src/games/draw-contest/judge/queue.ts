@@ -2,11 +2,14 @@
 // - 一次一張（JUDGE_CONCURRENCY 固定 1）；依加入順序評分。
 // - 每張以 JUDGE_TIMEOUT_MS 逾時（AbortSignal 中止）；失敗、逾時或輸出不合法 → 該張改用 fallback（random）評分，
 //   並把本回合模式降為 random，本回合剩餘各張直接走 fallback（有界：最壞只多等一次逾時）。
+// - 例外（Epic 21 §5.5，code review #5）：主評分器回 HTTP 400／413／415／422（白名單，決策 11）＝這張輸入被拒 → 只有這張改用 fallback，
+//   **不降級**（mode 不變、下一張照常呼叫主評分器），onFallback 的 reason 為 'rejected'（register 記 judge.rejected）。
 // - discard(playerId)：丟棄該玩家的工作（排隊中直接移除；評分中則中止並忽略結果）。
 // - reset()：換回合時整批清空、模式回到主評分器。
 // 結果經建構子注入的 onDone 非同步回報（Room 再轉成 onAsyncEffects）。
 import { SCORE_MAX, type JudgeMode } from '@fishing-work/shared/draw-contest';
 import type { Clock, TimerHandle } from '../room';
+import { isInputRejected } from './httpError';
 import { randomScore } from './random';
 import type { Judge, JudgeInput, JudgeOutput } from './types';
 
@@ -22,7 +25,8 @@ export interface JudgeResult extends JudgeOutput {
 /** 主評分器失敗而退回 random 的資訊（給 register 記 log） */
 export interface JudgeFallbackInfo {
   playerId: string;
-  reason: 'timeout' | 'error' | 'invalid';
+  /** rejected = 這張輸入被上游拒絕（HTTP 400／413／415／422，白名單）：只有這張退回，本回合不降級（§5.5） */
+  reason: 'timeout' | 'error' | 'invalid' | 'rejected';
   error?: string;
 }
 
@@ -141,7 +145,8 @@ export class JudgeQueue {
       judgedBy = this.opts.judge.mode;
       attempt = await this.attempt(this.opts.judge, entry);
       if (attempt.kind === 'failed') {
-        this.degraded = true;
+        // 輸入被拒只影響這張；其餘失敗（連線、逾時、5xx、408／429、解析）視為上游不可用，整回合降級
+        if (attempt.reason !== 'rejected') this.degraded = true;
         this.opts.onFallback?.({ playerId: entry.job.playerId, reason: attempt.reason, ...(attempt.error ? { error: attempt.error } : {}) });
         judgedBy = this.opts.fallback.mode;
         attempt = await this.attempt(this.opts.fallback, entry);
@@ -178,7 +183,8 @@ export class JudgeQueue {
       return { kind: 'ok', out };
     } catch (err) {
       if (entry.cancelled) return { kind: 'cancelled' };
-      return timedOut ? { kind: 'failed', reason: 'timeout' } : { kind: 'failed', reason: 'error', error: String(err) };
+      if (timedOut) return { kind: 'failed', reason: 'timeout' };
+      return { kind: 'failed', reason: isInputRejected(err) ? 'rejected' : 'error', error: String(err) };
     } finally {
       this.opts.clock.clearTimeout(timer);
       entry.controller = null;
